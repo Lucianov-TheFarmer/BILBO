@@ -1,0 +1,67 @@
+services:
+  bioinfo:
+    build: .
+    container_name: bioinfo-container
+    volumes:
+      - ./app:/app/
+      - samples_data:/samples  # New volume for samples
+    ports:
+      - "8000:8000"
+    tty: true
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - main-net
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/bioinfo
+      - PYTHONPATH=/app  
+
+  ngrok:
+    image: wernight/ngrok
+    ports:
+      - "4040:4040"
+    command: /bin/sh -c "ngrok authtoken 2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD && ngrok http bioinfo:8000 & sleep 5 && curl -s http://localhost:4040/api/tunnels > /app/backend/temp/ngrok_url.txt && tail -f /dev/null"
+    container_name: ngrok-container
+    volumes:
+      - .:/home/ngrok/.ngrok2/
+      - ./app:/app
+    depends_on:
+      - bioinfo
+    environment:
+      - NGROK_AUTH_TOKEN=2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD
+    networks:
+      - main-net
+
+  ngrok-updater:
+    image: busybox
+    container_name: ngrok-updater-container
+    volumes:
+      - ./app:/app
+    depends_on:
+      - bioinfo
+      - ngrok
+    entrypoint: /app/backend/scripts/printURL.sh
+    networks:
+      - main-net
+
+  db:
+    image: postgres:13
+    container_name: postgres-container
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bioinfo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - samples_data:/samples  # New volume for samples
+    networks:
+      - main-net
+
+networks:
+  main-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  samples_data:  # New volume for samples
