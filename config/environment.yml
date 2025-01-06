@@ -1,0 +1,19 @@
+name: bioinfo
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.9
+  - libgcc-ng
+  - htslib=1.21
+  - fastqc=0.12.1
+  - trimmomatic=0.39
+  - star=2.7.11b
+  - picard=3.3.0
+  - samtools=1.21
+  - bowtie2=2.5.4
+  - bcftools=1.21
+  - hisat2=2.2.1
+  - htseq=2.0.5
+  - bedtools=2.31.1
+  - stringtie=2.2.3
