@@ -1,9 +1,11 @@
+import asyncio
 import flet as ft
 from .menu_operations import create_menubar, mudar_tema
 from .sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, tabela_amostras
 from .sample_operations import baixar_amostras
 
-def show_bilbo_interface(page, logout, username, token):  # Updated function signature
+async def show_bilbo_interface(page, logout, username, token):  # Updated function signature
+    print("Entering show_bilbo_interface")
     page.controls.clear()
 
     menubar_principal = create_menubar(page, token)
@@ -18,15 +20,16 @@ def show_bilbo_interface(page, logout, username, token):  # Updated function sig
             spacing=10,
             controls=[
                 tabela_amostras,  # Use the global tabela_amostras
-                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: adicionar_amostra(page, token)),
-                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: excluir_amostras_selecionadas(page, token)),
-                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: baixar_amostras(page, token)),
+                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token))),
+                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token))),
+                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token))),
             ]
         )
     )
 
     # Call atualizar_tabela to populate the table initially
-    atualizar_tabela(page, token)
+    print("Calling atualizar_tabela")
+    await atualizar_tabela(page, token)
 
     container_progresso = ft.Column(
         expand=1,
@@ -115,7 +118,8 @@ def show_bilbo_interface(page, logout, username, token):  # Updated function sig
         )
     )
 
-    page.add(
+    print("Adding controls to the page")
+    await page.add_async(
         ft.Row(
             controls=[
                 ft.Container(
@@ -135,7 +139,7 @@ def show_bilbo_interface(page, logout, username, token):  # Updated function sig
                             ft.Text(f"Logged in as: {username}"),
                             ft.IconButton(
                                 icon=ft.icons.LIGHT_MODE,
-                                on_click=lambda e: mudar_tema(page)
+                                on_click=lambda e: asyncio.create_task(mudar_tema(page))
                             ),
                             ft.IconButton(
                                 icon=ft.icons.LOGOUT,
@@ -182,4 +186,6 @@ def show_bilbo_interface(page, logout, username, token):  # Updated function sig
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
     )
-    page.update()
+    print("Updating the page")
+    await page.update_async()
+    print("Exiting show_bilbo_interface")

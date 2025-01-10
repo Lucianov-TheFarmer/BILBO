@@ -16,30 +16,15 @@ services:
       - PYTHONPATH=/app  
 
   ngrok:
-    image: wernight/ngrok
+    image: ngrok/ngrok:latest
     ports:
       - "4040:4040"
-    command: /bin/sh -c "ngrok authtoken 2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD && ngrok http bioinfo:8000 & sleep 5 && curl -s http://localhost:4040/api/tunnels > /app/backend/temp/ngrok_url.txt && tail -f /dev/null"
-    container_name: ngrok-container
-    volumes:
-      - .:/home/ngrok/.ngrok2/
-      - ./app:/app
-    depends_on:
-      - bioinfo
     environment:
-      - NGROK_AUTH_TOKEN=2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD
-    networks:
-      - main-net
-
-  ngrok-updater:
-    image: busybox
-    container_name: ngrok-updater-container
-    volumes:
-      - ./app:/app
+      - NGROK_AUTHTOKEN=2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD
+    command: http bioinfo-container:8000
+    container_name: ngrok-container
     depends_on:
       - bioinfo
-      - ngrok
-    entrypoint: /app/backend/scripts/printURL.sh
     networks:
       - main-net
 
@@ -57,6 +42,21 @@ services:
       - samples_data:/samples  # New volume for samples
     networks:
       - main-net
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   main-net:

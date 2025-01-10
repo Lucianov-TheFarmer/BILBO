@@ -1,5 +1,6 @@
 import flet as ft
 from .sample_operations import adicionar_amostra  # Updated import
+import asyncio
 
 def menubar_clicar_item(e):
     print(f"{e.control.content.value}.on_click")
@@ -15,12 +16,12 @@ def menubar_fechar_item(e):
 def menubar_passar_por_cima_item(e):
     print(f"{e.control.content.value}.on_hover")
 
-def mudar_tema(page):
+async def mudar_tema(page):
     if page.theme_mode == ft.ThemeMode.LIGHT:
         page.theme_mode = ft.ThemeMode.DARK
     else:
         page.theme_mode = ft.ThemeMode.LIGHT
-    page.update()
+    await page.update_async()
 
 def create_menubar(page, token):
     return ft.MenuBar(
@@ -87,7 +88,7 @@ def create_menubar(page, token):
                         content=ft.Text("Adicionar via SRA"),
                         close_on_click=False,
                         style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
-                        on_click=lambda e: adicionar_amostra(page, token)
+                        on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token))
                     )
                 ],
             ),

@@ -14,6 +14,15 @@ RUN apt-get update && apt-get install -y \
     jq \
     unzip
 
+# Instalar dependências necessárias para o Flet
+RUN apt-get install -y \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libglib2.0-0 \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-tools \
+    gstreamer1.0-x
+
 # Baixe e instale o SRA Toolkit
 RUN wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-ubuntu64.tar.gz -O sratoolkit.tar.gz && \
     tar -xzf sratoolkit.tar.gz && \
@@ -31,7 +40,7 @@ RUN conda env create -f /app/config/environment.yml
 SHELL ["conda", "run", "-n", "bioinfo", "/bin/bash", "-c"]
 
 # Instale FastAPI e Uvicorn
-RUN pip install fastapi uvicorn flet sqlalchemy psycopg2-binary python-jose passlib python-multipart
+RUN pip install fastapi uvicorn flet sqlalchemy psycopg2-binary python-jose passlib python-multipart requests flet-fastapi
 
 # Copie os scripts para o contêiner
 COPY app /app

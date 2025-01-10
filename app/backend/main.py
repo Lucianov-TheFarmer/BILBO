@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-import flet.fastapi as flet_fastapi
+import flet_fastapi
 import requests
 import sys
 import os
@@ -14,6 +14,7 @@ import subprocess
 from fastapi.responses import StreamingResponse
 import re
 import time
+from fastapi.middleware.cors import CORSMiddleware
 
 # Adicionar o diretório raiz ao sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,7 +35,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 print("Creating FastAPI app")
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Starting Flet app manager")
+    await flet_fastapi.app_manager.start()
+    yield
+    print("Shutting down Flet app manager")
+    await flet_fastapi.app_manager.shutdown()
+
+app = FastAPI(lifespan=lifespan)
+
+# Add CORS middleware to allow WebSocket connections
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -57,12 +76,23 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 @app.post("/register/")
 def register(username: str, password: str, db: Session = Depends(get_db)):
     print("Register endpoint called")
-    hashed_password = get_password_hash(password)
-    db_user = User(username=username, hashed_password=hashed_password)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return {"message": "User registered successfully"}
+    try:
+        # Check if the username already exists
+        db_user = db.query(User).filter(User.username == username).first()
+        if db_user:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+        
+        hashed_password = get_password_hash(password)
+        db_user = User(username=username, hashed_password=hashed_password)
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        return {"message": "User registered successfully"}
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error during registration: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -143,15 +173,6 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
 
 # Adicionar um print para verificar os endpoints registrados
 print("Registered routes before mounting Flet:", app.routes)
-
-# Função de ciclo de vida do aplicativo
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("Starting Flet app manager")
-    await flet_fastapi.app_manager.start()
-    yield
-    print("Shutting down Flet app manager")
-    await flet_fastapi.app_manager.shutdown()
 
 # Montar o aplicativo Flet como um subaplicativo
 print("Mounting Flet app")

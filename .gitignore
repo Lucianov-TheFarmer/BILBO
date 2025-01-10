@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+*.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Flet
+*.flet/
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Project specific
+app/frontend/__pycache__/
+app/backend/__pycache__/
