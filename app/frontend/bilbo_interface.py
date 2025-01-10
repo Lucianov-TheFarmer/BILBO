@@ -3,6 +3,8 @@ import flet as ft
 from .menu_operations import create_menubar, mudar_tema
 from .sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, tabela_amostras
 from .sample_operations import baixar_amostras
+from .utils import log_message  # Updated import
+import websockets  # New import
 
 async def show_bilbo_interface(page, logout, username, token):  # Updated function signature
     print("Entering show_bilbo_interface")
@@ -31,25 +33,17 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
     print("Calling atualizar_tabela")
     await atualizar_tabela(page, token)
 
-    container_progresso = ft.Column(
+    container_terminal = ft.Container(
         expand=1,
-        spacing=5,
-        controls=[
-            ft.Container(
-                expand=5,
-                border=ft.border.all(1, ft.colors.BLACK),
-                border_radius=ft.border_radius.all(3),
-                alignment=ft.alignment.center,
-                padding=ft.padding.all(15),
-                content=ft.Text("Tarefa atual: Aguardando", color=ft.colors.ON_PRIMARY_CONTAINER, expand=True, size=18)
-            ),
-            ft.Container(
-                expand=1,
-                border=ft.border.all(1, ft.colors.BLACK),
-                border_radius=ft.border_radius.all(15),
-                content=ft.ProgressBar(color=ft.colors.TERTIARY, value=0),
-            )
-        ]
+        border=ft.border.all(1, ft.colors.BLACK),
+        border_radius=ft.border_radius.all(3),
+        alignment=ft.alignment.center,
+        padding=ft.padding.all(15),
+        content=ft.ListView(
+            expand=True,
+            spacing=10,
+            controls=[]
+        )
     )
 
     container_pre_visualizacao = ft.Container(
@@ -157,7 +151,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                     expand=1,
                     controls=[
                         container_amostras,
-                        container_progresso
+                        container_terminal
                     ]
                 ),
                 ft.Column(
@@ -189,3 +183,11 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
     print("Updating the page")
     await page.update_async()
     print("Exiting show_bilbo_interface")
+
+    # Connect to WebSocket for notifications
+    async with websockets.connect("ws://bioinfo-container:8000/ws") as websocket:
+        while True:
+            message = await websocket.recv()
+            await log_message(page, message)
+            await atualizar_tabela(page, token)
+            await page.update_async()

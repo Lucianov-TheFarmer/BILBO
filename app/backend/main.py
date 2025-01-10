@@ -1,6 +1,7 @@
+from typing import List  # Add this import
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, Query, status
+from fastapi import FastAPI, HTTPException, Depends, Query, status, Form, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
@@ -15,6 +16,11 @@ from fastapi.responses import StreamingResponse
 import re
 import time
 from fastapi.middleware.cors import CORSMiddleware
+import threading
+import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession  # Add this import
+from sqlalchemy.future import select  # Add this import
+import subprocess  # Add this import
 
 # Adicionar o diretório raiz ao sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +37,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)  # Set to INFO level
 logger = logging.getLogger(__name__)
 
 print("Creating FastAPI app")
@@ -154,6 +160,13 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     db.commit()
     return {"message": "Sample deleted"}
 
+@app.get("/samples/status/{sra_code}")
+def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
+    if db_sample is None:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return {"status": db_sample.status}
+
 @app.post("/samples/download")
 def download_pending_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     pending_sample = db.query(Sample).filter(Sample.status == "Pending").first()
@@ -167,9 +180,104 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
     logger.info(f"Sample {sra_code} status updated to In Progress")
 
     command = f"bash /app/backend/scripts/download_script.sh {sra_code} /samples"
-    subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
-    return {"message": f"Download started for sample {sra_code}"}
+    def update_status():
+        try:
+            process.wait()
+            db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
+            if process.returncode == 0:
+                db_sample.status = "Completed"
+                db.commit()
+                logger.info(f"Sample {sra_code} status updated to Completed")
+                asyncio.run(manager.broadcast(f"Download da amostra {sra_code} concluído."))
+                return
+        except Exception as e:
+            db_sample.status = "Failed"
+            db.commit()
+            logger.error(f"Download failed for sample {sra_code}: {e}")
+        finally:
+            process.terminate()
+
+    threading.Thread(target=update_status).start()
+
+    return {"message": f"Download started for sample {sra_code}", "sample_name": sra_code}
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.last_message: str = ""  # Track the last message sent
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        if message != self.last_message:
+            self.last_message = message
+            for connection in self.active_connections:
+                await connection.send_text(message)
+
+manager = ConnectionManager()
+
+@app.post("/samples/update_status")
+async def update_sample_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
+    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
+    if db_sample is None:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    db_sample.status = status
+    db.commit()
+    logger.info(f"Sample {sra_code} status updated to {status}")
+    # Notify the frontend via WebSocket
+    await manager.broadcast(f"Download da amostra {sra_code} {status.lower()}.")
+    return {"message": f"Sample {sra_code} status updated to {status}"}
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.send_personal_message(f"Message received: {data}", websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+@app.post("/samples/calculate_size")
+async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Check if the sample exists and has status "Completed"
+    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
+    if db_sample is None or db_sample.status != "Completed":
+        raise HTTPException(status_code=404, detail="Sample not found or not completed")
+
+    # Run the script to calculate the size
+    command = f"python3 /app/backend/scripts/calculate_size.py {sra_code}"
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = process.communicate()
+
+    if process.returncode != 0:
+        logger.error(f"Error calculating size: {stderr}")
+        raise HTTPException(status_code=500, detail="Error calculating size")
+
+    sizes = stdout.strip().split(',')
+    if len(sizes) != 2:
+        raise HTTPException(status_code=500, detail="Invalid size format returned by script")
+
+    size_1, size_2 = sizes
+
+    # Update the database
+    db_sample_1 = Sample(sra_code=f"{sra_code}_1.fastq", size=size_1, status="Completed", user_id=current_user.id)
+    db_sample_2 = Sample(sra_code=f"{sra_code}_2.fastq", size=size_2, status="Completed", user_id=current_user.id)
+
+    db.delete(db_sample)
+    db.add(db_sample_1)
+    db.add(db_sample_2)
+    db.commit()
 
 # Adicionar um print para verificar os endpoints registrados
 print("Registered routes before mounting Flet:", app.routes)

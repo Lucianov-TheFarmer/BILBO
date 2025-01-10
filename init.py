@@ -22,18 +22,6 @@ def run_command(command):
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return process
 
-def run_command_with_output(command):
-    logger.debug(f"Running command with output: {command}")
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
-    for line in process.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-    for line in process.stderr:
-        sys.stderr.write(line)
-        sys.stderr.flush()
-    process.wait()
-    return process.returncode
-
 def run_command_dynamic_output(command):
     logger.debug(f"Running command with dynamic output: {command}")
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
@@ -76,10 +64,6 @@ def is_docker_desktop_running():
             return True
     return False
 
-def update_progress_bar():
-    while True:
-        time.sleep(1)
-
 def fetch_ngrok_url():
     try:
         response = requests.get('http://localhost:4040/api/tunnels')
@@ -100,7 +84,7 @@ def main():
                 return
 
     try:
-        logger.info("Building Docker containers...")
+        logger.info("\nBuilding Docker containers...\n")
         build_rc = run_command_dynamic_output("docker-compose build")
         if build_rc != 0:
             logger.error("Docker build failed.")
@@ -111,16 +95,13 @@ def main():
         up_process = run_command("docker-compose up -d")
         up_process.wait()
 
-        logger.info("Fetching ngrok URL...")
-        time.sleep(10)  # Wait for ngrok to initialize
+        logger.info("\nFetching ngrok URL...")
+        time.sleep(5)  # Wait for ngrok to initialize
         ngrok_url = fetch_ngrok_url()
         if ngrok_url:
             logger.info(f"\nNgrok URL: {ngrok_url}/frontend\n")
         else:
             logger.error("Failed to retrieve ngrok URL.")
-
-        progress_thread = threading.Thread(target=update_progress_bar)
-        progress_thread.start()
 
         logger.info("Application is running. Press Ctrl+C to stop.")
         while True:
