@@ -14,27 +14,27 @@ websocket_connection = None
 first_check_done = False
 
 async def adicionar_amostra(page, token):
-    async def inserir_sra_na_fila(sra_code):
-        sra_code = sra_code.strip()
-        if not sra_code:
-            logger.error("Insira um código SRA válido.")
+    async def inserir_sra_na_fila(sra_codes):
+        sra_codes = [code.strip() for code in sra_codes.split(",") if code.strip()]
+        if not sra_codes:
+            logger.error("Insira um ou mais códigos SRA válidos.")
             return
         dlg_modal_adicionar_amostra.open = False
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post("http://bioinfo-container:8000/samples/", params={"sra_code": sra_code, "size": "Unknown"}, headers=headers)
+                response = await client.post("http://bioinfo-container:8000/samples/", json={"sra_codes": sra_codes, "size": "Unknown"}, headers=headers)
             if response.status_code == 200:
-                logger.info("Amostra adicionada com sucesso!")
+                logger.info("Amostras adicionadas com sucesso!")
             else:
-                logger.error(f"Erro ao adicionar amostra: {response.status_code} - {response.text}")
+                logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"An error occurred: {e}")
         await atualizar_tabela(page, token)
         await page.update_async()
 
     sra_code_field = ft.TextField(
-        hint_text="Insira um código SRA",
+        hint_text="Insira um ou mais códigos SRA separados por vírgulas",
         border_radius=ft.border_radius.all(4),
         multiline=False,
         min_lines=1,
@@ -132,24 +132,34 @@ async def baixar_amostras(page, token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("http://bioinfo-container:8000/samples/download", headers=headers)
+            response = await client.get("http://bioinfo-container:8000/samples/pending_count", headers=headers)
             if response.status_code == 200:
-                logger.info("Download iniciado!")
-                sample_name = response.json().get("sample_name", "Unknown")
-                await log_message(page, f"Iniciando o download da amostra {sample_name}.")
-                await atualizar_tabela(page, token)
-                await page.update_async()
-                if websocket_connection is None or websocket_connection.closed:
-                    websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
-                message = await websocket_connection.recv()
-                await log_message(page, message)
-                await atualizar_tamanho_amostras(page, token, sample_name)
-                await atualizar_tabela(page, token)
-                await page.update_async()
-            elif response.status_code == 404:
-                logger.error(f"Download error: {response.status_code} - {response.text}")
+                pending_count = response.json().get("pending_count", 0)
+                if pending_count == 0:
+                    logger.info("No pending samples to download.")
+                    await log_message(page, "No pending samples to download.")
+                    return
+                for _ in range(pending_count):
+                    response = await client.post("http://bioinfo-container:8000/samples/download", headers=headers)
+                    if response.status_code == 200:
+                        logger.info("Download iniciado!")
+                        sample_name = response.json().get("sample_name", "Unknown")
+                        await log_message(page, f"Iniciando o download da amostra {sample_name}.")
+                        await atualizar_tabela(page, token)
+                        await page.update_async()
+                        if websocket_connection is None or websocket_connection.closed:
+                            websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
+                        message = await websocket_connection.recv()
+                        await log_message(page, message)
+                        await atualizar_tamanho_amostras(page, token, sample_name)
+                        await atualizar_tabela(page, token)
+                        await page.update_async()
+                    elif response.status_code == 404:
+                        logger.error(f"Download error: {response.status_code} - {response.text}")
+                    else:
+                        logger.error(f"Download error: {response.status_code} - {response.text}")
             else:
-                logger.error(f"Download error: {response.status_code} - {response.text}")
+                logger.error(f"Failed to get pending samples count: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     await atualizar_tabela(page, token)

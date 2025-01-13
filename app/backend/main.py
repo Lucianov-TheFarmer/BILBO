@@ -21,6 +21,7 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession  # Add this import
 from sqlalchemy.future import select  # Add this import
 import subprocess  # Add this import
+from pydantic import BaseModel  # Add this import
 
 # Adicionar o diretório raiz ao sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -124,17 +125,24 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+class SampleCreateRequest(BaseModel):
+    sra_codes: List[str]
+    size: str
+
 @app.post("/samples/")
-def create_sample(sra_code: str, size: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    existing_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
-    if existing_sample:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sample with this SRA code already exists")
-    
-    db_sample = Sample(sra_code=sra_code, size=size, status="Pending", user_id=current_user.id)
-    db.add(db_sample)
+def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    created_samples = []
+    for sra_code in request.sra_codes:
+        existing_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
+        if existing_sample:
+            continue  # Skip existing samples
+        db_sample = Sample(sra_code=sra_code, size=request.size, status="Pending", user_id=current_user.id)
+        db.add(db_sample)
+        created_samples.append(db_sample)
     db.commit()
-    db.refresh(db_sample)
-    return db_sample
+    for sample in created_samples:
+        db.refresh(sample)
+    return created_samples
 
 @app.get("/samples/")
 def read_samples(skip: int = 0, limit: int = 10, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -156,9 +164,19 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
     if db_sample is None:
         raise HTTPException(status_code=404, detail="Sample not found")
+    
+    # Run the script to delete the file
+    command = f"bash /app/backend/scripts/delete_file.sh {sra_code}"
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = process.communicate()
+
+    if process.returncode != 0 and "not found" not in stderr:
+        logger.error(f"Error deleting file: {stderr}")
+        raise HTTPException(status_code=500, detail="Error deleting file")
+
     db.delete(db_sample)
     db.commit()
-    return {"message": "Sample deleted"}
+    return {"message": "Sample and file deleted"}
 
 @app.get("/samples/status/{sra_code}")
 def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -270,14 +288,31 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
     size_1, size_2 = sizes
 
-    # Update the database
-    db_sample_1 = Sample(sra_code=f"{sra_code}_1.fastq", size=size_1, status="Completed", user_id=current_user.id)
-    db_sample_2 = Sample(sra_code=f"{sra_code}_2.fastq", size=size_2, status="Completed", user_id=current_user.id)
+    # Check if the samples already exist
+    db_sample_1 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_1.fastq", Sample.user_id == current_user.id).first()
+    db_sample_2 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_2.fastq", Sample.user_id == current_user.id).first()
+
+    if db_sample_1 is None:
+        db_sample_1 = Sample(sra_code=f"{sra_code}_1.fastq", size=size_1, status="Completed", user_id=current_user.id)
+        db.add(db_sample_1)
+    else:
+        db_sample_1.size = size_1
+        db_sample_1.status = "Completed"
+
+    if db_sample_2 is None:
+        db_sample_2 = Sample(sra_code=f"{sra_code}_2.fastq", size=size_2, status="Completed", user_id=current_user.id)
+        db.add(db_sample_2)
+    else:
+        db_sample_2.size = size_2
+        db_sample_2.status = "Completed"
 
     db.delete(db_sample)
-    db.add(db_sample_1)
-    db.add(db_sample_2)
     db.commit()
+
+@app.get("/samples/pending_count")
+def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    pending_count = db.query(Sample).filter(Sample.status == "Pending", Sample.user_id == current_user.id).count()
+    return {"pending_count": pending_count}
 
 # Adicionar um print para verificar os endpoints registrados
 print("Registered routes before mounting Flet:", app.routes)
