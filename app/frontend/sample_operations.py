@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 websocket_connection = None
 first_check_done = False
 
-async def adicionar_amostra(page, token):
+async def adicionar_amostra(page, token, container_menu_direita):
     async def inserir_sra_na_fila(sra_codes):
         sra_codes = [code.strip() for code in sra_codes.split(",") if code.strip()]
         if not sra_codes:
@@ -24,13 +24,18 @@ async def adicionar_amostra(page, token):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post("http://bioinfo-container:8000/samples/", json={"sra_codes": sra_codes, "size": "Unknown"}, headers=headers)
-            if response.status_code == 200:
-                logger.info("Amostras adicionadas com sucesso!")
-            else:
-                logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
+                if response.status_code == 200:
+                    samples = response.json()
+                    for sample in samples:
+                        stage_response = await client.post(f"http://bioinfo-container:8000/samples/{sample['id']}/stages/", json={"stage_id": 1, "status": "Pending"}, headers=headers)
+                        if stage_response.status_code != 200:
+                            logger.error(f"Erro ao associar estágio à amostra: {stage_response.status_code} - {stage_response.text}")
+                    logger.info("Amostras adicionadas com sucesso!")
+                else:
+                    logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"An error occurred: {e}")
-        await atualizar_tabela(page, token)
+        await atualizar_tabela(page, token, container_menu_direita)
         await page.update_async()
 
     sra_code_field = ft.TextField(
@@ -53,7 +58,7 @@ async def adicionar_amostra(page, token):
     dlg_modal_adicionar_amostra.open = True
     await page.update_async()
 
-async def excluir_amostras_selecionadas(page, token):
+async def excluir_amostras_selecionadas(page, token, container_menu_direita):
     async def confirmar_exclusao(e):
         amostras_selecionadas_para_exclusao = []
         dlg_modal_excluir_amostra.open = False
@@ -74,7 +79,7 @@ async def excluir_amostras_selecionadas(page, token):
         except Exception as e:
             logger.error(f"An error occurred: {e}")
             await log_message(page, f"An error occurred: {e}")
-        await atualizar_tabela(page, token)
+        await atualizar_tabela(page, token, container_menu_direita)
         await page.update_async()
 
     confirm_field = ft.TextField(
@@ -97,12 +102,14 @@ async def excluir_amostras_selecionadas(page, token):
     dlg_modal_excluir_amostra.open = True
     await page.update_async()
 
-async def atualizar_tabela(page, token):
+async def atualizar_tabela(page, token, container_menu_direita):
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         if not first_check_done:
             response = await client.get("http://bioinfo-container:8000/samples/", headers=headers)
+            await client.post("http://bioinfo-container:8000/stages/", headers=headers)
+
             samples = response.json()
             for sample in samples:
                 if sample["status"] == "In Progress":
@@ -113,21 +120,58 @@ async def atualizar_tabela(page, token):
         else:
             response = await client.get("http://bioinfo-container:8000/samples/", headers=headers)
             samples = response.json()
-    tabela_amostras.rows.clear()
-    for sample in samples:
-        tabela_amostras.rows.append(
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Checkbox()),
-                ],
+    
+        tabela_amostras.rows.clear()
+        for sample in samples:
+            tabela_amostras.rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
+                        ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
+                        ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                        ft.DataCell(ft.Checkbox()),
+                    ],
+                )
             )
-        )
+
+        # Update stage counts
+        stage_counts = {}
+        for stage_id in range(1, 7):
+            response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+            if response.status_code == 200:
+                stage_counts[stage_id] = len(response.json())
+            else:
+                stage_counts[stage_id] = 0
+
+        # Update the stage counts in the UI
+        for i, row in enumerate(container_menu_direita.content.controls[0].rows):
+            row.cells[1].content.content.value = str(stage_counts[i + 1])
+
     await page.update_async()
 
-async def baixar_amostras(page, token):
+async def atualizar_tabela_por_estagio(page, token, stage_id):
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+        if response.status_code == 200:
+            samples = response.json()
+            tabela_amostras.rows.clear()
+            for sample in samples:
+                tabela_amostras.rows.append(
+                    ft.DataRow(
+                        cells=[
+                            ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
+                            ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
+                            ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                            ft.DataCell(ft.Checkbox()),
+                        ],
+                    )
+                )
+            await page.update_async()
+        else:
+            logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
+
+async def baixar_amostras(page, token, container_menu_direita):
     global websocket_connection
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
@@ -145,14 +189,14 @@ async def baixar_amostras(page, token):
                         logger.info("Download iniciado!")
                         sample_name = response.json().get("sample_name", "Unknown")
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
-                        await atualizar_tabela(page, token)
+                        await atualizar_tabela(page, token, container_menu_direita)
                         await page.update_async()
                         if websocket_connection is None or websocket_connection.closed:
                             websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
                         message = await websocket_connection.recv()
                         await log_message(page, message)
                         await atualizar_tamanho_amostras(page, token, sample_name)
-                        await atualizar_tabela(page, token)
+                        await atualizar_tabela(page, token, container_menu_direita)
                         await page.update_async()
                     elif response.status_code == 404:
                         logger.error(f"Download error: {response.status_code} - {response.text}")
@@ -162,7 +206,7 @@ async def baixar_amostras(page, token):
                 logger.error(f"Failed to get pending samples count: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
-    await atualizar_tabela(page, token)
+    await atualizar_tabela(page, token, container_menu_direita)
     await page.update_async()
 
 async def atualizar_tamanho_amostras(page, token, sra_code):

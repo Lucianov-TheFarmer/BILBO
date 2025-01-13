@@ -174,6 +174,9 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
         logger.error(f"Error deleting file: {stderr}")
         raise HTTPException(status_code=500, detail="Error deleting file")
 
+    # Delete corresponding sample stages
+    db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id).delete()
+
     db.delete(db_sample)
     db.commit()
     return {"message": "Sample and file deleted"}
@@ -306,6 +309,21 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
         db_sample_2.size = size_2
         db_sample_2.status = "Completed"
 
+    db.commit()
+    db.refresh(db_sample_1)
+    db.refresh(db_sample_2)
+
+    # Update sample_stages with new sample IDs
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id).first()
+    if db_sample_stage:
+        db_sample_stage_1 = SampleStage(sample_id=db_sample_1.id, stage_id=db_sample_stage.stage_id)
+        db_sample_stage_2 = SampleStage(sample_id=db_sample_2.id, stage_id=db_sample_stage.stage_id)
+        db.add(db_sample_stage_1)
+        db.add(db_sample_stage_2)
+        db.delete(db_sample_stage)
+
+    db.commit()
+
     db.delete(db_sample)
     db.commit()
 
@@ -313,6 +331,66 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     pending_count = db.query(Sample).filter(Sample.status == "Pending", Sample.user_id == current_user.id).count()
     return {"pending_count": pending_count}
+
+@app.post("/stages/")
+def create_stages(db: Session = Depends(get_db)):
+    stages = [
+        {"id": 1, "name": "obtencao"},
+        {"id": 2, "name": "qualidade1"},
+        {"id": 3, "name": "trimagem"},
+        {"id": 4, "name": "qualidade2"},
+        {"id": 5, "name": "alinhamento"},
+        {"id": 6, "name": "quantificacao"}
+    ]
+    for stage in stages:
+        db_stage = db.query(Stage).filter(Stage.id == stage["id"]).first()
+        if not db_stage:
+            db_stage = Stage(id=stage["id"], name=stage["name"])
+            db.add(db_stage)
+    db.commit()
+    return {"message": "Stages created successfully"}
+
+class SampleStageCreateRequest(BaseModel):
+    stage_id: int
+    status: str
+
+@app.post("/samples/{sample_id}/stages/")
+def create_sample_stage(sample_id: int, request: SampleStageCreateRequest, db: Session = Depends(get_db)):
+    db_sample_stage = SampleStage(sample_id=sample_id, stage_id=request.stage_id)
+    db.add(db_sample_stage)
+    db.commit()
+    db.refresh(db_sample_stage)
+    return db_sample_stage
+
+@app.get("/samples/{sample_id}/stages/")
+def get_sample_stages(sample_id: int, db: Session = Depends(get_db)):
+    sample_stages = db.query(SampleStage).filter(SampleStage.sample_id == sample_id).all()
+    return sample_stages
+
+@app.put("/samples/{sample_id}/stages/{stage_id}")
+def update_sample_stage(sample_id: int, stage_id: int, status: str, db: Session = Depends(get_db)):
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == sample_id, SampleStage.stage_id == stage_id).first()
+    if not db_sample_stage:
+        raise HTTPException(status_code=404, detail="Sample stage not found")
+    db_sample_stage.status = status
+    db.commit()
+    db.refresh(db_sample_stage)
+    return db_sample_stage
+
+@app.get("/samples/stages/{stage_id}")
+def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == stage_id).all()
+    samples = []
+    for sample_stage in sample_stages:
+        sample = db.query(Sample).filter(Sample.id == sample_stage.sample_id, Sample.user_id == current_user.id).first()
+        if sample:
+            samples.append({
+                "id": sample.id,
+                "sra_code": sample.sra_code,
+                "size": sample.size,
+                "status": sample.status
+            })
+    return samples
 
 # Adicionar um print para verificar os endpoints registrados
 print("Registered routes before mounting Flet:", app.routes)

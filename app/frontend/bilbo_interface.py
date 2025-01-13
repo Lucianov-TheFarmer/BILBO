@@ -1,16 +1,126 @@
 import asyncio
 import flet as ft
 from .menu_operations import create_menubar, mudar_tema
-from .sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, tabela_amostras
+from .sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
 from .sample_operations import baixar_amostras
 from .utils import log_message  # Updated import
 import websockets  # New import
+import httpx
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)  # Set to INFO level
+logger = logging.getLogger(__name__)
 
 async def show_bilbo_interface(page, logout, username, token):  # Updated function signature
     print("Entering show_bilbo_interface")
     page.controls.clear()
 
     menubar_principal = create_menubar(page, token)
+
+    container_menu_direita = ft.Container(
+        expand=2,
+        border=ft.border.all(1, ft.colors.BLACK),
+        border_radius=ft.border_radius.all(3),
+        margin=ft.margin.only(0, 5, 0, 0),
+        content=ft.ListView(
+            expand=1,
+            spacing=10,
+            controls=[
+                ft.DataTable(
+                    heading_row_color=ft.colors.BLACK12,
+                    columns=[
+                        ft.DataColumn(ft.Text("Procedimento")),
+                        ft.DataColumn(ft.Text("Quantidade")),
+                    ],
+                    rows=[
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Obtenção de amostras"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1))
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Análise de qualidade"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2))
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Trimmagem"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3))
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Análise de qualidade (pós trimmagem)"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4))
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Alinhamento"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5))
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Quantificação"),
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6))
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("0"),
+                                    alignment=ft.alignment.center,
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6))
+                                )),
+                            ],
+                        ),
+                    ],
+                )
+            ]
+        )
+    )
+
+    # Call atualizar_tabela to populate the table initially
+    print("Calling atualizar_tabela")
+    await atualizar_tabela(page, token, container_menu_direita)
 
     container_amostras = ft.Container(
         expand=2,
@@ -22,16 +132,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
             spacing=10,
             controls=[
                 tabela_amostras,  # Use the global tabela_amostras
-                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token))),
-                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token))),
-                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token))),
+                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita))),
+                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita))),
+                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita))),
             ]
         )
     )
-
-    # Call atualizar_tabela to populate the table initially
-    print("Calling atualizar_tabela")
-    await atualizar_tabela(page, token)
 
     container_terminal = ft.Container(
         expand=1,
@@ -52,64 +158,6 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
         border_radius=ft.border_radius.all(3),
         margin=ft.margin.only(0, 5, 0, 0),
         content=ft.Container(expand=True)
-    )
-
-    container_menu_direita = ft.Container(
-        expand=2,
-        border=ft.border.all(1, ft.colors.BLACK),
-        border_radius=ft.border_radius.all(3),
-        margin=ft.margin.only(0, 5, 0, 0),
-        content=ft.ListView(
-            expand=1,
-            spacing=10,
-            controls=[
-                ft.DataTable(
-                    heading_row_color=ft.colors.BLACK12,
-                    columns=[
-                        ft.DataColumn(ft.Text("Procedimento")),
-                        ft.DataColumn(ft.Text("Quantidade")),
-                    ],
-                    rows=[
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Obtenção de amostras")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Análise de qualidade")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Trimmagem")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Análise de qualidade (pós trimmagem)")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Alinhamento")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text("Quantificação")),
-                                ft.DataCell(ft.Container(ft.Text("0"), width=80, alignment=ft.alignment.center)),
-                            ],
-                        ),
-                    ],
-                )
-            ]
-        )
     )
 
     print("Adding controls to the page")
@@ -189,5 +237,5 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
         while True:
             message = await websocket.recv()
             await log_message(page, message)
-            await atualizar_tabela(page, token)
+            await atualizar_tabela(page, token, container_menu_direita)
             await page.update_async()

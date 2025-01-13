@@ -15,6 +15,7 @@ class Sample(Base):
     size = Column(String)
     status = Column(String)
     user_id = Column(Integer, ForeignKey("users.id"))  # Add user_id field
+    stages = relationship("SampleStage", back_populates="sample")  # Ensure relationship is defined
 
 class Stage(Base):
     __tablename__ = "stages"
@@ -26,7 +27,6 @@ class SampleStage(Base):
     id = Column(Integer, primary_key=True, index=True)
     sample_id = Column(Integer, ForeignKey("samples.id"))
     stage_id = Column(Integer, ForeignKey("stages.id"))
-    status = Column(String)
 
     sample = relationship("Sample", back_populates="stages")
     stage = relationship("Stage")
