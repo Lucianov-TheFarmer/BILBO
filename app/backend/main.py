@@ -133,8 +133,11 @@ class SampleCreateRequest(BaseModel):
 def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     created_samples = []
     for sra_code in request.sra_codes:
+        # Verifique se a amostra já existe, considerando o código SRA original e os sufixos _1.fastq e _2.fastq
         existing_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
-        if existing_sample:
+        existing_sample_1 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_1.fastq", Sample.user_id == current_user.id).first()
+        existing_sample_2 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_2.fastq", Sample.user_id == current_user.id).first()
+        if existing_sample or existing_sample_1 or existing_sample_2:
             continue  # Skip existing samples
         db_sample = Sample(sra_code=sra_code, size=request.size, status="Pending", user_id=current_user.id)
         db.add(db_sample)
@@ -326,6 +329,10 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
     db.delete(db_sample)
     db.commit()
+
+    # Notify the frontend via WebSocket
+    await manager.broadcast(f"Tamanho das amostras {sra_code} atualizado.")
+    return {"message": "Sample sizes updated successfully"}
 
 @app.get("/samples/pending_count")
 def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

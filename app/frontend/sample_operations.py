@@ -195,7 +195,7 @@ async def baixar_amostras(page, token, container_menu_direita):
                             websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
                         message = await websocket_connection.recv()
                         await log_message(page, message)
-                        await atualizar_tamanho_amostras(page, token, sample_name)
+                        await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)  # Passe container_menu_direita
                         await atualizar_tabela(page, token, container_menu_direita)
                         await page.update_async()
                     elif response.status_code == 404:
@@ -209,13 +209,14 @@ async def baixar_amostras(page, token, container_menu_direita):
     await atualizar_tabela(page, token, container_menu_direita)
     await page.update_async()
 
-async def atualizar_tamanho_amostras(page, token, sra_code):
+async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direita):  # Adicione container_menu_direita como argumento
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post("http://bioinfo-container:8000/samples/calculate_size", params={"sra_code": sra_code}, headers=headers)
             if response.status_code == 200:
                 logger.info("Tamanho das amostras atualizado com sucesso!")
+                await atualizar_tabela(page, token, container_menu_direita)  # Atualize a tabela após calcular o tamanho
             else:
                 logger.error(f"Erro ao atualizar tamanho das amostras: {response.status_code} - {response.text}")
                 await log_message(page, f"Erro ao atualizar tamanho das amostras: {response.status_code} - {response.text}")
