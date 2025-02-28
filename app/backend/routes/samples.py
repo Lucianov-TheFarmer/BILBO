@@ -7,6 +7,7 @@ from ..utils import get_current_user, manager  # Atualizado
 from pydantic import BaseModel
 import subprocess
 import asyncio
+import sys
 import threading
 
 router = APIRouter()
@@ -58,8 +59,10 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     if db_sample is None:
         raise HTTPException(status_code=404, detail="Sample not found")
     
+    user_id = current_user.id
+
     # Run the script to delete the file
-    command = f"bash /app/backend/scripts/delete_file.sh {sra_code}"
+    command = f"bash /app/backend/scripts/delete_file.sh {sra_code} {user_id}"
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout, stderr = process.communicate()
 
@@ -87,10 +90,11 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
         raise HTTPException(status_code=404, detail="No pending samples found")
 
     sra_code = pending_sample.sra_code
+    user_id = current_user.id
     pending_sample.status = "In Progress"
     db.commit()
 
-    command = f"bash /app/backend/scripts/download_script.sh {sra_code} /samples"
+    command = f"bash /app/backend/scripts/download_script.sh {sra_code} {user_id}"
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
     def update_status():
@@ -128,15 +132,19 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
     if db_sample is None or db_sample.status != "Completed":
         raise HTTPException(status_code=404, detail="Sample not found or not completed")
 
-    command = f"python3 /app/backend/scripts/calculate_size.py {sra_code}"
+    user_id = current_user.id
+
+    command = f"python3 /app/backend/scripts/calculate_size.py {sra_code} {user_id}"
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout, stderr = process.communicate()
 
     if process.returncode != 0:
+        print(f"Error calculating size: {stderr}", file=sys.stderr)
         raise HTTPException(status_code=500, detail="Error calculating size")
 
     sizes = stdout.strip().split(',')
     if len(sizes) != 2:
+        print(f"Invalid size format returned by script: {stdout}", file=sys.stderr)
         raise HTTPException(status_code=500, detail="Invalid size format returned by script")
 
     size_1, size_2 = sizes

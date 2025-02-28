@@ -1,7 +1,8 @@
 #!/bin/bash
 
 SRA_CODE=$1
-FILE_PATH="/samples/${SRA_CODE}"
+USER_ID=$2
+FILE_PATH="../users/${USER_ID}/samples/${SRA_CODE}"
 
 if [ -f "$FILE_PATH" ]; then
     rm "$FILE_PATH"
