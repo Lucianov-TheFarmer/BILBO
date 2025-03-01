@@ -121,7 +121,14 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
             response = await client.get("http://bioinfo-container:8000/samples/", headers=headers)
             samples = response.json()
     
+        # Function to select or deselect all samples
+        async def toggle_select_all(e):
+            for row in tabela_amostras_local.rows:
+                row.cells[3].content.value = e.control.value
+            await page.update_async()
+
         tabela_amostras_local.rows.clear()
+        tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
         for sample in samples:
             tabela_amostras_local.rows.append(
                 ft.DataRow(
@@ -230,7 +237,7 @@ tabela_amostras = ft.DataTable(
         ft.DataColumn(ft.Text("Identificação")),
         ft.DataColumn(ft.Text("Tamanho")),
         ft.DataColumn(ft.Text("Status")),
-        ft.DataColumn(ft.Text(" ")),
+        ft.DataColumn(ft.Checkbox()),  # Add checkbox to the column header
     ],
     rows=[],
 )
