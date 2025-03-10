@@ -1,5 +1,5 @@
 import flet as ft
-from .sample_operations import adicionar_amostra  # Updated import
+from .procedures.sample_operations import adicionar_amostra  # Updated import
 import asyncio
 
 def menubar_clicar_item(e):

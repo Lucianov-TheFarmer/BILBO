@@ -3,7 +3,7 @@ import httpx
 import logging
 import asyncio
 import websockets  # New import
-from .utils import log_message  # Updated import
+from ..utils import log_message  # Updated import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

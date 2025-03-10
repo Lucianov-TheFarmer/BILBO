@@ -18,7 +18,7 @@ mkdir -p $sra_code
 
 # Create a new tmux session and run fasterq-dump inside it
 echo "Starting tmux session for fasterq-dump"
-tmux new-session -d -s download_session "fasterq-dump --progress $sra_code -O $output_dir > $log_file 2>&1; exit_code=\$?; if [ \$exit_code -eq 0 ]; then echo 'Download completed successfully' >> $log_file; curl -X POST http://bioinfo-container:8000/samples/update_status -H 'Content-Type: application/x-www-form-urlencoded' -d 'sra_code=$sra_code&status=Completed'; else echo 'Download failed with exit code \$exit_code' >> $log_file; fi; tmux wait-for -S download_done"
+tmux new-session -d -s download_$user_id "fasterq-dump --progress $sra_code -O $output_dir > $log_file 2>&1; exit_code=\$?; if [ \$exit_code -eq 0 ]; then echo 'Download completed successfully' >> $log_file; curl -X POST http://bioinfo-container:8000/samples/update_status -H 'Content-Type: application/x-www-form-urlencoded' -d 'sra_code=$sra_code&status=Completed'; else echo 'Download failed with exit code \$exit_code' >> $log_file; fi; tmux wait-for -S download_done"
 
 # Wait for the tmux session to finish
 echo "Waiting for tmux session to finish"

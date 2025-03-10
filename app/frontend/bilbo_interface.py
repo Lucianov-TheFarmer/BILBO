@@ -1,9 +1,9 @@
 import asyncio
 import flet as ft
 from .menu_operations import create_menubar, mudar_tema
-from .sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
-from .sample_operations import baixar_amostras
-from .quality_analysis import show_quality_analysis_modal  # New import
+from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
+from .procedures.sample_operations import baixar_amostras
+from .procedures.quality_analysis import show_quality_analysis_modal  # Updated import
 from .utils import log_message  # Updated import
 import websockets  # New import
 import httpx
@@ -155,15 +155,15 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
 
     # Define the "Analisar qualidade" button
     analisar_qualidade_button = ft.Container(
-    content=ft.TextButton(
-        "Analisar qualidade",
-        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-        width=200,
-        height=40,
-        on_click=lambda e: asyncio.create_task(show_quality_analysis_modal(page, token))  # Call the new function
-    ),
-    margin=ft.margin.only(0, 10, 0, 0)
-)
+        content=ft.TextButton(
+            "Analisar qualidade",
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+            width=200,
+            height=40,
+            on_click=lambda e: asyncio.create_task(show_quality_analysis_modal(page, token))  # Call the new function
+        ),
+        margin=ft.margin.only(0, 10, 0, 0)
+    )
 
     # Function to toggle buttons
     async def toggle_buttons(show_analysis_button):
