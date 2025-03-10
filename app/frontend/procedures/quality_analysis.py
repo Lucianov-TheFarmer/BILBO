@@ -27,6 +27,23 @@ async def show_quality_analysis_modal(page, token):
             row.cells[3].content.value = e.control.value
         await page.update_async()
 
+    # Function to start quality analysis
+    async def start_quality_analysis(e):
+        selected_samples = [row.cells[0].content.value for row in tabela_analise_qualidade.rows if row.cells[3].content.value]
+        if not selected_samples:
+            logger.error("Nenhuma amostra selecionada.")
+            return
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
+                if response.status_code == 200:
+                    logger.info("Análise de qualidade iniciada com sucesso!")
+                    dlg_modal_analise_qualidade.open = False  # Close the modal
+                else:
+                    logger.error(f"Erro ao iniciar análise de qualidade: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"An error occurred: {e}")
+
     # Create the table with samples
     tabela_analise_qualidade = ft.DataTable(
         heading_row_color=ft.colors.BLACK12,
@@ -67,7 +84,7 @@ async def show_quality_analysis_modal(page, token):
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=200,
                     height=40,
-                    on_click=lambda e: print("Iniciar análise de qualidade clicked")
+                    on_click=start_quality_analysis  # Call the new function
                 )
             ),
         ],

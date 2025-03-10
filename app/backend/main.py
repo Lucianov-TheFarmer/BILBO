@@ -6,7 +6,7 @@ import logging
 from .utils import manager  # Atualizado
 
 # Importar as rotas
-from .routes import auth, samples
+from .routes import auth, samples, quality_analysis  # Atualizado
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +36,7 @@ app.add_middleware(
 # Incluir as rotas sem prefixos
 app.include_router(auth.router, tags=["auth"])
 app.include_router(samples.router, tags=["samples"])
+app.include_router(quality_analysis.router, tags=["quality_analysis"])  # Atualizado
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
