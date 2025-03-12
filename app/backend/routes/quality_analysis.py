@@ -38,7 +38,7 @@ async def update_quality_analysis_status(sra_code: str = Form(...), status: str 
     # Update the sample stage
     db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id, SampleStage.stage_id == 2).first()
     if db_sample_stage:
-        db_sample_stage.status = status
+        db_sample_stage.name = f"{sra_code}.html"
         db.commit()
 
     await manager.broadcast(f"Análise de qualidade da amostra {sra_code} {status.lower()}.")
@@ -46,5 +46,33 @@ async def update_quality_analysis_status(sra_code: str = Form(...), status: str 
 
 @router.get("/quality_analysis/completed")
 def get_completed_quality_analysis(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    samples = db.query(Sample).filter(Sample.user_id == current_user.id, Sample.status == "Completed").all()
+    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == 2).all()
+    samples = []
+    for sample_stage in sample_stages:
+        sample = db.query(Sample).filter(Sample.id == sample_stage.sample_id, Sample.user_id == current_user.id).first()
+        if sample:
+            samples.append({
+                "id": sample.id,
+                "sra_code": sample.sra_code,
+                "size": sample.size,
+                "status": sample.status,
+                "name": sample_stage.name  # Include the name field
+            })
     return samples
+
+@router.post("/quality_analysis/add_result")
+def add_quality_analysis_result(sra_code: str = Form(...), user_id: int = Form(...), db: Session = Depends(get_db)):
+    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == user_id).first()
+    if not db_sample:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
+
+    # Create a new SampleStage entry for the quality analysis result
+    new_sample_stage = SampleStage(
+        sample_id=db_sample.id,
+        stage_id=2,  # Assuming stage_id 2 is for quality analysis
+        name=f"{sra_code}.html"
+    )
+    db.add(new_sample_stage)
+    db.commit()
+
+    return {"message": "Quality analysis result added successfully"}

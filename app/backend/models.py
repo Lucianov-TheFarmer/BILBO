@@ -27,6 +27,7 @@ class SampleStage(Base):
     id = Column(Integer, primary_key=True, index=True)
     sample_id = Column(Integer, ForeignKey("samples.id"))
     stage_id = Column(Integer, ForeignKey("stages.id"))
+    name = Column(String)  # Ensure name column is defined
 
     sample = relationship("Sample", back_populates="stages")
     stage = relationship("Stage")

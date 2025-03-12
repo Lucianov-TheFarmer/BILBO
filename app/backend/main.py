@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 import flet_fastapi
 import logging
 from .utils import manager  # Atualizado
+from .database import engine
+from .models import Base
 
 # Importar as rotas
 from .routes import auth, samples, quality_analysis  # Atualizado
@@ -58,6 +60,9 @@ app.mount("/frontend", flet_fastapi.app(main.main))
 
 # Adicionar um print para verificar os endpoints registrados após montar o Flet
 print("Registered routes after mounting Flet:", app.routes)
+
+# Create tables if they do not exist
+Base.metadata.create_all(bind=engine)
 
 if __name__ == "__main__":
     print("Starting Uvicorn server")

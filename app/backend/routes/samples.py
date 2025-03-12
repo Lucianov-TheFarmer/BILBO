@@ -123,6 +123,13 @@ async def update_sample_status(sra_code: str = Form(...), status: str = Form(...
         raise HTTPException(status_code=404, detail="Sample not found")
     db_sample.status = status
     db.commit()
+
+    # Update the sample stage
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id, SampleStage.stage_id == 1).first()
+    if db_sample_stage:
+        db_sample_stage.name = f"{sra_code}.fastq"
+        db.commit()
+
     await manager.broadcast(f"Download da amostra {sra_code} {status.lower()}.")
     return {"message": f"Sample {sra_code} status updated to {status}"}
 

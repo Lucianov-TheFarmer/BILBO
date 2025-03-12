@@ -3,7 +3,7 @@ import flet as ft
 from .menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
 from .procedures.sample_operations import baixar_amostras
-from .procedures.quality_analysis import show_quality_analysis_modal  # Updated import
+from .procedures.quality_analysis import show_quality_analysis_modal, tabela_amostras_qc, update_quality_analysis_table  # Updated import
 from .utils import log_message  # Updated import
 import websockets  # New import
 import httpx
@@ -53,7 +53,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Obtenção de amostras"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(False))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_local,
+                                            ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
+                                        ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -69,7 +74,10 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Análise de qualidade"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(True))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_qc,
+                                            analisar_qualidade_button
+                                            ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -85,7 +93,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Trimmagem"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(False))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_local,
+                                            ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
+                                        ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -101,7 +114,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Análise de qualidade (pós trimmagem)"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(False))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_local,
+                                            ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
+                                        ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -117,7 +135,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Alinhamento"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(False))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_local,
+                                            ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
+                                        ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -133,7 +156,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                     content=ft.Text("Quantificação"),
                                     on_click=lambda e: (
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6, tabela_amostras_local)),
-                                        asyncio.create_task(toggle_buttons(False))
+                                        asyncio.create_task(toggle_buttons([
+                                            tabela_amostras_local,
+                                            ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
+                                            ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
+                                        ]))
                                     )
                                 )),
                                 ft.DataCell(ft.Container(
@@ -162,20 +190,12 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
             height=40,
             on_click=lambda e: asyncio.create_task(show_quality_analysis_modal(page, token))  # Call the new function
         ),
-        margin=ft.margin.only(0, 10, 0, 0)
+        margin=ft.margin.only(0, 5, 0, 0)
     )
 
     # Function to toggle buttons
-    async def toggle_buttons(show_analysis_button):
-        if show_analysis_button:
-            container_amostras.content.controls = [analisar_qualidade_button]
-        else:
-            container_amostras.content.controls = [
-                tabela_amostras_local,
-                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
-                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=lambda e: asyncio.create_task(excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local))),
-                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=lambda e: asyncio.create_task(baixar_amostras(page, token, container_menu_direita, tabela_amostras_local))),
-            ]
+    async def toggle_buttons(controls):
+        container_amostras.content.controls = controls
         await page.update_async()
 
     container_amostras = ft.Container(
@@ -294,4 +314,5 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
             message = await websocket.recv()
             await log_message(page, message)
             await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+            await update_quality_analysis_table(page, token)  # Update the quality analysis table
             await page.update_async()

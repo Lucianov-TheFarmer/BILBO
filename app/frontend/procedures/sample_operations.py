@@ -4,6 +4,7 @@ import logging
 import asyncio
 import websockets  # New import
 from ..utils import log_message  # Updated import
+from .quality_analysis import update_quality_analysis_table  # Import the function
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +28,7 @@ async def adicionar_amostra(page, token, container_menu_direita, tabela_amostras
                 if response.status_code == 200:
                     samples = response.json()
                     for sample in samples:
-                        stage_response = await client.post(f"http://bioinfo-container:8000/samples/{sample['id']}/stages/", json={"stage_id": 1, "status": "Pending"}, headers=headers)
+                        stage_response = await client.post(f"http://bioinfo-container:8000/samples/{sample['id']}/stages/", json={"stage_id": 1, "name": f"{sample['sra_code']}.fastq", "status": "Pending"}, headers=headers)
                         if stage_response.status_code != 200:
                             logger.error(f"Erro ao associar estágio à amostra: {stage_response.status_code} - {stage_response.text}")
                     logger.info("Amostras adicionadas com sucesso!")
@@ -175,6 +176,9 @@ async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_lo
                     )
                 )
             await page.update_async()
+            # Update the quality analysis table if the stage is "Análise de qualidade"
+            if stage_id == 2:
+                await update_quality_analysis_table(page, token)
         else:
             logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
 
