@@ -3,7 +3,7 @@ import flet as ft
 from .menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
 from .procedures.sample_operations import baixar_amostras
-from .procedures.quality_analysis import show_quality_analysis_modal, tabela_amostras_qc, update_quality_analysis_table  # Updated import
+from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results  # Updated import
 from .utils import log_message  # Updated import
 import websockets  # New import
 import httpx
@@ -30,6 +30,8 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
         ],
         rows=[],
     )
+
+    tabela_amostras_qc = create_tabela_amostras_qc(page)  # Create tabela_amostras_qc with page
 
     container_menu_direita = ft.Container(
         expand=2,
@@ -76,7 +78,8 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                         asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local)),
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_qc,
-                                            analisar_qualidade_button
+                                            analisar_qualidade_button,
+                                            excluir_qualidade_button  # Add the delete button
                                             ]))
                                     )
                                 )),
@@ -189,6 +192,18 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
             width=200,
             height=40,
             on_click=lambda e: asyncio.create_task(show_quality_analysis_modal(page, token))  # Call the new function
+        ),
+        margin=ft.margin.only(0, 5, 0, 0)
+    )
+
+    # Define the "Excluir resultados de qualidade" button
+    excluir_qualidade_button = ft.Container(
+        content=ft.TextButton(
+            "Excluir resultados de qualidade",
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED),
+            width=200,
+            height=40,
+            on_click=lambda e: asyncio.create_task(delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela))  # Call the new function
         ),
         margin=ft.margin.only(0, 5, 0, 0)
     )

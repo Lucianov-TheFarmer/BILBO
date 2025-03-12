@@ -2,19 +2,30 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from ..utils import create_confirmation_modal, log_message  # Import the functions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-tabela_amostras_qc = ft.DataTable(
-    heading_row_color=ft.colors.BLACK12,
-    columns=[
-        ft.DataColumn(ft.Text("Identificação")),
-        ft.DataColumn(ft.Text("Status")),
-    ],
-    rows=[],
-)
+async def toggle_select_all_qc(e, page):
+    for row in tabela_amostras_qc.rows:
+        row.cells[2].content.value = e.control.value
+    await page.update_async()
+
+def create_tabela_amostras_qc(page):
+    global tabela_amostras_qc
+    tabela_amostras_qc = ft.DataTable(
+        heading_row_color=ft.colors.BLACK12,
+        columns=[
+            ft.DataColumn(ft.Text("Identificação")),
+            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Checkbox(on_change=lambda e: asyncio.create_task(toggle_select_all_qc(e, page)))),  # Add checkbox to the header
+            ft.DataColumn(ft.Text("Ações")),  # Add actions column
+        ],
+        rows=[],
+    )
+    return tabela_amostras_qc
 
 async def update_quality_analysis_table(page, token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -30,6 +41,8 @@ async def update_quality_analysis_table(page, token):
                             cells=[
                                 ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Display the name field
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Checkbox()),  # Add checkbox to each row
+                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=lambda e: view_sample_details(sample))),  # Add eye icon button
                             ],
                         )
                     )
@@ -37,7 +50,34 @@ async def update_quality_analysis_table(page, token):
             else:
                 logger.error(f"Erro ao obter amostras processadas: {response.status_code} - {response.text}")
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred while updating the quality analysis table: {e}", exc_info=True)
+
+async def view_sample_details(sample):
+    # Implement the logic to view sample details
+    logger.info(f"Viewing details for sample: {sample['name']}")
+
+async def delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela):
+    async def confirm_delete(e):
+        selected_samples = [row.cells[0].content.value for row in tabela_amostras_qc.rows if row.cells[2].content.value]
+        if not selected_samples:
+            logger.error("Nenhum resultado de análise selecionado.")
+            return
+        headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+        try:
+            async with httpx.AsyncClient() as client:
+                for sample_name in selected_samples:
+                    response = await client.delete(f"http://bioinfo-container:8000/quality_analysis/{sample_name}", headers=headers)
+                    if response.status_code == 200:
+                        logger.info(f"Resultado da análise {sample_name} excluído com sucesso!")
+                    else:
+                        logger.error(f"Erro ao excluir resultado da análise {sample_name}: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"An error occurred while deleting quality analysis results: {e}", exc_info=True)
+        await update_quality_analysis_table(page, token)
+        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
+        await page.update_async()
+
+    await create_confirmation_modal(page, "Confirmar exclusão", "Digite 'Confirmar' para excluir os resultados selecionados.", confirm_delete)
 
 async def show_quality_analysis_modal(page, token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -57,7 +97,7 @@ async def show_quality_analysis_modal(page, token):
             else:
                 logger.error(f"Erro ao obter amostras: {response.status_code} - {response.text}")
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred while fetching samples: {e}", exc_info=True)
 
     # Function to select or deselect all samples
     async def toggle_select_all(e):
@@ -71,17 +111,21 @@ async def show_quality_analysis_modal(page, token):
         if not selected_samples:
             logger.error("Nenhuma amostra selecionada.")
             return
+        await log_message(page, f"Iniciando análise de qualidade para {selected_samples}")
+        dlg_modal_analise_qualidade.open = False  # Close the modal
+        await page.update_async()  # Update the page to reflect the modal closure
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
-                if response.status_code == 200:
-                    logger.info("Análise de qualidade iniciada com sucesso!")
-                    dlg_modal_analise_qualidade.open = False  # Close the modal
-                    await page.update_async()  # Update the page to reflect the modal closure
-                else:
-                    logger.error(f"Erro ao iniciar análise de qualidade: {response.status_code} - {response.text}")
+            async with httpx.AsyncClient(timeout=60.0) as client:  # Increase the timeout to 60 seconds
+                for sample in selected_samples:
+                    response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": [sample]}, headers=headers)
+                    if response.status_code == 200:
+                        logger.info(f"Análise de qualidade iniciada para {sample} com sucesso!")
+                        await update_quality_analysis_table(page, token)
+                        await page.update_async()
+                    else:
+                        logger.error(f"Erro ao iniciar análise de qualidade para {sample}: {response.status_code} - {response.text}")
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred while starting quality analysis: {e}", exc_info=True)
 
     # Create the table with samples
     tabela_analise_qualidade = ft.DataTable(
