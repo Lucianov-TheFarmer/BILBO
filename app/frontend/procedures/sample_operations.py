@@ -204,9 +204,16 @@ async def baixar_amostras(page, token, container_menu_direita, tabela_amostras_l
                         await page.update_async()
                         if websocket_connection is None or websocket_connection.closed:
                             websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
-                        message = await websocket_connection.recv()
-                        await log_message(page, message)
-                        await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)  # Passe container_menu_direita
+                        
+                        while True:
+                            message = await websocket_connection.recv()
+                            await log_message(page, message)
+                            if "Download da amostra" in message and "completed" in message:
+                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)  # Passe container_menu_direita
+                                break
+                            else:
+                                logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
+
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         await page.update_async()
                     elif response.status_code == 404:

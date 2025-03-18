@@ -27,7 +27,7 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error starting quality analysis for {sra_code}: {stderr}")
     
     return {"message": "Quality analysis started successfully"}
-
+        
 @router.post("/quality_analysis/update_status")
 async def update_quality_analysis_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
     db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
@@ -67,11 +67,14 @@ def add_quality_analysis_result(sra_code: str = Form(...), user_id: int = Form(.
     if not db_sample:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
 
+    # Modify the name to remove the .fastq part
+    modified_name = sra_code.replace(".fastq", "") + ".html"
+
     # Create a new SampleStage entry for the quality analysis result
     new_sample_stage = SampleStage(
         sample_id=db_sample.id,
         stage_id=2,  # Assuming stage_id 2 is for quality analysis
-        name=f"{sra_code}.html"
+        name=modified_name
     )
     db.add(new_sample_stage)
     db.commit()

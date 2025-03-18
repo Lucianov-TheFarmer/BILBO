@@ -28,6 +28,8 @@ tmux wait-for download_done
 echo "Cleaning up tmux session"
 tmux kill-session -t download_session
 
+rmdir /app/$sra_code
+
 # Print the log file content for debugging
 echo "Log file content:"
 cat $log_file
