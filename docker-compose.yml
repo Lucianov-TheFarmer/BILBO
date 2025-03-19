@@ -4,7 +4,7 @@ services:
     container_name: bioinfo-container
     volumes:
       - ./app:/app/
-      - samples_data:/samples  # New volume for samples
+      - ./users:/users/
     ports:
       - "8000:8000"
     tty: true
@@ -39,7 +39,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - samples_data:/samples  # New volume for samples
     networks:
       - main-net
 
@@ -64,4 +63,4 @@ networks:
 
 volumes:
   postgres_data:
-  samples_data:  # New volume for samples
+  users:

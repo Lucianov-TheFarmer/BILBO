@@ -1,9 +1,9 @@
 import asyncio
 import flet as ft
 from .menu_operations import create_menubar, mudar_tema
-from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, tabela_amostras
-from .procedures.sample_operations import baixar_amostras
+from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results  # Updated import
+from .procedures.viewer import create_dropdown_menu, display_graph  # Updated import
 from .utils import log_message  # Updated import
 import websockets  # New import
 import httpx
@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)  # Set to INFO level
 logger = logging.getLogger(__name__)
 
-async def show_bilbo_interface(page, logout, username, token):  # Updated function signature
+async def show_bilbo_interface(page, logout, username, token, user_id):  # Updated function signature
     print("Entering show_bilbo_interface")
     page.controls.clear()
 
@@ -31,7 +31,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
         rows=[],
     )
 
-    tabela_amostras_qc = create_tabela_amostras_qc(page)  # Create tabela_amostras_qc with page
+    tabela_amostras_qc = create_tabela_amostras_qc(page, token)  # Pass token as argument
 
     container_menu_direita = ft.Container(
         expand=2,
@@ -54,7 +54,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Obtenção de amostras"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_local,
                                             ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
@@ -66,7 +66,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 1, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -75,7 +75,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Análise de qualidade"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_qc,
                                             analisar_qualidade_button,
@@ -86,7 +86,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 2, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -95,7 +95,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Trimmagem"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_local,
                                             ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
@@ -107,7 +107,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 3, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -116,7 +116,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Análise de qualidade (pós trimmagem)"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_local,
                                             ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
@@ -128,7 +128,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 4, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -137,7 +137,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Alinhamento"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_local,
                                             ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
@@ -149,7 +149,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 5, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -158,7 +158,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("Quantificação"),
                                     on_click=lambda e: (
-                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6, tabela_amostras_local)),
+                                        asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6, tabela_amostras_local, user_id)),  # Pass user_id as argument
                                         asyncio.create_task(toggle_buttons([
                                             tabela_amostras_local,
                                             ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local))),
@@ -170,7 +170,7 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
                                 ft.DataCell(ft.Container(
                                     content=ft.Text("0"),
                                     alignment=ft.alignment.center,
-                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6, tabela_amostras_local))
+                                    on_click=lambda e: asyncio.create_task(atualizar_tabela_por_estagio(page, token, 6, tabela_amostras_local, user_id))  # Pass user_id as argument
                                 )),
                             ],
                         ),
@@ -248,7 +248,14 @@ async def show_bilbo_interface(page, logout, username, token):  # Updated functi
         border=ft.border.all(1, ft.colors.BLACK),
         border_radius=ft.border_radius.all(3),
         margin=ft.margin.only(0, 5, 0, 0),
-        content=ft.Container(expand=True)
+        content=ft.Column(
+            controls=[
+                ft.Container(
+                    expand=True,
+                    content=None  # Placeholder to maintain size
+                )
+            ]
+        )
     )
 
     print("Adding controls to the page")

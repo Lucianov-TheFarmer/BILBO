@@ -34,4 +34,4 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     access_token_expires = timedelta(minutes=1440)
     access_token = create_access_token(data={"sub": db_user.username}, expires_delta=access_token_expires)
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": db_user.id}  # Include user_id in the response

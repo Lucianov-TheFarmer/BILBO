@@ -3,6 +3,7 @@ import asyncio
 import httpx
 import logging
 from ..utils import create_confirmation_modal, log_message  # Import the functions
+from .viewer import create_dropdown_menu, display_graph  # Updated import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +14,7 @@ async def toggle_select_all_qc(e, page):
         row.cells[2].content.value = e.control.value
     await page.update_async()
 
-def create_tabela_amostras_qc(page):
+def create_tabela_amostras_qc(page, token):  # Updated function signature
     global tabela_amostras_qc
     tabela_amostras_qc = ft.DataTable(
         heading_row_color=ft.colors.BLACK12,
@@ -27,7 +28,7 @@ def create_tabela_amostras_qc(page):
     )
     return tabela_amostras_qc
 
-async def update_quality_analysis_table(page, token):
+async def update_quality_analysis_table(page, token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
@@ -42,7 +43,7 @@ async def update_quality_analysis_table(page, token):
                                 ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Display the name field
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),  # Add checkbox to each row
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=lambda e: view_sample_details(sample))),  # Add eye icon button
+                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=lambda e, s=sample["name"]: asyncio.create_task(view_sample_details(page, token, s, user_id)))),  # Add eye icon button
                             ],
                         )
                     )
@@ -52,9 +53,28 @@ async def update_quality_analysis_table(page, token):
     except Exception as e:
         logger.error(f"An error occurred while updating the quality analysis table: {e}", exc_info=True)
 
-async def view_sample_details(sample):
-    # Implement the logic to view sample details
-    logger.info(f"Viewing details for sample: {sample['name']}")
+async def view_sample_details(page, token, sample_name, user_id):
+    # Display the dropdown menu and the initial graph
+    dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id)
+    initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id)
+    
+    # Find the container_pre_visualizacao and update its content
+    for control in page.controls:
+        if isinstance(control, ft.Row):
+            for column in control.controls:
+                if isinstance(column, ft.Column):
+                    for container in column.controls:
+                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                            container.content.controls = [
+                                ft.Container(
+                                    expand=True,
+                                    content=ft.Column(
+                                        controls=[dropdown_menu, initial_graph]
+                                    )
+                                )
+                            ]
+                            await page.update_async()
+                            return
 
 async def delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela):
     async def confirm_delete(e):

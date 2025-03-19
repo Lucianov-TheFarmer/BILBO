@@ -30,3 +30,6 @@ Thumbs.db
 # Project specific
 app/frontend/__pycache__/
 app/backend/__pycache__/
+
+# Ignore the users directory
+/users/

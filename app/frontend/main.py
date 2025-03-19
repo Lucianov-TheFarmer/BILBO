@@ -33,9 +33,10 @@ async def main(page: ft.Page):
                 response = await client.post("http://bioinfo-container:8000/token", data={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
             if response.status_code == 200:
                 token = response.json()["access_token"]
+                user_id = response.json()["user_id"]  # Assuming the user_id is returned in the response
                 print(f"Token: {token}")
                 username = username_input.value
-                await show_bilbo_interface(page, logout, username, token)  # Pass token as argument
+                await show_bilbo_interface(page, logout, username, token, user_id)  # Pass user_id as argument
             else:
                 result.value = response.json()
         except httpx.RequestError as ex:

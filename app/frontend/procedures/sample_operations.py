@@ -157,7 +157,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
 
     await page.update_async()
 
-async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_local):
+async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_local, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
@@ -178,7 +178,7 @@ async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_lo
             await page.update_async()
             # Update the quality analysis table if the stage is "Análise de qualidade"
             if stage_id == 2:
-                await update_quality_analysis_table(page, token)
+                await update_quality_analysis_table(page, token, user_id)  # Pass user_id as argument
         else:
             logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
 
