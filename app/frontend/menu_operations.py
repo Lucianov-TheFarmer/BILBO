@@ -21,9 +21,9 @@ async def mudar_tema(page):
         page.theme_mode = ft.ThemeMode.DARK
     else:
         page.theme_mode = ft.ThemeMode.LIGHT
-    await page.update_async()
+    page.update()
 
-def create_menubar(page, token):
+def create_menubar(page, token, container_menu_direita, tabela_amostras_local):
     return ft.MenuBar(
         controls=[
             ft.SubmenuButton(
@@ -34,34 +34,34 @@ def create_menubar(page, token):
                 controls=[
                     ft.MenuItemButton(
                         content=ft.Text("Novo"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Abrir"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.Divider(),
                     ft.MenuItemButton(
                         content=ft.Text("Salvar"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Salvar como"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.Divider(),
                     ft.MenuItemButton(
                         content=ft.Text("Fechar"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Sair"),
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     )
                 ],
@@ -75,20 +75,20 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Adicionar FASTQ"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Adicionar via URL"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Adicionar via SRA"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
-                        on_click=lambda e: asyncio.create_task(adicionar_amostra(page, token))
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        on_click=lambda e: adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local)
                     )
                 ],
             ),
@@ -101,13 +101,13 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Verificar qualidade"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Filtragem"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                 ],
@@ -121,13 +121,13 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Adicionar genoma de referência"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Alinhar com o genoma de referência"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                 ],
@@ -141,7 +141,7 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Quantificar reads alinhadas"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     )
                 ],
@@ -155,19 +155,19 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Normalização"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Tabelas de expressão diferencial"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Obter genes diferencialmente expressos"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     )
                 ],
@@ -181,13 +181,13 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Indentificar transcritos via GFF"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Identificar transcritos via Blast"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                 ],
@@ -201,19 +201,19 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Análise de enriquecimento"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Distribuição de termos GO"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Reconstrução de rotas metabólicas"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     )
                 ],
@@ -227,49 +227,49 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Controle de qualidade"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Resultados dos alinhamentos"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Resultados da análise de expressão"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Heatmaps"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Volcano plots"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("MA plots"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Heatmaps"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Perfis de expressão"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     )
                 ],
@@ -283,19 +283,19 @@ def create_menubar(page, token):
                     ft.MenuItemButton(
                         content=ft.Text("Manual de utilização"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Licença de uso"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                     ft.MenuItemButton(
                         content=ft.Text("Versão do software"),
                         close_on_click=False,
-                        style=ft.ButtonStyle(bgcolor={ft.MaterialState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
+                        style=ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
                         on_click=lambda e: menubar_clicar_item(e)
                     ),
                 ],

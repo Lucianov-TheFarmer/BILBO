@@ -1,32 +1,19 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-import flet_fastapi
+import flet as ft
 import logging
-from .utils import manager  # Atualizado
+from .utils import manager
 from .database import engine
 from .models import Base
+from .routes import auth, samples, quality_analysis
 
-# Importar as rotas
-from .routes import auth, samples, quality_analysis  # Atualizado
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 print("Creating FastAPI app")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("Starting Flet app manager")
-    await flet_fastapi.app_manager.start()
-    yield
-    print("Shutting down Flet app manager")
-    await flet_fastapi.app_manager.shutdown()
+app = FastAPI()
 
-app = FastAPI(lifespan=lifespan)
-
-# Add CORS middleware to allow WebSocket connections
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,10 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluir as rotas sem prefixos
 app.include_router(auth.router, tags=["auth"])
 app.include_router(samples.router, tags=["samples"])
-app.include_router(quality_analysis.router, tags=["quality_analysis"])  # Atualizado
+app.include_router(quality_analysis.router, tags=["quality_analysis"])
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -50,18 +36,16 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Adicionar um print para verificar os endpoints registrados
 print("Registered routes before mounting Flet:", app.routes)
 
-# Montar o aplicativo Flet como um subaplicativo
 print("Mounting Flet app")
 from frontend import main
-app.mount("/frontend", flet_fastapi.app(main.main))
 
-# Adicionar um print para verificar os endpoints registrados após montar o Flet
+flet_asgi_app = ft.app(main.main, export_asgi_app=True)
+app.mount("/frontend", flet_asgi_app)
+
 print("Registered routes after mounting Flet:", app.routes)
 
-# Create tables if they do not exist
 Base.metadata.create_all(bind=engine)
 
 if __name__ == "__main__":

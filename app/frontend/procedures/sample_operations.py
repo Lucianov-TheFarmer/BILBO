@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 websocket_connection = None
 first_check_done = False
 
-async def adicionar_amostra(page, token, container_menu_direita, tabela_amostras_local):
+async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local):
     async def inserir_sra_na_fila(sra_codes):
         sra_codes = [code.strip() for code in sra_codes.split(",") if code.strip()]
         if not sra_codes:
@@ -37,7 +37,7 @@ async def adicionar_amostra(page, token, container_menu_direita, tabela_amostras
         except Exception as e:
             logger.error(f"An error occurred: {e}")
         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-        await page.update_async()
+        page.update()
 
     sra_code_field = ft.TextField(
         hint_text="Insira um ou mais códigos SRA separados por vírgulas",
@@ -46,21 +46,22 @@ async def adicionar_amostra(page, token, container_menu_direita, tabela_amostras
         min_lines=1,
     )
 
+    async def inserir_sra_na_fila_handler(e):
+        await inserir_sra_na_fila(sra_code_field.value)
+
     dlg_modal_adicionar_amostra = ft.AlertDialog(
         title=ft.Text("Adicionar via SRA"),
         content=sra_code_field,
         actions=[
-            ft.TextButton("Submeter", on_click=lambda e: asyncio.create_task(inserir_sra_na_fila(sra_code_field.value)), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton("Submeter", on_click=inserir_sra_na_fila_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=500, height=40),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment=ft.MainAxisAlignment.CENTER
     )
+    
+    page.open(dlg_modal_adicionar_amostra)
 
-    page.dialog = dlg_modal_adicionar_amostra
-    dlg_modal_adicionar_amostra.open = True
-    await page.update_async()
-
-async def excluir_amostras_selecionadas(page, token, container_menu_direita, tabela_amostras_local):
-    async def confirmar_exclusao(e):
+async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, tabela_amostras_local):
+    async def confirmar_exclusao():
         amostras_selecionadas_para_exclusao = []
         dlg_modal_excluir_amostra.open = False
         for i in tabela_amostras_local.rows:
@@ -81,7 +82,7 @@ async def excluir_amostras_selecionadas(page, token, container_menu_direita, tab
             logger.error(f"An error occurred: {e}")
             await log_message(page, f"An error occurred: {e}")
         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-        await page.update_async()
+        page.update()
 
     confirm_field = ft.TextField(
         hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
@@ -90,18 +91,20 @@ async def excluir_amostras_selecionadas(page, token, container_menu_direita, tab
         expand=1
     )
 
+    async def confirmar_exclusao_handler(e):
+        if confirm_field.value == 'Confirmar':
+            await confirmar_exclusao()
+
     dlg_modal_excluir_amostra = ft.AlertDialog(
         title=ft.Text("Confirmar exclusão"),
         content=confirm_field,
         actions=[
-            ft.TextButton("Excluir", on_click=lambda e: asyncio.create_task(confirmar_exclusao(e)) if confirm_field.value == 'Confirmar' else None, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton("Excluir", on_click=confirmar_exclusao_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER,
     )
 
-    page.dialog = dlg_modal_excluir_amostra
-    dlg_modal_excluir_amostra.open = True
-    await page.update_async()
+    page.open(dlg_modal_excluir_amostra)
 
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
     global first_check_done
@@ -126,7 +129,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         async def toggle_select_all(e):
             for row in tabela_amostras_local.rows:
                 row.cells[3].content.value = e.control.value
-            await page.update_async()
+            page.update()
 
         tabela_amostras_local.rows.clear()
         tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
@@ -155,9 +158,9 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         for i, row in enumerate(container_menu_direita.content.controls[0].rows):
             row.cells[1].content.content.value = str(stage_counts[i + 1])
 
-    await page.update_async()
+    page.update()
 
-async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_local, user_id):
+async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
@@ -175,14 +178,14 @@ async def atualizar_tabela_por_estagio(page, token, stage_id, tabela_amostras_lo
                         ],
                     )
                 )
-            await page.update_async()
+            page.update()
             # Update the quality analysis table if the stage is "Análise de qualidade"
             if stage_id == 2:
                 await update_quality_analysis_table(page, token, user_id)  # Pass user_id as argument
         else:
             logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
 
-async def baixar_amostras(page, token, container_menu_direita, tabela_amostras_local):
+async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostras_local):
     global websocket_connection
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
@@ -201,7 +204,7 @@ async def baixar_amostras(page, token, container_menu_direita, tabela_amostras_l
                         sample_name = response.json().get("sample_name", "Unknown")
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        await page.update_async()
+                        page.update()
                         if websocket_connection is None or websocket_connection.closed:
                             websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
                         
@@ -215,7 +218,7 @@ async def baixar_amostras(page, token, container_menu_direita, tabela_amostras_l
                                 logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        await page.update_async()
+                        page.update()
                     elif response.status_code == 404:
                         logger.error(f"Download error: {response.status_code} - {response.text}")
                     else:
@@ -225,7 +228,7 @@ async def baixar_amostras(page, token, container_menu_direita, tabela_amostras_l
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-    await page.update_async()
+    page.update()
 
 async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direita):  # Adicione container_menu_direita como argumento
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}

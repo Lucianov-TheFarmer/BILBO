@@ -43,29 +43,18 @@ async def display_graph(page, token, graph_type, sample_name, user_id):
     # Create an Image control with the extracted image data
     image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN)
 
-    # Add zoom and pan functionality
-    zoom_level = 1.0
-    pan_x = 0
-    pan_y = 0
+    # Create an InteractiveViewer with the extracted image data
+    interactive_viewer = ft.InteractiveViewer(
+        min_scale=0.1,
+        max_scale=15,
+        boundary_margin=ft.margin.all(20),
+        on_interaction_start=lambda e: print(e),
+        on_interaction_end=lambda e: print(e),
+        on_interaction_update=lambda e: print(e),
+        content=image_control
+    )
 
-    def on_wheel(e):
-        nonlocal zoom_level
-        zoom_level += e.delta_y * 0.001
-        zoom_level = max(0.1, min(zoom_level, 5.0))
-        image_control.scale = zoom_level
-        page.update()
-
-    def on_drag(e):
-        nonlocal pan_x, pan_y
-        pan_x += e.delta_x
-        pan_y += e.delta_y
-        image_control.translate = ft.Offset(pan_x, pan_y)
-        page.update()
-
-    image_control.on_wheel = on_wheel
-    image_control.on_drag = on_drag
-
-    return image_control
+    return interactive_viewer
 
 def create_dropdown_menu(page, token, sample_name, user_id):
     async def on_change(e):
@@ -80,27 +69,36 @@ def create_dropdown_menu(page, token, sample_name, user_id):
                         for container in column.controls:
                             if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
                                 container.content.controls[0].content.controls[1] = graph_control
-                                await page.update_async()
+                                page.update()
                                 return
 
+    async def on_change_handler(e):
+        await on_change(e)
+
     return ft.Container(
+        margin=ft.margin.all(10),
         content=ft.Column(
             controls=[
-                ft.Dropdown(
-                    options=[
-                        ft.dropdown.Option("Per base sequence quality"),
-                        ft.dropdown.Option("Per tile sequence quality"),
-                        ft.dropdown.Option("Per sequence quality scores"),
-                        ft.dropdown.Option("Per base sequence content"),
-                        ft.dropdown.Option("Per sequence GC content"),
-                        ft.dropdown.Option("Per base N content"),
-                        ft.dropdown.Option("Sequence Length Distribution"),
-                        ft.dropdown.Option("Sequence Duplication Levels"),
-                        ft.dropdown.Option("Adapter Content"),
+                ft.Row(  # Wrap the dropdown in a Row to centralize it
+                    controls=[
+                        ft.Dropdown(
+                            options=[
+                                ft.dropdown.Option("Per base sequence quality"),
+                                ft.dropdown.Option("Per tile sequence quality"),
+                                ft.dropdown.Option("Per sequence quality scores"),
+                                ft.dropdown.Option("Per base sequence content"),
+                                ft.dropdown.Option("Per sequence GC content"),
+                                ft.dropdown.Option("Per base N content"),
+                                ft.dropdown.Option("Sequence Length Distribution"),
+                                ft.dropdown.Option("Sequence Duplication Levels"),
+                                ft.dropdown.Option("Adapter Content"),
+                            ],
+                            width=300,
+                            on_change=on_change_handler,
+                            value="Per base sequence quality",  # Set the default selected value
+                        )
                     ],
-                    height=50,
-                    on_change=lambda e: asyncio.create_task(on_change(e)),
-                    value="Per base sequence quality"  # Set the default selected value
+                    alignment=ft.MainAxisAlignment.CENTER  # Center the dropdown horizontally
                 )
             ]
         )

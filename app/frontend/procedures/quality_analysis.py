@@ -2,26 +2,27 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from ..utils import create_confirmation_modal, log_message  # Import the functions
+from ..utils import log_message  # Import the functions
 from .viewer import create_dropdown_menu, display_graph  # Updated import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def toggle_select_all_qc(e, page):
-    for row in tabela_amostras_qc.rows:
-        row.cells[2].content.value = e.control.value
-    await page.update_async()
-
 def create_tabela_amostras_qc(page, token):  # Updated function signature
     global tabela_amostras_qc
+    
+    async def toggle_select_all_qc(e):
+        for row in tabela_amostras_qc.rows:
+            row.cells[2].content.value = e.control.value
+        page.update()
+
     tabela_amostras_qc = ft.DataTable(
         heading_row_color=ft.colors.BLACK12,
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Checkbox(on_change=lambda e: asyncio.create_task(toggle_select_all_qc(e, page)))),  # Add checkbox to the header
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),  # Add checkbox to the header
             ft.DataColumn(ft.Text("Ações")),  # Add actions column
         ],
         rows=[],
@@ -37,17 +38,20 @@ async def update_quality_analysis_table(page, token, user_id):
                 samples = response.json()
                 tabela_amostras_qc.rows.clear()
                 for sample in samples:
+                    async def view_sample_details_handler(e, s=sample["name"]):
+                        await view_sample_details(page, token, s, user_id)
+                    
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Display the name field
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),  # Add checkbox to each row
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=lambda e, s=sample["name"]: asyncio.create_task(view_sample_details(page, token, s, user_id)))),  # Add eye icon button
+                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),  # Add eye icon button
                             ],
                         )
                     )
-                await page.update_async()
+                page.update()
             else:
                 logger.error(f"Erro ao obter amostras processadas: {response.status_code} - {response.text}")
     except Exception as e:
@@ -73,10 +77,10 @@ async def view_sample_details(page, token, sample_name, user_id):
                                     )
                                 )
                             ]
-                            await page.update_async()
+                            page.update()
                             return
 
-async def delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela):
+async def delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     async def confirm_delete(e):
         selected_samples = [row.cells[0].content.value for row in tabela_amostras_qc.rows if row.cells[2].content.value]
         if not selected_samples:
@@ -93,13 +97,29 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
                         logger.error(f"Erro ao excluir resultado da análise {sample_name}: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"An error occurred while deleting quality analysis results: {e}", exc_info=True)
-        await update_quality_analysis_table(page, token)
+        await update_quality_analysis_table(page, token, user_id)
         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
-        await page.update_async()
+        page.update()
+        dlg_modal_excluir_analise.open = False  # Close the modal
+        page.update()  # Update the page to reflect the modal closure
 
-    await create_confirmation_modal(page, "Confirmar exclusão", "Digite 'Confirmar' para excluir os resultados selecionados.", confirm_delete)
+    dlg_modal_excluir_analise = ft.AlertDialog(
+        title=ft.Text("Confirmar exclusão"),
+        content=ft.TextField(
+            hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
+            border_radius=ft.border_radius.all(4),
+            multiline=False,
+            expand=1
+        ),
+        actions=[
+            ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+        ],
+        actions_alignment=ft.MainAxisAlignment.CENTER,
+    )
 
-async def show_quality_analysis_modal(page, token):
+    page.open(dlg_modal_excluir_analise)
+
+async def show_quality_analysis_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     samples = []
 
@@ -123,7 +143,7 @@ async def show_quality_analysis_modal(page, token):
     async def toggle_select_all(e):
         for row in tabela_analise_qualidade.rows:
             row.cells[3].content.value = e.control.value
-        await page.update_async()
+        page.update()
 
     # Function to start quality analysis
     async def start_quality_analysis(e):
@@ -133,15 +153,16 @@ async def show_quality_analysis_modal(page, token):
             return
         await log_message(page, f"Iniciando análise de qualidade para {selected_samples}")
         dlg_modal_analise_qualidade.open = False  # Close the modal
-        await page.update_async()  # Update the page to reflect the modal closure
+        page.update()  # Update the page to reflect the modal closure
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:  # Increase the timeout to 60 seconds
                 for sample in selected_samples:
                     response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": [sample]}, headers=headers)
                     if response.status_code == 200:
                         logger.info(f"Análise de qualidade iniciada para {sample} com sucesso!")
-                        await update_quality_analysis_table(page, token)
-                        await page.update_async()
+                        await update_quality_analysis_table(page, token, user_id)
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
+                        page.update()
                     else:
                         logger.error(f"Erro ao iniciar análise de qualidade para {sample}: {response.status_code} - {response.text}")
         except Exception as e:
@@ -194,7 +215,5 @@ async def show_quality_analysis_modal(page, token):
         actions_alignment=ft.MainAxisAlignment.CENTER,
     )
 
-    page.dialog = dlg_modal_analise_qualidade
-    dlg_modal_analise_qualidade.open = True
-    await page.update_async()
-    await update_quality_analysis_table(page, token)
+    page.open(dlg_modal_analise_qualidade)
+    await update_quality_analysis_table(page, token, user_id)

@@ -14,14 +14,14 @@ async def main(page: ft.Page):
 
     async def toggle_theme(e):
         page.theme_mode = ft.ThemeMode.DARK if page.theme_mode == ft.ThemeMode.LIGHT else ft.ThemeMode.LIGHT
-        await page.update_async()
+        page.update()
 
     async def logout(e):
         nonlocal token, username
         token = None
         username = None
         page.controls.clear()
-        await page.update_async()
+        page.update()
         await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
 
     async def login(e):
@@ -33,15 +33,15 @@ async def main(page: ft.Page):
                 response = await client.post("http://bioinfo-container:8000/token", data={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
             if response.status_code == 200:
                 token = response.json()["access_token"]
-                user_id = response.json()["user_id"]  # Assuming the user_id is returned in the response
+                user_id = response.json()["user_id"]
                 print(f"Token: {token}")
                 username = username_input.value
-                await show_bilbo_interface(page, logout, username, token, user_id)  # Pass user_id as argument
+                await show_bilbo_interface(page, logout, username, token, user_id)
             else:
                 result.value = response.json()
         except httpx.RequestError as ex:
             result.value = f"An error occurred: {ex}"
-        await page.update_async()
+        page.update()
 
     async def register(e):
         print("Register function called")
@@ -52,7 +52,7 @@ async def main(page: ft.Page):
             result.value = response.json()
         except httpx.RequestError as ex:
             result.value = f"An error occurred: {ex}"
-        await page.update_async()
+        page.update()
 
     username_input = ft.TextField(label="Username", width=300)
     password_input = ft.TextField(label="Password", password=True, width=300)
