@@ -1,7 +1,7 @@
 import httpx
 import requests
 import flet as ft
-from .login import show_login_interface
+from .components.login import show_login_interface
 from .bilbo_interface import show_bilbo_interface
 
 async def main(page: ft.Page):
@@ -54,7 +54,13 @@ async def main(page: ft.Page):
             result.value = f"An error occurred: {ex}"
         page.update()
 
-    username_input = ft.TextField(label="Username", width=300)
-    password_input = ft.TextField(label="Password", password=True, width=300)
+    # username_input = ft.TextField(label="Username", width=300)
+    # password_input = ft.TextField(label="Password", password=True, width=300)
 
-    await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+    username_input = ft.TextField(label="Username", width=300)
+    username_input.value = "admin"
+    password_input = ft.TextField(label="Password", password=True, width=300)
+    password_input.value = "admin"
+
+    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+    await login(e=None)

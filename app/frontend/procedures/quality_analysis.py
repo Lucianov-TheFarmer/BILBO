@@ -2,7 +2,7 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from ..utils import log_message  # Import the functions
+from .utils import log_message  # Import the functions
 from .viewer import create_dropdown_menu, display_graph  # Updated import
 
 # Configure logging
@@ -189,17 +189,33 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         ],
     )
 
+    # Check if the table is empty
+    if not tabela_analise_qualidade.rows:
+        empty_message = ft.Column(
+            controls=[
+                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Text("Nenhuma amostra baixada", style=ft.TextStyle(size=16), text_align="center"),
+                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        iniciar_analise_disabled = True  # Disable the button
+    else:
+        empty_message = None
+        iniciar_analise_disabled = False  # Enable the button
+
     # Create the modal dialog
     dlg_modal_analise_qualidade = ft.AlertDialog(
         title=ft.Text("Análise de Qualidade"),
         content=ft.Container(
             content=ft.ListView(
                 spacing=10,
-                controls=[ft.Container(
-                    content=tabela_analise_qualidade,
-                )]
+                controls=[
+                    empty_message if empty_message else tabela_analise_qualidade,  # Show message if table is empty
+                ]
             ),
-           width=520
+            width=520,
         ),
         actions=[
             ft.Container(
@@ -208,7 +224,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=200,
                     height=40,
-                    on_click=start_quality_analysis  # Call the new function
+                    on_click=start_quality_analysis if not iniciar_analise_disabled else None,  # Disable click if no samples
                 )
             ),
         ],

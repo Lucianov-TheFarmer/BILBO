@@ -1,17 +1,19 @@
 import asyncio
 import flet as ft
 from functools import partial
-from .menu_operations import create_menubar, mudar_tema
+from .procedures.menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
-from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results  # Updated import
+from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
+from .procedures.trimmagem import show_trimmagem_modal  # Import the trimmagem modal
 from .procedures.viewer import create_dropdown_menu, display_graph  # Updated import
-from .utils import log_message  # Updated import
+from .procedures.utils import log_message  # Updated import
+from .components.general_components import create_table, create_button  # Updated import
 import websockets  # New import
 import httpx
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)  # Set to INFO level
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG level
 logger = logging.getLogger(__name__)
 
 async def show_bilbo_interface(page, logout, username, token, user_id):  # Updated function signature
@@ -19,8 +21,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     page.controls.clear()
 
     # Create a new instance of tabela_amostras
-    tabela_amostras_local = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+    tabela_amostras_local = create_table(
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
@@ -31,6 +32,15 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     )
 
     tabela_amostras_qc = create_tabela_amostras_qc(page, token)  # Pass token as argument
+
+    tabela_amostras_trimmagem = create_table(
+        columns=[
+            ft.DataColumn(ft.Text("Identificação")),
+            ft.DataColumn(ft.Text("Tamanho")),
+            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(" ")),  # Placeholder for actions
+        ]
+    )
 
     # Function to toggle buttons
     async def toggle_buttons(controls, tabela):
@@ -52,42 +62,52 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     async def excluir_qualidade_handler(e):
         await delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
+    async def show_trimmagem_modal_handler(e):
+        await show_trimmagem_modal(page, token, tabela_amostras_local, user_id)
+
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
         if stage_id == 1:
             await toggle_buttons([
-                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=adicionar_amostra_handler),
-                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=excluir_amostras_selecionadas_handler),
-                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=baixar_amostras_handler),
+                create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
+                create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
+                create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
             ], tabela_amostras_local)
         elif stage_id == 2:
             await toggle_buttons([
                 analisar_qualidade_button,
                 excluir_qualidade_button,
             ], tabela_amostras_qc)
+        elif stage_id == 3:  # Trimmagem stage
+            await toggle_buttons([
+                iniciar_trimmagem_button,
+                excluir_trimmagem_button,
+            ], tabela_amostras_trimmagem)
 
     # Define the "Analisar qualidade" button
-    analisar_qualidade_button = ft.Container(
-        content=ft.TextButton(
-            "Analisar qualidade",
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-            width=200,
-            height=40,
-            on_click=show_quality_analysis_modal_handler
-        ),
-        margin=ft.margin.only(0, 5, 0, 0)
+    analisar_qualidade_button = create_button(
+        label="Analisar qualidade",
+        on_click=show_quality_analysis_modal_handler,
     )
 
     # Define the "Excluir resultados de qualidade" button
-    excluir_qualidade_button = ft.Container(
-        content=ft.TextButton(
-            "Excluir resultados de qualidade",
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED),
-            width=200,
-            height=40,
-            on_click=excluir_qualidade_handler
-        ),
-        margin=ft.margin.only(0, 5, 0, 0)
+    excluir_qualidade_button = create_button(
+        label="Excluir resultados de qualidade",
+        on_click=excluir_qualidade_handler,
+        color=ft.colors.RED,
+    )
+
+    # Define the "Iniciar trimmagem" button
+    iniciar_trimmagem_button = create_button(
+        label="Iniciar trimmagem",
+        on_click=show_trimmagem_modal_handler,  # Call the trimmagem modal
+    )
+
+    # Define the "Excluir amostras trimmadas" button
+    excluir_trimmagem_button = create_button(
+        label="Excluir amostras trimmadas",
+        on_click=None,  # Placeholder for the handler
+        color=ft.colors.RED,
     )
 
     container_menu_direita = ft.Container(
@@ -206,9 +226,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
             spacing=10,
             controls=[
                 tabela_amostras_local,  # Use the local tabela_amostras
-                ft.TextButton("Adicionar amostra via SRA", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40, on_click=adicionar_amostra_handler),
-                ft.TextButton("Excluir amostras selecionadas", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.RED), width=200, height=40, on_click=excluir_amostras_selecionadas_handler),
-                ft.TextButton("Baixar amostras pendentes", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), color=ft.colors.GREEN), width=200, height=40, on_click=baixar_amostras_handler),
+                create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
+                create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
+                create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
             ]
         )
     )

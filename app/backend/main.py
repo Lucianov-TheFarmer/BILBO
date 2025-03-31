@@ -5,7 +5,7 @@ import logging
 from .utils import manager
 from .database import engine
 from .models import Base
-from .routes import auth, samples, quality_analysis
+from .routes import auth, samples, quality_analysis, trimmagem  # Import the trimmagem route
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(auth.router, tags=["auth"])
 app.include_router(samples.router, tags=["samples"])
 app.include_router(quality_analysis.router, tags=["quality_analysis"])
+app.include_router(trimmagem.router, tags=["trimmagem"])  # Register the trimmagem route
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

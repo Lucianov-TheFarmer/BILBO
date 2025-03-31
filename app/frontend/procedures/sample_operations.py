@@ -2,9 +2,10 @@ import flet as ft
 import httpx
 import logging
 import asyncio
-import websockets  # New import
-from ..utils import log_message  # Updated import
-from .quality_analysis import update_quality_analysis_table  # Import the function
+import websockets
+from .utils import log_message
+from .quality_analysis import update_quality_analysis_table
+from ..components.general_components import create_table  # Import reusable table
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +14,16 @@ logger = logging.getLogger(__name__)
 # Track the WebSocket connection
 websocket_connection = None
 first_check_done = False
+
+tabela_amostras = create_table(
+    columns=[
+        ft.DataColumn(ft.Text("Identificação")),
+        ft.DataColumn(ft.Text("Tamanho")),
+        ft.DataColumn(ft.Text("Status")),
+        ft.DataColumn(ft.Checkbox()),  # Add checkbox to the column header
+    ],
+    rows=[],
+)
 
 async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local):
     async def inserir_sra_na_fila(sra_codes):
@@ -244,14 +255,3 @@ async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direi
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         await log_message(page, f"An error occurred: {e}")
-
-tabela_amostras = ft.DataTable(
-    heading_row_color=ft.colors.BLACK12,
-    columns=[
-        ft.DataColumn(ft.Text("Identificação")),
-        ft.DataColumn(ft.Text("Tamanho")),
-        ft.DataColumn(ft.Text("Status")),
-        ft.DataColumn(ft.Checkbox()),  # Add checkbox to the column header
-    ],
-    rows=[],
-)
