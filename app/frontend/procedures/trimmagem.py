@@ -109,7 +109,7 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
         for i in range(1, len(lines)):
             if lines[i].startswith(">"):
                 continue
-            if not all(c in "ACGTNacgtn" for c in lines[i]):
+            if not all(c in "ACGTNacgtn " for c in lines[i]):
                 return False
         return True
 
@@ -124,7 +124,24 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
         page.open(dlg_modal_trimmagem)
         page.update()
 
-    threads_field = ft.TextField(label="Threads", value="1", on_change=numeric_input_validator)
+    # Generalized function to create TextField
+    def create_text_field(label, value, tooltip, width=280, on_change=numeric_input_validator, visible=True, disabled=False):
+        return ft.TextField(
+            label=label,
+            value=value,
+            width=width,
+            on_change=on_change,
+            tooltip=tooltip,
+            visible=visible,
+            disabled=disabled,
+        )
+
+    # Create input fields for parameters using the generalized function
+    threads_field = create_text_field(
+        label="Threads",
+        value="1",
+        tooltip="Número de threads a serem utilizados para processamento paralelo."
+    )
     phred_dropdown = ft.Dropdown(
         label="Codificação Phred",
         options=[
@@ -132,7 +149,9 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
             ft.dropdown.Option("phred33"),
             ft.dropdown.Option("phred64"),
         ],
-        value="autodetect"
+        width=280,
+        value="autodetect",
+        tooltip="Codificação Phred para os arquivos FASTQ. Use 'autodetect' para detectar automaticamente."
     )
     custom_adapter_content = None  # Store the custom adapter content
     illumina_clip_fields = [
@@ -147,15 +166,93 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
                 ft.dropdown.Option("TruSeq3-SE.fa"),
                 ft.dropdown.Option("Personalizado"),
             ],
+            width=280,
             value="TruSeq3-PE.fa",  # Default value
-            on_change=handle_adapter_change,  # Use the synchronous wrapper
+            on_change=handle_adapter_change,
+            tooltip="Selecione o arquivo de adaptadores para remoção. Escolha 'Personalizado' para fornecer seu próprio conteúdo."
         ),
-        ft.TextField(label="Seed mismatches", value="2", on_change=numeric_input_validator),
-        ft.TextField(label="Threshold palíndromo", value="30", on_change=numeric_input_validator),
-        ft.TextField(label="Threshold simples", value="10", on_change=numeric_input_validator),
-        ft.TextField(label="Comprimento mínimo adaptador", value="8", on_change=numeric_input_validator),
-        ft.Checkbox(label="Manter ambas reads", value=False),
+        create_text_field(
+            label="Seed mismatches",
+            value="2",
+            tooltip="Número máximo de mismatches permitidos no alinhamento inicial ('seed') de 16 bases entre o adapter e a sequência.\n\nValor padrão: 2 (recomendado).\nImpacto: Valores mais altos aumentam a sensibilidade, mas podem levar a falsos positivos."
+        ),
+        create_text_field(
+            label="Threshold palíndromo",
+            value="30",
+            tooltip="Limiar de precisão para o alinhamento no modo palíndromo (usado em dados paired-end).\n\nValor padrão: 30 (recomendado para paired-end).\nExplicação: Um valor alto garante que apenas adapters com alinhamento muito preciso sejam removidos."
+        ),
+        create_text_field(
+            label="Threshold simples",
+            value="10",
+            tooltip="Limiar de precisão para o alinhamento no modo simples (usado em dados single-end).\n\nValor padrão: 10 (recomendado para single-end).\nExplicação: Valores mais baixos são suficientes para single-end, pois o alinhamento é menos complexo."
+        ),
+        create_text_field(
+            label="Comprimento mínimo adaptador",
+            value="8",
+            tooltip="Comprimento mínimo de adapter que deve ser detectado para remoção.\n\nValor padrão: 8 (histórico), mas pode ser reduzido para 1 sem riscos.\nImpacto: Valores menores permitem remover fragmentos muito curtos de adapters."
+        ),
+        create_text_field(
+            label="",
+            value="",
+            tooltip="",
+            visible=True,
+            disabled=True  # Invisible TextField for alignment
+        ),
     ]
+    sliding_window_fields = [
+        create_text_field(
+            label="Tamanho janela",
+            value="4",
+            tooltip="Número de bases analisadas em cada janela deslizante para calcular a qualidade média.\n\nValor padrão: 4 (típico).\nExemplo: Uma janela de 4 bases avalia a qualidade média a cada 4 bases."
+        ),
+        create_text_field(
+            label="Qualidade mínima",
+            value="15",
+            tooltip="Qualidade média mínima (em Phred) exigida dentro da janela para manter as bases.\n\nValor padrão: 15 (equivalente a 97% de precisão).\nImpacto: Se a média da janela estiver abaixo desse valor, a sequência é cortada a partir dali."
+        ),
+    ]
+    max_info_fields = [
+        create_text_field(
+            label="Comprimento alvo",
+            value="40",
+            tooltip="Comprimento mínimo desejado para as reads após o trim.\n\nValor padrão: 40 (suficiente para alinhamento único em genomas pequenos).\nExplicação: Reads mais curtas que isso são penalizadas."
+        ),
+        create_text_field(
+            label="Strictness",
+            value="0.5",
+            tooltip="Balanceia entre manter bases adicionais (valores baixos) ou priorizar qualidade (valores altos).\n\nValor padrão: 0.5 (equilíbrio).\nEscala: 0 (favorece comprimento) a 1 (favorece qualidade)."
+        ),
+    ]
+    leading_field = create_text_field(
+        label="LEADING - Qualidade mínima",
+        value="3",
+        tooltip="Remove bases de baixa qualidade no início da read (5').\n\nValor padrão: 3 (qualidade Phred 3, muito baixa).\nExemplo: Se a primeira base tiver qualidade 2, é removida."
+    )
+    trailing_field = create_text_field(
+        label="TRAILING - Qualidade mínima",
+        value="3",
+        tooltip="Remove bases de baixa qualidade no final da read (3').\n\nValor padrão: 3 (similar a LEADING)."
+    )
+    crop_field = create_text_field(
+        label="CROP - Comprimento",
+        value="",
+        tooltip="Corta a read para um comprimento fixo, independentemente da qualidade.\n\nExemplo: Se CROP:50, apenas as primeiras 50 bases são mantidas."
+    )
+    headcrop_field = create_text_field(
+        label="HEADCROP - Número de bases",
+        value="",
+        tooltip="Remove um número fixo de bases do início da read (útil para primers).\n\nExemplo: HEADCROP:5 remove as 5 primeiras bases."
+    )
+    minlen_field = create_text_field(
+        label="MINLEN - Comprimento mínimo",
+        value="36",
+        tooltip="Descarta reads com comprimento menor que o especificado.\n\nValor padrão: 36 (comum para garantir reads úteis)."
+    )
+    avgqual_field = create_text_field(
+        label="AVGQUAL - Qualidade média",
+        value="",
+        tooltip="Descarta reads cuja qualidade média (Phred) esteja abaixo do valor.\n\nExemplo: AVGQUAL:20 remove reads com média de qualidade < 20."
+    )
 
     # Modal for custom adapter input
     custom_adapter_field = ft.TextField(
@@ -179,54 +276,92 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
         actions_alignment=ft.MainAxisAlignment.CENTER,
     )
 
-    sliding_window_fields = [
-        ft.TextField(label="Tamanho janela", value="4", on_change=numeric_input_validator),
-        ft.TextField(label="Qualidade mínima", value="15", on_change=numeric_input_validator),
-    ]
-    max_info_fields = [
-        ft.TextField(label="Comprimento alvo", value="40", on_change=numeric_input_validator),
-        ft.TextField(label="Strictness", value="0.5", on_change=numeric_input_validator),
-    ]
-    leading_field = ft.TextField(label="LEADING - Qualidade mínima", value="3", on_change=numeric_input_validator)
-    trailing_field = ft.TextField(label="TRAILING - Qualidade mínima", value="3", on_change=numeric_input_validator)
-    crop_field = ft.TextField(label="CROP - Comprimento", value="", on_change=numeric_input_validator)
-    headcrop_field = ft.TextField(label="HEADCROP - Número de bases", value="", on_change=numeric_input_validator)
-    minlen_field = ft.TextField(label="MINLEN - Comprimento mínimo", value="36", on_change=numeric_input_validator)
-    avgqual_field = ft.TextField(label="AVGQUAL - Qualidade média", value="", on_change=numeric_input_validator)
-
-    # Organize input fields into two columns
+    # Organize input fields into a structured layout
     form_layout = ft.Row(
         controls=[
             ft.Column(
                 controls=[
-                    threads_field,
-                    illumina_clip_fields[0],
-                    illumina_clip_fields[2],
-                    sliding_window_fields[0],
-                    max_info_fields[0],
-                    leading_field,
-                    crop_field,
-                    minlen_field,
+                    # Threads and Phred in the same row with top margin
+                    ft.Container(
+                        content=ft.Text("", style=ft.TextStyle(size=14))
+                    ),
+                    ft.Row(
+                        controls=[
+                            threads_field,
+                            phred_dropdown,
+                        ],
+                        spacing=27,
+                    ),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Text("IlluminaClip Parameters", style=ft.TextStyle(size=14, weight="bold")),
+                    # IlluminaClip split into two columns
+                    ft.Row(
+                        controls=[
+                            ft.Column(
+                                controls=[
+                                    illumina_clip_fields[0],  # Arquivo adaptadores
+                                    illumina_clip_fields[1],  # Seed mismatches
+                                    illumina_clip_fields[2],  # Threshold palíndromo
+                                ],
+                                expand=1,
+                            ),
+                            ft.Column(
+                                controls=[
+                                    illumina_clip_fields[3],  # Threshold simples
+                                    illumina_clip_fields[4],  # Comprimento mínimo adaptador
+                                    illumina_clip_fields[5],  # Invisible TextField for alignment
+                                ],
+                                expand=1,
+                            ),
+                        ]
+                    ),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Text("SlidingWindow Parameters", style=ft.TextStyle(size=14, weight="bold")),
+                    # SlidingWindow in one row with two columns
+                    ft.Row(
+                        controls=[
+                            sliding_window_fields[0],  # Tamanho janela
+                            sliding_window_fields[1],  # Qualidade mínima
+                        ],
+                        spacing=27
+                    ),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Text("MaxInfo Parameters", style=ft.TextStyle(size=14, weight="bold")),
+                    # MaxInfo in one row with two columns
+                    ft.Row(
+                        controls=[
+                            max_info_fields[0],  # Comprimento alvo
+                            max_info_fields[1],  # Strictness
+                        ],
+                        spacing=27
+                    ),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Text("Other Parameters", style=ft.TextStyle(size=14, weight="bold")),
+                    # Other Parameters split into two columns with three rows
+                    ft.Row(
+                        controls=[
+                            ft.Column(
+                                controls=[
+                                    leading_field,  # LEADING
+                                    crop_field,  # CROP
+                                    minlen_field,  # MINLEN
+                                ],
+                                expand=1,
+                            ),
+                            ft.Column(
+                                controls=[
+                                    trailing_field,  # TRAILING
+                                    headcrop_field,  # HEADCROP
+                                    avgqual_field,  # AVGQUAL
+                                ],
+                                expand=1,
+                            ),
+                        ],
+                    ),
                 ],
-                spacing=10,
-                expand=1,  # Make the column expand to use available space
-            ),
-            ft.Column(
-                controls=[
-                    phred_dropdown,
-                    illumina_clip_fields[1],
-                    illumina_clip_fields[3],
-                    sliding_window_fields[1],
-                    max_info_fields[1],
-                    trailing_field,
-                    headcrop_field,
-                    avgqual_field,
-                ],
-                spacing=10,
                 expand=1,  # Make the column expand to use available space
             ),
         ],
-        spacing=20,
         alignment=ft.MainAxisAlignment.CENTER,  # Center the form layout
     )
 
@@ -263,8 +398,7 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
                     "Seed mismatches": illumina_clip_fields[1].value,
                     "Threshold palindromo": illumina_clip_fields[2].value,
                     "Threshold simples": illumina_clip_fields[3].value,
-                    "Comprimento minimo adaptador": illumina_clip_fields[4].value,
-                    "Manter ambas reads": "true" if illumina_clip_fields[5].value else "false",
+                    "Comprimento minimo adaptador": illumina_clip_fields[4].value
                 }),
                 "sliding_window": json.dumps({  # Serialize as JSON
                     "Tamanho janela": sliding_window_fields[0].value,
@@ -288,41 +422,39 @@ async def show_trimmagem_modal(page, token, tabela_amostras_local, user_id):
 
         try:
             async with httpx.AsyncClient() as client:
-                for sample in selected_samples:
-                    # Flatten the parameters for form submission
-                    form_data = {
-                        "sra_code": sample,
-                        "threads": params["threads"],
-                        "phred": params["phred"],
-                        "illumina_clip": params["illumina_clip"],  # Already serialized
-                        "sliding_window": params["sliding_window"],  # Already serialized
-                        "max_info": params["max_info"],  # Already serialized
-                        "leading": params["leading"],
-                        "trailing": params["trailing"],
-                        "crop": params["crop"] if params["crop"] is not None else None,  # Send None if empty
-                        "headcrop": params["headcrop"] if params["headcrop"] is not None else None,  # Send None if empty
-                        "minlen": params["minlen"],
-                        "avgqual": params["avgqual"] if params["avgqual"] is not None else None,  # Send None if empty
-                    }
+                # Enviar todos os samples selecionados em uma única requisição
+                form_data = {
+                    "selected_samples": json.dumps(selected_samples),  # Serializa os samples selecionados
+                    "threads": params["threads"],
+                    "phred": params["phred"],
+                    "illumina_clip": params["illumina_clip"],  # Já serializado
+                    "sliding_window": params["sliding_window"],  # Já serializado
+                    "max_info": params["max_info"],  # Já serializado
+                    "leading": params["leading"],
+                    "trailing": params["trailing"],
+                    "crop": params["crop"] if params["crop"] is not None else None,  # Envia None se vazio
+                    "headcrop": params["headcrop"] if params["headcrop"] is not None else None,  # Envia None se vazio
+                    "minlen": params["minlen"],
+                    "avgqual": params["avgqual"] if params["avgqual"] is not None else None,  # Envia None se vazio
+                }
+ 
+                response = await client.post(
+                    "http://bioinfo-container:8000/trimmagem/",
+                    data=form_data,  # Envia como form data
+                    headers=headers,
+                )
 
-                    response = await client.post(
-                        "http://bioinfo-container:8000/trimmagem/",
-                        data=form_data,  # Send as form data
-                        headers=headers,
-                    )
-                    if response.status_code == 200:
-                        logger.info(f"Trimmagem iniciada para {sample} com sucesso!")
-                    else:
-                        logger.info(f"Erro ao iniciar trimmagem para {sample}: {response.status_code} - {response.text}")
         except Exception as e:
-            logger.info(f"An error occurred while starting trimmagem: {e}")
+            error_message = f"An error occurred while starting trimmagem: {e}"
+            logger.error(error_message)
+            await log_message(page, error_message)
 
     # Create the modal dialog
     dlg_modal_trimmagem = ft.AlertDialog(
         title=ft.Text("Iniciar Trimmagem"),
         content=ft.Container(
             content=ft.ListView(
-                spacing=10,
+                # spacing=10,
                 controls=[
                     empty_message if empty_message else tabela_trimmagem,  # Show message if table is empty
                     form_layout,  # Use the updated form layout
