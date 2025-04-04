@@ -35,14 +35,15 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post("http://bioinfo-container:8000/samples/", json={"sra_codes": sra_codes, "size": "Unknown"}, headers=headers)
+                response = await client.post(
+                    "http://bioinfo-container:8000/samples/",
+                    json={"sra_codes": sra_codes, "size": "Unknown"},
+                    headers=headers,
+                )
                 if response.status_code == 200:
                     samples = response.json()
                     for sample in samples:
-                        stage_response = await client.post(f"http://bioinfo-container:8000/samples/{sample['id']}/stages/", json={"stage_id": 1, "name": f"{sample['sra_code']}.fastq", "status": "Pending"}, headers=headers)
-                        if stage_response.status_code != 200:
-                            logger.error(f"Erro ao associar estágio à amostra: {stage_response.status_code} - {stage_response.text}")
-                    logger.info("Amostras adicionadas com sucesso!")
+                        logger.info(f"Amostra {sample['sra_code']} adicionada com sucesso!")
                 else:
                     logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
         except Exception as e:
@@ -117,57 +118,59 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
 
     page.open(dlg_modal_excluir_amostra)
 
+async def make_request(method, url, headers=None, json=None, params=None):
+    """Helper function to make HTTP requests."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(method, url, headers=headers, json=json, params=params)
+            response.raise_for_status()
+            return response
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
+        raise
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        raise
+
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    async with httpx.AsyncClient() as client:
-        if not first_check_done:
-            response = await client.get("http://bioinfo-container:8000/samples/", headers=headers)
-            await client.post("http://bioinfo-container:8000/stages/", headers=headers)
+    if not first_check_done:
+        await make_request("POST", "http://bioinfo-container:8000/stages/", headers=headers)
+        first_check_done = True
 
-            samples = response.json()
-            for sample in samples:
-                if sample["status"] == "In Progress":
-                    sample["status"] = "Failed"
-                    await client.post("http://bioinfo-container:8000/samples/update_status", data={"sra_code": sample["sra_code"], "status": "Failed"}, headers=headers)
-                    logger.info(f"Sample {sample['sra_code']} status updated to Failed due to incomplete download")
-            first_check_done = True
-        else:
-            response = await client.get("http://bioinfo-container:8000/samples/", headers=headers)
-            samples = response.json()
-    
-        # Function to select or deselect all samples
-        async def toggle_select_all(e):
-            for row in tabela_amostras_local.rows:
-                row.cells[3].content.value = e.control.value
-            page.update()
+    response = await make_request("GET", "http://bioinfo-container:8000/samples/", headers=headers)
+    samples = response.json()
 
-        tabela_amostras_local.rows.clear()
-        tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
-        for sample in samples:
-            tabela_amostras_local.rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
-                        ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                        ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                        ft.DataCell(ft.Checkbox()),
-                    ],
-                )
+    # Function to select or deselect all samples
+    async def toggle_select_all(e):
+        for row in tabela_amostras_local.rows:
+            row.cells[3].content.value = e.control.value
+        page.update()
+
+    tabela_amostras_local.rows.clear()
+    tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
+    for sample in samples:
+        tabela_amostras_local.rows.append(
+            ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Checkbox()),
+                ],
             )
+        )
 
-        # Update stage counts
-        stage_counts = {}
-        for stage_id in range(1, 7):
-            response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
-            if response.status_code == 200:
-                stage_counts[stage_id] = len(response.json())
-            else:
-                stage_counts[stage_id] = 0
+    # Update stage counts
+    stage_counts = {}
+    for stage_id in range(1, 7):  # Inclui todos os estágios, incluindo trimmagem (stage_id=3)
+        response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+        stage_counts[stage_id] = len(response.json())
 
-        # Update the stage counts in the UI
-        for i, row in enumerate(container_menu_direita.content.controls[0].rows):
-            row.cells[1].content.content.value = str(stage_counts[i + 1])
+    # Update the stage counts in the UI
+    for i, row in enumerate(container_menu_direita.content.controls[0].rows):
+        row.cells[1].content.content.value = str(stage_counts.get(i + 1, 0))  # Atualiza a contagem para cada estágio
 
     page.update()
 
@@ -182,7 +185,7 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                 tabela_amostras_local.rows.append(
                     ft.DataRow(
                         cells=[
-                            ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
+                            ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Checkbox()),

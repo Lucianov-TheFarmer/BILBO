@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Sample, SampleStage, User, Stage
+from ..models import SampleStage, User, Stage  # Remova 'Sample'
 from ..utils import get_current_user, manager  # Atualizado
 from pydantic import BaseModel
 import subprocess
@@ -20,32 +20,59 @@ class SampleStageCreateRequest(BaseModel):
     stage_id: int
     status: str
 
+def get_next_sample_id(db: Session) -> int:
+    """Get the next unique sample_id for stage_id 1."""
+    max_sample_id = db.query(SampleStage.sample_id).filter(SampleStage.stage_id == 1).order_by(SampleStage.sample_id.desc()).first()
+    return (max_sample_id[0] + 1) if max_sample_id and max_sample_id[0] else 1
+
+def update_sample_status(db: Session, sra_code: str, status: str):
+    """Update the status of a sample."""
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1).first()
+    if not db_sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    db_sample_stage.status = status
+    db.commit()
+    return db_sample_stage
+
 @router.post("/samples/")
 def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     created_samples = []
     for sra_code in request.sra_codes:
-        # Verifique se a amostra já existe, considerando o código SRA original e os sufixos _1.fastq e _2.fastq
-        existing_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
-        existing_sample_1 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_1.fastq", Sample.user_id == current_user.id).first()
-        existing_sample_2 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_2.fastq", Sample.user_id == current_user.id).first()
-        if existing_sample or existing_sample_1 or existing_sample_2:
+        # Check if the sample already exists
+        existing_sample_stage = db.query(SampleStage).filter(
+            SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
+        ).first()
+        if existing_sample_stage:
             continue  # Skip existing samples
-        db_sample = Sample(sra_code=sra_code, size=request.size, status="Pending", user_id=current_user.id)
-        db.add(db_sample)
-        created_samples.append(db_sample)
+
+        # Generate a unique sample_id
+        new_sample_id = get_next_sample_id(db)
+
+        # Create a new sample stage for stage_id 1
+        db_sample_stage = SampleStage(
+            sample_id=new_sample_id,
+            stage_id=1,
+            name=f"{sra_code}.fastq",
+            sra_code=sra_code,
+            size=request.size,
+            status="Pending",
+            user_id=current_user.id,
+        )
+        db.add(db_sample_stage)
+        created_samples.append(db_sample_stage)
     db.commit()
-    for sample in created_samples:
-        db.refresh(sample)
+    for sample_stage in created_samples:
+        db.refresh(sample_stage)
     return created_samples
 
 @router.get("/samples/")
 def read_samples(skip: int = 0, limit: int = 10, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    samples = db.query(Sample).filter(Sample.user_id == current_user.id).offset(skip).limit(limit).all()
+    samples = db.query(SampleStage).filter(SampleStage.user_id == current_user.id, SampleStage.stage_id == 1).offset(skip).limit(limit).all()
     return samples
 
 @router.put("/samples/{sample_id}")
 def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample = db.query(Sample).filter(Sample.id == sample_id).first()
+    db_sample = db.query(SampleStage).filter(SampleStage.id == sample_id).first()
     if db_sample is None:
         raise HTTPException(status_code=404, detail="Sample not found")
     db_sample.status = status
@@ -55,10 +82,10 @@ def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), cu
 
 @router.delete("/samples/{sra_code}")
 def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
-    if db_sample is None:
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id).first()
+    if db_sample_stage is None:
         raise HTTPException(status_code=404, detail="Sample not found")
-    
+
     user_id = current_user.id
 
     # Run the script to delete the file
@@ -69,23 +96,20 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     if process.returncode != 0 and "not found" not in stderr:
         raise HTTPException(status_code=500, detail="Error deleting file")
 
-    # Delete corresponding sample stages
-    db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id).delete()
-
-    db.delete(db_sample)
+    db.delete(db_sample_stage)
     db.commit()
     return {"message": "Sample and file deleted"}
 
 @router.get("/samples/status/{sra_code}")
 def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
-    if db_sample is None:
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id).first()
+    if db_sample_stage is None:
         raise HTTPException(status_code=404, detail="Sample not found")
-    return {"status": db_sample.status}
+    return {"status": db_sample_stage.status}
 
 @router.post("/samples/download")
 def download_pending_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    pending_sample = db.query(Sample).filter(Sample.status == "Pending").first()
+    pending_sample = db.query(SampleStage).filter(SampleStage.status == "Pending", SampleStage.stage_id == 1).first()
     if not pending_sample:
         raise HTTPException(status_code=404, detail="No pending samples found")
 
@@ -100,7 +124,7 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
     def update_status():
         try:
             process.wait()
-            db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
+            db_sample = db.query(SampleStage).filter(SampleStage.sra_code == sra_code).first()
             if process.returncode == 0:
                 db_sample.status = "Completed"
                 db.commit()
@@ -117,16 +141,11 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
     return {"message": f"Download started for sample {sra_code}", "sample_name": sra_code}
 
 @router.post("/samples/update_status")
-async def update_sample_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
-    if db_sample is None:
-        raise HTTPException(status_code=404, detail="Sample not found")
-    db_sample.status = status
-    db.commit()
+async def update_sample_status_endpoint(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
+    db_sample_stage = update_sample_status(db, sra_code, status)
 
-    # Update the sample stage
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id, SampleStage.stage_id == 1).first()
-    if db_sample_stage:
+    # Update the name if the status is "Completed"
+    if status == "Completed":
         db_sample_stage.name = f"{sra_code}.fastq"
         db.commit()
 
@@ -135,8 +154,10 @@ async def update_sample_status(sra_code: str = Form(...), status: str = Form(...
 
 @router.post("/samples/calculate_size")
 async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == current_user.id).first()
-    if db_sample is None or db_sample.status != "Completed":
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
+    ).first()
+    if db_sample_stage is None or db_sample_stage.status != "Completed":
         raise HTTPException(status_code=404, detail="Sample not found or not completed")
 
     user_id = current_user.id
@@ -156,46 +177,39 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
     size_1, size_2 = sizes
 
-    db_sample_1 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_1.fastq", Sample.user_id == current_user.id).first()
-    db_sample_2 = db.query(Sample).filter(Sample.sra_code == f"{sra_code}_2.fastq", Sample.user_id == current_user.id).first()
+    # Extrair o basename do sra_code
+    sra_code_basename = sra_code.split("_")[0]
 
-    if db_sample_1 is None:
-        db_sample_1 = Sample(sra_code=f"{sra_code}_1.fastq", size=size_1, status="Completed", user_id=current_user.id)
-        db.add(db_sample_1)
-    else:
-        db_sample_1.size = size_1
-        db_sample_1.status = "Completed"
-
-    if db_sample_2 is None:
-        db_sample_2 = Sample(sra_code=f"{sra_code}_2.fastq", size=size_2, status="Completed", user_id=current_user.id)
-        db.add(db_sample_2)
-    else:
-        db_sample_2.size = size_2
-        db_sample_2.status = "Completed"
-
-    db.commit()
-    db.refresh(db_sample_1)
-    db.refresh(db_sample_2)
-
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id).first()
-    if db_sample_stage:
-        db_sample_stage_1 = SampleStage(sample_id=db_sample_1.id, stage_id=db_sample_stage.stage_id)
-        db_sample_stage_2 = SampleStage(sample_id=db_sample_2.id, stage_id=db_sample_stage.stage_id)
-        db.add(db_sample_stage_1)
-        db.add(db_sample_stage_2)
-        db.delete(db_sample_stage)
-
+    # Atualizar os registros para _1.fastq e _2.fastq com o sra_code correto
+    db_sample_stage_1 = SampleStage(
+        sample_id=db_sample_stage.sample_id,  # Use the same sample_id
+        stage_id=1,
+        name=f"{sra_code_basename}_1.fastq",
+        sra_code=sra_code_basename,  # Usar apenas o basename
+        size=size_1,
+        status="Completed",
+        user_id=current_user.id,
+    )
+    db_sample_stage_2 = SampleStage(
+        sample_id=db_sample_stage.sample_id,  # Use the same sample_id
+        stage_id=1,
+        name=f"{sra_code_basename}_2.fastq",
+        sra_code=sra_code_basename,  # Usar apenas o basename
+        size=size_2,
+        status="Completed",
+        user_id=current_user.id,
+    )
+    db.add(db_sample_stage_1)
+    db.add(db_sample_stage_2)
+    db.delete(db_sample_stage)
     db.commit()
 
-    db.delete(db_sample)
-    db.commit()
-
-    await manager.broadcast(f"Tamanho das amostras {sra_code} atualizado.")
+    await manager.broadcast(f"Tamanho das amostras {sra_code_basename} atualizado.")
     return {"message": "Sample sizes updated successfully"}
 
 @router.get("/samples/pending_count")
 def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    pending_count = db.query(Sample).filter(Sample.status == "Pending", Sample.user_id == current_user.id).count()
+    pending_count = db.query(SampleStage).filter(SampleStage.status == "Pending", SampleStage.stage_id == 1, SampleStage.user_id == current_user.id).count()
     return {"pending_count": pending_count}
 
 @router.post("/stages/")
@@ -241,15 +255,14 @@ def update_sample_stage(sample_id: int, stage_id: int, status: str, db: Session 
 
 @router.get("/samples/stages/{stage_id}")
 def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == stage_id).all()
+    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == stage_id, SampleStage.user_id == current_user.id).all()
     samples = []
     for sample_stage in sample_stages:
-        sample = db.query(Sample).filter(Sample.id == sample_stage.sample_id, Sample.user_id == current_user.id).first()
-        if sample:
-            samples.append({
-                "id": sample.id,
-                "sra_code": sample.sra_code,
-                "size": sample.size,
-                "status": sample.status
-            })
+        samples.append({
+            "id": sample_stage.id,
+            "sra_code": sample_stage.sra_code,
+            "size": sample_stage.size,
+            "status": sample_stage.status,
+            "name": sample_stage.name,
+        })
     return samples

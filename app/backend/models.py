@@ -8,15 +8,6 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
 
-class Sample(Base):
-    __tablename__ = "samples"
-    id = Column(Integer, primary_key=True, index=True)
-    sra_code = Column(String, unique=True, index=True)
-    size = Column(String)
-    status = Column(String)
-    user_id = Column(Integer, ForeignKey("users.id"))  # Add user_id field
-    stages = relationship("SampleStage", back_populates="sample")  # Ensure relationship is defined
-
 class Stage(Base):
     __tablename__ = "stages"
     id = Column(Integer, primary_key=True, index=True)
@@ -25,12 +16,16 @@ class Stage(Base):
 class SampleStage(Base):
     __tablename__ = "sample_stages"
     id = Column(Integer, primary_key=True, index=True)
-    sample_id = Column(Integer, ForeignKey("samples.id"))
+    sample_id = Column(Integer, index=True)  # Unique sample identifier for stage_id 1
     stage_id = Column(Integer, ForeignKey("stages.id"))
-    name = Column(String)  # Ensure name column is defined
+    name = Column(String)  # Name of the file or stage-specific identifier
+    sra_code = Column(String, index=True)  # SRA code of the sample
+    size = Column(String)  # Size of the sample
+    status = Column(String)  # Status of the sample
+    user_id = Column(Integer, ForeignKey("users.id"))  # User who owns the sample
 
-    sample = relationship("Sample", back_populates="stages")
     stage = relationship("Stage")
+    user = relationship("User")
 
 class File(Base):
     __tablename__ = "files"
@@ -41,5 +36,4 @@ class File(Base):
 
     sample_stage = relationship("SampleStage", back_populates="files")
 
-Sample.stages = relationship("SampleStage", back_populates="sample")
 SampleStage.files = relationship("File", back_populates="sample_stage")

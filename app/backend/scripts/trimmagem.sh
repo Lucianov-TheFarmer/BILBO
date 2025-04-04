@@ -127,8 +127,10 @@ echo "Waiting for tmux session to finish" >> $log_file
 tmux wait-for trimmagem_done
 
 # Clean up the tmux session
-echo "Cleaning up tmux session" >> $log_file
-tmux kill-session -t "$session_name"
+if tmux has-session -t "$session_name" 2>/dev/null; then
+    echo "Cleaning up tmux session" >> $log_file
+    tmux kill-session -t "$session_name"
+fi
 
 # Print the log file content for debugging
 echo "Log file content:" >> $log_file

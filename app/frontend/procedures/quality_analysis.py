@@ -36,22 +36,26 @@ async def update_quality_analysis_table(page, token, user_id):
             response = await client.get("http://bioinfo-container:8000/quality_analysis/completed", headers=headers)
             if response.status_code == 200:
                 samples = response.json()
-                tabela_amostras_qc.rows.clear()
+                logger.info(f"Data received from backend: {samples}")
+                tabela_amostras_qc.rows.clear()  # Limpar as linhas existentes na tabela
                 for sample in samples:
-                    async def view_sample_details_handler(e, s=sample["name"]):
-                        await view_sample_details(page, token, s, user_id)
-                    
+                    # Criar um handler síncrono para chamar a função assíncrona
+                    def view_sample_details_handler(e, s=sample["name"]):
+                        asyncio.run(view_sample_details(page, token, s, user_id))
+
+                    # Adicionar uma nova linha para cada amostra retornada
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
                             cells=[
-                                ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Display the name field
+                                ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], style=ft.TextStyle(size=12))),  # Mostrar o nome ou o sra_code
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Checkbox()),  # Add checkbox to each row
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),  # Add eye icon button
+                                ft.DataCell(ft.Checkbox()),  # Adicionar checkbox para seleção
+                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),  # Botão para visualizar detalhes
                             ],
                         )
                     )
-                page.update()
+                logger.info("Table updated successfully with new data.")
+                page.update()  # Atualizar a página para refletir as mudanças na tabela
             else:
                 logger.error(f"Erro ao obter amostras processadas: {response.status_code} - {response.text}")
     except Exception as e:
@@ -124,20 +128,37 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
     samples = []
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/samples?status=Completed", headers=headers, follow_redirects=True)
-            if response.status_code == 200:
-                all_samples = response.json()
-                processed_samples_response = await client.get("http://bioinfo-container:8000/quality_analysis/completed", headers=headers)
-                if processed_samples_response.status_code == 200:
-                    processed_samples = {sample["sra_code"] for sample in processed_samples_response.json()}
-                    samples = [sample for sample in all_samples if sample["sra_code"] not in processed_samples and sample["status"] == "Completed"]
-                else:
-                    samples = [sample for sample in all_samples if sample["status"] == "Completed"]
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            # Obter amostras baixadas (stage_id=1)
+            response_stage_1 = await client.get("http://bioinfo-container:8000/samples/stages/1", headers=headers)
+            if response_stage_1.status_code == 200:
+                downloaded_samples = response_stage_1.json()
+                logger.info(f"Amostras baixadas (stage_id=1): {downloaded_samples}")
             else:
-                logger.error(f"Erro ao obter amostras: {response.status_code} - {response.text}")
+                logger.error(f"Erro ao obter amostras baixadas: {response_stage_1.status_code} - {response_stage_1.text}")
+                downloaded_samples = []
+
+            # Obter amostras já analisadas (stage_id=2)
+            response_stage_2 = await client.get("http://bioinfo-container:8000/samples/stages/2", headers=headers)
+            if response_stage_2.status_code == 200:
+                analyzed_samples = {sample["name"].replace(".html", ".fastq") for sample in response_stage_2.json()}
+                logger.info(f"Amostras analisadas (stage_id=2): {analyzed_samples}")
+            else:
+                logger.error(f"Erro ao obter amostras analisadas: {response_stage_2.status_code} - {response_stage_2.text}")
+                analyzed_samples = set()
+
+            # Filtrar amostras baixadas que ainda não foram analisadas
+            samples = [sample for sample in downloaded_samples if sample["name"] not in analyzed_samples]
+            logger.info(f"Amostras disponíveis para análise de qualidade: {samples}")
+
     except Exception as e:
         logger.error(f"An error occurred while fetching samples: {e}", exc_info=True)
+
+    # Verificar se as amostras estão sendo corretamente processadas
+    if not samples:
+        logger.warning("Nenhuma amostra disponível para análise de qualidade após o filtro.")
+    else:
+        logger.info(f"Número de amostras disponíveis para análise de qualidade: {len(samples)}")
 
     # Function to select or deselect all samples
     async def toggle_select_all(e):
@@ -156,19 +177,18 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         page.update()  # Update the page to reflect the modal closure
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:  # Increase the timeout to 60 seconds
-                for sample in selected_samples:
-                    response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": [sample]}, headers=headers)
-                    if response.status_code == 200:
-                        logger.info(f"Análise de qualidade iniciada para {sample} com sucesso!")
-                        await update_quality_analysis_table(page, token, user_id)
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
-                        page.update()
-                    else:
-                        logger.error(f"Erro ao iniciar análise de qualidade para {sample}: {response.status_code} - {response.text}")
+                response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
+                if response.status_code == 200:
+                    logger.info(f"Análise de qualidade iniciada para {selected_samples} com sucesso!")
+                    await update_quality_analysis_table(page, token, user_id)
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
+                    page.update()
+                else:
+                    logger.error(f"Erro ao iniciar análise de qualidade para {selected_samples}: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"An error occurred while starting quality analysis: {e}", exc_info=True)
 
-    # Create the table with samples
+    # Criar a tabela com as amostras disponíveis para análise de qualidade
     tabela_analise_qualidade = ft.DataTable(
         heading_row_color=ft.colors.BLACK12,
         columns=[
@@ -180,7 +200,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(sample["sra_code"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Use 'name' instead of 'sra_code'
                     ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
@@ -194,7 +214,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         empty_message = ft.Column(
             controls=[
                 ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
-                ft.Text("Nenhuma amostra baixada", style=ft.TextStyle(size=16), text_align="center"),
+                ft.Text("Nenhuma amostra disponível para análise de qualidade", style=ft.TextStyle(size=16), text_align="center"),
                 ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
             ],
             alignment=ft.MainAxisAlignment.CENTER,

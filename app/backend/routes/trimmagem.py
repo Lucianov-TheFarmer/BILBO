@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Sample, User
+from ..models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
 from ..utils import get_current_user
 import subprocess
 import os
@@ -105,11 +105,38 @@ def start_trimmagem(
             stdout, stderr = process.communicate()
 
             logger.info(f"Command stdout: {stdout}")
-            logger.info(f"Command stderr: {stderr}")
+            if stderr.strip():  # Log stderr only if it contains meaningful content
+                logger.error(f"Command stderr: {stderr.strip()}")
 
             if process.returncode != 0:
                 logger.error(f"Error in trimmagem for {base_name}: {stderr.strip()}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error in trimmagem for {base_name}: {stderr.strip()}")
+
+            # Obter o sample_id original
+            db_sample_stage = db.query(SampleStage).filter(
+                SampleStage.sra_code == base_name,
+                SampleStage.stage_id == 1,
+                SampleStage.user_id == user_id,
+            ).first()
+            if not db_sample_stage:
+                logger.error(f"Sample {base_name} not found in stage 1.")
+                continue
+
+            # Criar registros no banco de dados para os resultados da trimmagem
+            for suffix in ["_1", "_2"]:
+                trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
+                trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
+                db_sample_stage_trimmed = SampleStage(
+                    sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id original
+                    stage_id=3,  # ID do estágio de trimmagem
+                    name=trimmed_name,
+                    sra_code=base_name,
+                    size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
+                    status="Completed",
+                    user_id=user_id,
+                )
+                db.add(db_sample_stage_trimmed)
+            db.commit()
 
             logger.info(f"Trimmagem completed successfully for paired sample {base_name}.")
 
@@ -139,13 +166,39 @@ def start_trimmagem(
             stdout, stderr = process.communicate()
 
             logger.info(f"Command stdout: {stdout}")
-            logger.info(f"Command stderr: {stderr}")
+            if stderr.strip():  # Log stderr only if it contains meaningful content
+                logger.error(f"Command stderr: {stderr.strip()}")
 
             if process.returncode != 0:
                 logger.error(f"Error in trimmagem for {sample}: {stderr.strip()}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error in trimmagem for {sample}: {stderr.strip()}")
 
-            logger.info(f"Trimmagem completed successfully for single sample {sample}.")
+            # Obter o sample_id original
+            db_sample_stage = db.query(SampleStage).filter(
+                SampleStage.name == sample,
+                SampleStage.stage_id == 1,
+                SampleStage.user_id == user_id,
+            ).first()
+            if not db_sample_stage:
+                logger.error(f"Sample {sample} not found in stage 1.")
+                continue
+
+            # Criar registro no banco de dados para o resultado da trimmagem
+            trimmed_name = f"{sample}_trimmed.fastq"
+            trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
+            db_sample_stage_trimmed = SampleStage(
+                sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id original
+                stage_id=3,  # ID do estágio de trimmagem
+                name=trimmed_name,
+                sra_code=sample.split("_")[0],
+                size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
+                status="Completed",
+                user_id=user_id,
+            )
+            db.add(db_sample_stage_trimmed)
+        db.commit()
+
+        logger.info(f"Trimmagem completed successfully for single sample {sample}.")
 
         # Limpar arquivo de adaptadores personalizados
         if adapter_file and os.path.exists(adapter_file):
@@ -159,3 +212,30 @@ def start_trimmagem(
     except Exception as e:
         logger.error(f"Unexpected error in trimmagem route: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+
+@router.post("/trimmagem/update_status")
+async def update_trimmagem_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 3).first()
+    if not db_sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    db_sample_stage.status = status
+    db.commit()
+
+    return {"message": f"Trimmagem status for {sra_code} updated to {status}"}
+
+@router.delete("/trimmagem/{sra_code}")
+def delete_trimmagem_result(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 3).first()
+    if not db_sample_stage:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trimmagem result for {sra_code} not found")
+
+    db.delete(db_sample_stage)
+    db.commit()
+
+    # Delete the trimmagem result directory
+    user_id = current_user.id
+    output_dir = f"../users/{user_id}/trimmagem/{sra_code}"
+    if os.path.exists(output_dir):
+        subprocess.run(["rm", "-rf", output_dir])
+
+    return {"message": "Trimmagem result deleted successfully"}

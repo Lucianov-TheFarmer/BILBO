@@ -2,35 +2,65 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel  # Import BaseModel
 from ..database import get_db
-from ..models import Sample, SampleStage, User, Stage
+from ..models import SampleStage, User, Stage  # Substitua 'Sample' por 'SampleStage'
 from ..utils import get_current_user, manager  # Atualizado
 import subprocess
 import os
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 class QualityAnalysisRequest(BaseModel):
     samples: list[str]
 
-@router.post("/quality_analysis/")
+@router.post("/quality_analysis/")  # Iniciar análise de qualidade
 def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user_id = current_user.id
-    for sra_code in request.samples:
-        db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == user_id).first()
-        if not db_sample:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
-        
-        command = f"bash /app/backend/scripts/quality_analysis.sh {sra_code} {user_id}"
+    for name in request.samples:  # Usar 'name' em vez de 'sra_code'
+        # Garantir que o 'name' seja o nome completo da amostra (ex.: SRR31951083_1.fastq ou SRR31951083_2.fastq)
+        db_sample_stage = db.query(SampleStage).filter(
+            SampleStage.name == name,  # Verificar pelo nome completo da amostra
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == user_id
+        ).first()
+
+        if not db_sample_stage:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
+
+        # Determinar o sufixo (_1 ou _2) com base no nome da amostra
+        suffix = "_1" if "_1.fastq" in name else "_2"
+
+        # Criar um novo estágio para análise de qualidade (stage_id=2)
+        new_sample_stage = SampleStage(
+            sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id da amostra original
+            stage_id=2,  # ID do estágio de análise de qualidade
+            name=f"{db_sample_stage.sra_code}{suffix}.html",  # Nome do arquivo de saída com sufixo
+            sra_code=db_sample_stage.sra_code,  # Usar apenas o basename
+            size=None,  # O tamanho permanece como NULL
+            status="In Progress",  # Status inicial
+            user_id=user_id,  # Associar ao usuário atual
+        )
+        db.add(new_sample_stage)
+
+        # Executar o script de análise de qualidade
+        command = f"bash /app/backend/scripts/quality_analysis.sh {name} {user_id}"
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         if process.returncode != 0:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error starting quality analysis for {sra_code}: {stderr}")
-    
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error starting quality analysis for {name}: {stderr}")
+
+        # Atualizar o status para "Completed" após a execução bem-sucedida
+        new_sample_stage.status = "Completed"
+        db.commit()
+
     return {"message": "Quality analysis started successfully"}
         
 @router.post("/quality_analysis/update_status")
 async def update_quality_analysis_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code).first()
+    db_sample = db.query(SampleStage).filter(SampleStage.sra_code == sra_code).first()
     if db_sample is None:
         raise HTTPException(status_code=404, detail="Sample not found")
     db_sample.status = status
@@ -47,58 +77,45 @@ async def update_quality_analysis_status(sra_code: str = Form(...), status: str 
 
 @router.get("/quality_analysis/completed")
 def get_completed_quality_analysis(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == 2).all()
+    logger.info("Fetching completed quality analysis results...")
+    sample_stages = db.query(SampleStage).filter(SampleStage.stage_id == 2, SampleStage.user_id == current_user.id).all()
+    logger.info(f"Raw sample stages fetched: {sample_stages}")
+
     samples = []
     for sample_stage in sample_stages:
-        sample = db.query(Sample).filter(Sample.id == sample_stage.sample_id, Sample.user_id == current_user.id).first()
-        if sample:
-            samples.append({
-                "id": sample.id,
-                "sra_code": sample.sra_code,
-                "size": sample.size,
-                "status": sample.status,
-                "name": sample_stage.name  # Include the name field
-            })
+        sample_data = {
+            "id": sample_stage.id,
+            "sra_code": sample_stage.sra_code,
+            "size": sample_stage.size,
+            "status": sample_stage.status,
+            "name": sample_stage.name  # Include the name field
+        }
+        samples.append(sample_data)
+        logger.info(f"Processed sample data: {sample_data}")
+
+    logger.info(f"Final response being sent to frontend: {samples}")
     return samples
 
-@router.post("/quality_analysis/add_result")
-def add_quality_analysis_result(sra_code: str = Form(...), user_id: int = Form(...), db: Session = Depends(get_db)):
-    db_sample = db.query(Sample).filter(Sample.sra_code == sra_code, Sample.user_id == user_id).first()
-    if not db_sample:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
+@router.delete("/quality_analysis/{name}")
+def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Encontrar o registro pelo campo 'name' e 'stage_id=2'
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.name == name,
+        SampleStage.stage_id == 2,
+        SampleStage.user_id == current_user.id
+    ).first()
 
-    # Modify the name to remove the .fastq part
-    modified_name = sra_code.replace(".fastq", "") + ".html"
-
-    # Create a new SampleStage entry for the quality analysis result
-    new_sample_stage = SampleStage(
-        sample_id=db_sample.id,
-        stage_id=2,  # Assuming stage_id 2 is for quality analysis
-        name=modified_name
-    )
-    db.add(new_sample_stage)
-    db.commit()
-
-    return {"message": "Quality analysis result added successfully"}
-
-@router.delete("/quality_analysis/{sra_code}")
-def delete_quality_analysis_result(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.name == sra_code, SampleStage.stage_id == 2).first()
     if not db_sample_stage:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
 
-    db_sample = db.query(Sample).filter(Sample.id == db_sample_stage.sample_id, Sample.user_id == current_user.id).first()
-    if not db_sample:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
-
-    # Delete corresponding sample stages
+    # Excluir o registro do banco de dados
     db.delete(db_sample_stage)
     db.commit()
 
-    # Delete the quality analysis result directory
+    # Excluir o diretório de resultados de análise de qualidade
     user_id = current_user.id
-    output_dir = f"../users/{user_id}/QC/{sra_code}"
+    output_dir = f"../users/{user_id}/QC/{name}"
     if os.path.exists(output_dir):
         subprocess.run(["rm", "-rf", output_dir])
 
-    return {"message": "Quality analysis result deleted successfully"}
+    return {"message": f"Quality analysis result {name} deleted successfully"}
