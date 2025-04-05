@@ -81,7 +81,7 @@ async def update_trimmagem_table(page, token):
                                                     )
                                                 )
                                             ],
-                                            scroll=ft.ScrollMode.HIDDEN,  # Add horizontal scroll
+                                            scroll=ft.ScrollMode.AUTO,  # Add horizontal scroll
                                         ),
                                         width=130
                                     )
@@ -98,9 +98,66 @@ async def update_trimmagem_table(page, token):
     except Exception as e:
         logger.error(f"An error occurred while updating the trimmagem table: {e}", exc_info=True)
 
+async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas):
+    async def confirm_delete(e):
+        # Obter amostras selecionadas
+        selected_samples = [
+            row.cells[0].content.content.controls[0].content.value
+            for row in tabela_amostras_trimmadas.rows
+            if row.cells[3].content.value
+        ]
+        if not selected_samples:
+            logger.error("Nenhuma amostra selecionada para exclusão.")
+            return
+
+        headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+        try:
+            async with httpx.AsyncClient() as client:
+                for sample_name in selected_samples:
+                    response = await client.delete(f"http://bioinfo-container:8000/trimmagem/{sample_name}", headers=headers)
+                    if response.status_code == 200:
+                        logger.info(f"Amostra trimmada {sample_name} excluída com sucesso!")
+                    else:
+                        logger.error(f"Erro ao excluir amostra trimmada {sample_name}: {response.status_code} - {response.text}")
+
+            # Atualizar a tabela após exclusão
+            await update_trimmagem_table(page, token)
+            page.update()
+        except Exception as e:
+            logger.error(f"Erro ao excluir amostras trimmadas: {e}", exc_info=True)
+
+        # Fechar o modal após a operação
+        dlg_modal_excluir_trimmagem.open = False
+        page.update()
+
+    # Criar o modal de confirmação
+    dlg_modal_excluir_trimmagem = ft.AlertDialog(
+        title=ft.Text("Confirmar exclusão"),
+        content=ft.TextField(
+            hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+            border_radius=ft.border_radius.all(4),
+            multiline=False,
+            expand=1,
+        ),
+        actions=[
+            ft.TextButton(
+                "Excluir",
+                on_click=confirm_delete,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                width=200,
+                height=40,
+            ),
+        ],
+        actions_alignment=ft.MainAxisAlignment.CENTER,
+    )
+
+    page.open(dlg_modal_excluir_trimmagem)
+
 async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela):
     """Exibe o modal de trimmagem com a tabela de seleção e o formulário de parâmetros."""
     global tabela_selecao_trimmagem  # Use a variável global para evitar problemas de escopo
+
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
 
     # Certifique-se de que a tabela foi criada antes de usá-la
     if tabela_selecao_trimmagem is None:
@@ -348,31 +405,103 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
     # Função para iniciar a trimmagem
     async def start_trimmagem(e):
+        logger.info("Start trimmagem button clicked.")
+
         selected_samples = [row.cells[0].content.value for row in tabela_selecao_trimmagem.rows if row.cells[3].content.value]
+        logger.info(f"Selected samples: {selected_samples}")
+
         if not selected_samples:
-            logger.error("Nenhuma amostra selecionada para trimmagem.")
+            logger.info("Nenhuma amostra selecionada.")
             return
 
-        # Coletar parâmetros do formulário
-        params = {
-            "threads": threads_field.value,
-            "phred": phred_dropdown.value,
-            "illumina_clip": {
-                "Arquivo adaptadores": illumina_clip_fields[0].value,
-                "Seed mismatches": illumina_clip_fields[1].value,
-                "Threshold palíndromo": illumina_clip_fields[2].value,
-                "Threshold simples": illumina_clip_fields[3].value,
-                "Comprimento mínimo adaptador": illumina_clip_fields[4].value,
-            },
-        }
-        logger.info(f"Parâmetros coletados: {params}")
+        # Validate custom adapter content if "Personalizado" is selected
+        if illumina_clip_fields[0].value == "Personalizado" and not is_valid_fasta(custom_adapter_content):
+            await log_message(page, "O conteúdo do adaptador personalizado não é um arquivo FASTA válido.")
+            return
 
         await log_message(page, f"Iniciando trimmagem para {selected_samples}")
         dlg_modal_trimmagem.open = False
         page.update()
 
-        # Lógica para iniciar a trimmagem
-        await processar_trimmagem(page, token, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
+        # Collect parameters
+        try:
+            illumina_clip_value = illumina_clip_fields[0].value
+
+            params = {
+                "threads": threads_field.value,
+                "phred": phred_dropdown.value,
+                "illumina_clip": json.dumps({
+                    "Arquivo adaptadores": illumina_clip_value,
+                    "Conteudo personalizado": custom_adapter_content if illumina_clip_value == "Personalizado" else None,
+                    "Seed mismatches": illumina_clip_fields[1].value,
+                    "Threshold palindromo": illumina_clip_fields[2].value,
+                    "Threshold simples": illumina_clip_fields[3].value,
+                    "Comprimento minimo adaptador": illumina_clip_fields[4].value
+                }),
+                "sliding_window": json.dumps({
+                    "Tamanho janela": sliding_window_fields[0].value,
+                    "Qualidade minima": sliding_window_fields[1].value,
+                }),
+                "max_info": json.dumps({
+                    "Comprimento alvo": max_info_fields[0].value,
+                    "Strictness": max_info_fields[1].value,
+                }),
+                "leading": leading_field.value,
+                "trailing": trailing_field.value,
+                "crop": int(crop_field.value) if crop_field.value.strip() else None,
+                "headcrop": int(headcrop_field.value) if headcrop_field.value.strip() else None,
+                "minlen": minlen_field.value,
+                "avgqual": int(avgqual_field.value) if avgqual_field.value.strip() else None,
+            }
+            logger.info(f"Collected parameters: {params}")
+        except Exception as ex:
+            logger.error(f"Error while collecting parameters: {ex}")
+            return
+
+        # Retry logic for HTTP request
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=600.0) as client:  # Increased timeout to 120 seconds
+                    response = await client.post(
+                        "http://bioinfo-container:8000/trimmagem/",
+                        data={
+                            "selected_samples": json.dumps(selected_samples),
+                            "threads": params["threads"],
+                            "phred": params["phred"],
+                            "illumina_clip": params["illumina_clip"],
+                            "sliding_window": params["sliding_window"],
+                            "max_info": params["max_info"],
+                            "leading": params["leading"],
+                            "trailing": params["trailing"],
+                            "crop": params["crop"],
+                            "headcrop": params["headcrop"],
+                            "minlen": params["minlen"],
+                            "avgqual": params["avgqual"],
+                        },
+                        headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                    )
+
+                    if response.status_code == 200:
+                        logger.info("Trimmagem concluída com sucesso!")
+                        await log_message(page, "Trimmagem concluída com sucesso!")
+                        await update_trimmagem_table(page, token)
+                        await atualizar_tabela(page, token)  # Corrigido para evitar erro de callable
+                        page.update()
+                        return
+                    else:
+                        logger.error(f"Erro ao iniciar trimmagem: {response.status_code} - {response.text}")
+                        await log_message(page, f"Erro ao iniciar trimmagem: {response.status_code} - {response.text}")
+            except httpx.RequestError as e:
+                logger.error(f"Tentar {attempt + 1}/{max_retries} falhou: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(5)  # Wait before retrying
+                else:
+                    await log_message(page, f"Falha ao conectar ao backend após {max_retries} tentativas.")
+                    return
+            except Exception as e:
+                logger.error(f"Erro inesperado: {e}", exc_info=True)
+                return
 
     # Organize input fields into a structured layout with two columns
     form_layout = ft.Column(

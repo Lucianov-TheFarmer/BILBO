@@ -4,7 +4,7 @@ from functools import partial
 from .procedures.menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
-from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table  # Import the trimmagem modal and table
+from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table, delete_trimmed_samples  # Import the trimmagem modal and table
 from .procedures.viewer import create_dropdown_menu, display_graph  # Updated import
 from .procedures.utils import log_message  # Updated import
 from .components.general_components import create_table, create_button  # Updated import
@@ -58,6 +58,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     async def show_trimmagem_modal_handler(e):
         await show_trimmagem_modal(page, token, tabela_amostras_local, atualizar_tabela, container_menu_direita)
 
+    async def excluir_amostras_trimmadas_handler(e):
+        await delete_trimmed_samples(page, token, tabela_amostras_trimmadas)
+
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
         if stage_id == 1:
@@ -100,7 +103,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     # Define the "Excluir amostras trimmadas" button
     excluir_trimmagem_button = create_button(
         label="Excluir amostras trimmadas",
-        on_click=None,  # Placeholder for the handler
+        on_click=excluir_amostras_trimmadas_handler,
         color=ft.colors.RED,
     )
 

@@ -223,19 +223,38 @@ async def update_trimmagem_status(sra_code: str = Form(...), status: str = Form(
 
     return {"message": f"Trimmagem status for {sra_code} updated to {status}"}
 
-@router.delete("/trimmagem/{sra_code}")
-def delete_trimmagem_result(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 3).first()
-    if not db_sample_stage:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trimmagem result for {sra_code} not found")
-
-    db.delete(db_sample_stage)
-    db.commit()
-
-    # Delete the trimmagem result directory
+@router.delete("/trimmagem/{sample_name}")
+async def delete_trimmed_sample(sample_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user_id = current_user.id
-    output_dir = f"../users/{user_id}/trimmagem/{sra_code}"
-    if os.path.exists(output_dir):
-        subprocess.run(["rm", "-rf", output_dir])
+    trimmed_path = f"../users/{user_id}/trimmed/{sample_name}"
 
-    return {"message": "Trimmagem result deleted successfully"}
+    # Verificar se o arquivo existe no sistema de arquivos
+    if not os.path.exists(trimmed_path):
+        logger.warning(f"Amostra trimmada {sample_name} não encontrada para exclusão.")
+    else:
+        try:
+            os.remove(trimmed_path)
+            logger.info(f"Amostra trimmada {sample_name} excluída com sucesso do sistema de arquivos.")
+        except Exception as e:
+            logger.error(f"Erro ao excluir amostra trimmada {sample_name} do sistema de arquivos: {e}")
+            raise HTTPException(status_code=500, detail="Erro ao excluir amostra trimmada do sistema de arquivos.")
+
+    # Remover a entrada correspondente no banco de dados
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.name == sample_name,
+        SampleStage.stage_id == 3,
+        SampleStage.user_id == user_id
+    ).first()
+
+    if not db_sample_stage:
+        logger.warning(f"Amostra trimmada {sample_name} não encontrada no banco de dados para exclusão.")
+        return {"message": f"Amostra trimmada {sample_name} já foi excluída ou não existe."}
+
+    try:
+        db.delete(db_sample_stage)
+        db.commit()
+        logger.info(f"Amostra trimmada {sample_name} excluída com sucesso do banco de dados.")
+        return {"message": f"Amostra trimmada {sample_name} excluída com sucesso."}
+    except Exception as e:
+        logger.error(f"Erro ao excluir amostra trimmada {sample_name} do banco de dados: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao excluir amostra trimmada do banco de dados.")
