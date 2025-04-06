@@ -56,10 +56,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
         await delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
     async def show_trimmagem_modal_handler(e):
-        await show_trimmagem_modal(page, token, tabela_amostras_local, atualizar_tabela, container_menu_direita)
+        await show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
     async def excluir_amostras_trimmadas_handler(e):
-        await delete_trimmed_samples(page, token, tabela_amostras_trimmadas)
+        await delete_trimmed_samples(page, token, tabela_amostras_trimmadas, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)

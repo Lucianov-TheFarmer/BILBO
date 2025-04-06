@@ -115,6 +115,8 @@ def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), cur
     # Excluir o diretório de resultados de análise de qualidade
     user_id = current_user.id
     output_dir = f"../users/{user_id}/QC/{name}"
+    output_dir = output_dir.replace(".html", ".fastq")
+    logger.info(f"Deleting output directory: {output_dir}")
     if os.path.exists(output_dir):
         subprocess.run(["rm", "-rf", output_dir])
 

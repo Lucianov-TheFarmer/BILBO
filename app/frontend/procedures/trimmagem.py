@@ -2,18 +2,20 @@ import flet as ft
 import httpx
 import logging
 import asyncio
-import json  # Import JSON for serialization
+import json
 from .utils import log_message
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)  # Set to DEBUG level
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-tabela_selecao_trimmagem = None  # Inicializa a variável global como None
+# Global variables
+tabela_selecao_trimmagem = None
 
-def create_tabela_amostras_trimmadas(page, token):  # Updated function signature
+def create_tabela_amostras_trimmadas(page, token):
+    """Creates the table for trimmed samples."""
     global tabela_amostras_trimmadas, toggle_select_sample
-    
+
     async def toggle_select_all_trimmadas(e):
         for row in tabela_amostras_trimmadas.rows:
             row.cells[2].content.value = e.control.value
@@ -21,10 +23,10 @@ def create_tabela_amostras_trimmadas(page, token):  # Updated function signature
 
     async def toggle_select_sample(e):
         """Toggle selection of a sample and ensure PE pairs are selected together."""
-        selected_sample = e.control.data  # Retrieve the sample's SRA code
-        is_selected = e.control.value
+        selected_sample = e.control.data  # Recupera o nome da amostra
+        is_selected = e.control.value  # Verifica se o checkbox foi marcado
 
-        # Check if the sample is PE (has _1.fastq and _2.fastq)
+        # Verifica se a amostra é PE (possui _1_trimmed.fastq e _2_trimmed.fastq)
         if selected_sample.endswith("_1_trimmed.fastq"):
             paired_sample = selected_sample.replace("_1_trimmed.fastq", "_2_trimmed.fastq")
         elif selected_sample.endswith("_2_trimmed.fastq"):
@@ -32,16 +34,15 @@ def create_tabela_amostras_trimmadas(page, token):  # Updated function signature
         else:
             paired_sample = None
 
-        # Update the state of the paired sample
+        # Atualiza o estado da amostra pareada
         if paired_sample:
-            for row in tabela_amostras_trimmadas.rows:
-                # Access the Text inside the Container
+            for row in tabela_amostras_trimmadas.rows:  # Certifique-se de que está iterando sobre a tabela correta
                 sample_name = row.cells[0].content.content.controls[0].content.value
                 if sample_name == paired_sample:
-                    row.cells[3].content.value = is_selected  # Select or deselect the paired sample
+                    row.cells[3].content.value = is_selected  # Seleciona ou desmarca a amostra pareada
                     break
 
-        # Update the page to reflect changes
+        # Atualiza a página para refletir as mudanças
         page.update()
 
     tabela_amostras_trimmadas = ft.DataTable(
@@ -50,13 +51,14 @@ def create_tabela_amostras_trimmadas(page, token):  # Updated function signature
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmadas)),  # Checkbox no cabeçalho
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmadas)),
         ],
         rows=[],
     )
     return tabela_amostras_trimmadas
 
 async def update_trimmagem_table(page, token):
+    """Updates the table with trimmed samples."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
@@ -65,6 +67,7 @@ async def update_trimmagem_table(page, token):
                 samples = response.json()
                 tabela_amostras_trimmadas.rows.clear()
                 for sample in samples:
+                    # Corrigir o nome para exibir _trimmed.fastq
                     tabela_amostras_trimmadas.rows.append(
                         ft.DataRow(
                             cells=[
@@ -81,14 +84,14 @@ async def update_trimmagem_table(page, token):
                                                     )
                                                 )
                                             ],
-                                            scroll=ft.ScrollMode.AUTO,  # Add horizontal scroll
+                                            scroll=ft.ScrollMode.AUTO,
                                         ),
                                         width=130
                                     )
                                 ),
                                 ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample))  # Checkbox individual
+                                ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample))
                             ],
                         )
                     )
@@ -98,14 +101,19 @@ async def update_trimmagem_table(page, token):
     except Exception as e:
         logger.error(f"An error occurred while updating the trimmagem table: {e}", exc_info=True)
 
-async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas):
+async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, container_menu_direita, tabela_amostras_local, atualizar_tabela):
+    """Deletes selected trimmed samples."""
     async def confirm_delete(e):
-        # Obter amostras selecionadas
-        selected_samples = [
-            row.cells[0].content.content.controls[0].content.value
-            for row in tabela_amostras_trimmadas.rows
-            if row.cells[3].content.value
-        ]
+        selected_samples = []
+
+        # Corrigir a seleção para pares de amostras
+        for row in tabela_amostras_trimmadas.rows:
+            if isinstance(row.cells[3].content, ft.Checkbox) and row.cells[3].content.value:
+                sample_name = row.cells[0].content.content.controls[0].content.value  # Acessa o valor do texto diretamente
+                logger.info(f"Sample selected for deletion: {sample_name}")
+                if isinstance(sample_name, str):
+                    selected_samples.append(sample_name)
+
         if not selected_samples:
             logger.error("Nenhuma amostra selecionada para exclusão.")
             return
@@ -114,23 +122,24 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas):
         try:
             async with httpx.AsyncClient() as client:
                 for sample_name in selected_samples:
+                    # Corrigir o nome para evitar duplicação de _trimmed
+                    if sample_name.endswith("_trimmed_trimmed.fastq"):
+                        sample_name = sample_name.replace("_trimmed_trimmed.fastq", "_trimmed.fastq")
                     response = await client.delete(f"http://bioinfo-container:8000/trimmagem/{sample_name}", headers=headers)
                     if response.status_code == 200:
                         logger.info(f"Amostra trimmada {sample_name} excluída com sucesso!")
                     else:
                         logger.error(f"Erro ao excluir amostra trimmada {sample_name}: {response.status_code} - {response.text}")
 
-            # Atualizar a tabela após exclusão
             await update_trimmagem_table(page, token)
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
             page.update()
         except Exception as e:
             logger.error(f"Erro ao excluir amostras trimmadas: {e}", exc_info=True)
 
-        # Fechar o modal após a operação
         dlg_modal_excluir_trimmagem.open = False
         page.update()
 
-    # Criar o modal de confirmação
     dlg_modal_excluir_trimmagem = ft.AlertDialog(
         title=ft.Text("Confirmar exclusão"),
         content=ft.TextField(
@@ -153,7 +162,7 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas):
 
     page.open(dlg_modal_excluir_trimmagem)
 
-async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela):
+async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local,  atualizar_tabela):
     """Exibe o modal de trimmagem com a tabela de seleção e o formulário de parâmetros."""
     global tabela_selecao_trimmagem  # Use a variável global para evitar problemas de escopo
 
@@ -485,8 +494,8 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                     if response.status_code == 200:
                         logger.info("Trimmagem concluída com sucesso!")
                         await log_message(page, "Trimmagem concluída com sucesso!")
-                        await update_trimmagem_table(page, token)
-                        await atualizar_tabela(page, token)  # Corrigido para evitar erro de callable
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Atualiza corretamente
+                        await update_trimmagem_table(page, token)  # Corrigido para evitar erro de callable
                         page.update()
                         return
                     else:
@@ -619,6 +628,7 @@ async def processar_trimmagem(page, token, selected_samples, container_menu_dire
             if response.status_code == 200:
                 logger.info("Trimmagem concluída com sucesso!")
                 await log_message(page, "Trimmagem concluída com sucesso!")
+
                 # Atualizar tabelas após o processamento
                 await update_trimmagem_table(page, token)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)

@@ -228,16 +228,18 @@ async def delete_trimmed_sample(sample_name: str, db: Session = Depends(get_db),
     user_id = current_user.id
     trimmed_path = f"../users/{user_id}/trimmed/{sample_name}"
 
-    # Verificar se o arquivo existe no sistema de arquivos
-    if not os.path.exists(trimmed_path):
-        logger.warning(f"Amostra trimmada {sample_name} não encontrada para exclusão.")
-    else:
-        try:
-            os.remove(trimmed_path)
-            logger.info(f"Amostra trimmada {sample_name} excluída com sucesso do sistema de arquivos.")
-        except Exception as e:
-            logger.error(f"Erro ao excluir amostra trimmada {sample_name} do sistema de arquivos: {e}")
-            raise HTTPException(status_code=500, detail="Erro ao excluir amostra trimmada do sistema de arquivos.")
+    # Verificar e excluir arquivos _trimmed.fastq e _unpaired.fastq
+    for suffix in ["_trimmed.fastq", "_unpaired.fastq"]:
+        file_path = trimmed_path.replace("_trimmed.fastq", suffix)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
+            except Exception as e:
+                logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao excluir arquivo {file_path} do sistema de arquivos.")
+        else:
+            logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
 
     # Remover a entrada correspondente no banco de dados
     db_sample_stage = db.query(SampleStage).filter(

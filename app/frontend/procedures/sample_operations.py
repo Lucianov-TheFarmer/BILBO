@@ -76,9 +76,16 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
     async def confirmar_exclusao():
         amostras_selecionadas_para_exclusao = []
         dlg_modal_excluir_amostra.open = False
-        for i in tabela_amostras_local.rows:
-            if i.cells[3].content.value:
-                amostras_selecionadas_para_exclusao.append(i.cells[0].content.value)
+        for row in tabela_amostras_local.rows:
+            if isinstance(row.cells[3].content, ft.Checkbox) and row.cells[3].content.value:
+                sample_name = row.cells[0].content.value
+                if isinstance(sample_name, str):
+                    amostras_selecionadas_para_exclusao.append(sample_name)
+
+        if not amostras_selecionadas_para_exclusao:
+            logger.error("Nenhuma amostra selecionada para exclusão.")
+            return
+
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
@@ -90,11 +97,11 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
                     else:
                         logger.error(f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
                         await log_message(page, f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
+
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+            page.update()
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
-            await log_message(page, f"An error occurred: {e}")
-        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-        page.update()
+            logger.error(f"Erro ao excluir amostras: {e}", exc_info=True)
 
     confirm_field = ft.TextField(
         hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",

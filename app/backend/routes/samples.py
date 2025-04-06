@@ -9,8 +9,11 @@ import subprocess
 import asyncio
 import sys
 import threading
+import os
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class SampleCreateRequest(BaseModel):
     sra_codes: List[str]
@@ -82,23 +85,36 @@ def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), cu
 
 @router.delete("/samples/{sra_code}")
 def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id).first()
+    # Remover o sufixo do nome do arquivo, se existir (_1.fastq ou _2.fastq)
+    sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "")
+
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code_basename,  # Usar apenas o basename
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id
+    ).first()
+
     if db_sample_stage is None:
         raise HTTPException(status_code=404, detail="Sample not found")
 
     user_id = current_user.id
 
-    # Run the script to delete the file
-    command = f"bash /app/backend/scripts/delete_file.sh {sra_code} {user_id}"
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    stdout, stderr = process.communicate()
-
-    if process.returncode != 0 and "not found" not in stderr:
-        raise HTTPException(status_code=500, detail="Error deleting file")
+    # Verificar e excluir arquivos em subdiretórios
+    for suffix in ["_1.fastq", "_2.fastq"]:
+        file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
+            except Exception as e:
+                logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao excluir arquivo {file_path} do sistema de arquivos.")
+        else:
+            logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
 
     db.delete(db_sample_stage)
     db.commit()
-    return {"message": "Sample and file deleted"}
+    return {"message": "Sample and associated files deleted successfully"}
 
 @router.get("/samples/status/{sra_code}")
 def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

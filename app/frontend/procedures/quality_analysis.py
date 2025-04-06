@@ -86,10 +86,19 @@ async def view_sample_details(page, token, sample_name, user_id):
 
 async def delete_quality_analysis_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     async def confirm_delete(e):
-        selected_samples = [row.cells[0].content.value for row in tabela_amostras_qc.rows if row.cells[2].content.value]
+        selected_samples = []
+
+        # Corrigir a seleção para pares de amostras
+        for row in tabela_amostras_qc.rows:
+            if isinstance(row.cells[2].content, ft.Checkbox) and row.cells[2].content.value:
+                sample_name = row.cells[0].content.value
+                if isinstance(sample_name, str):
+                    selected_samples.append(sample_name)
+
         if not selected_samples:
             logger.error("Nenhum resultado de análise selecionado.")
             return
+
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
@@ -99,13 +108,15 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
                         logger.info(f"Resultado da análise {sample_name} excluído com sucesso!")
                     else:
                         logger.error(f"Erro ao excluir resultado da análise {sample_name}: {response.status_code} - {response.text}")
+
+            await update_quality_analysis_table(page, token, user_id)
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+            page.update()
         except Exception as e:
-            logger.error(f"An error occurred while deleting quality analysis results: {e}", exc_info=True)
-        await update_quality_analysis_table(page, token, user_id)
-        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
+            logger.error(f"Erro ao excluir resultados de análise de qualidade: {e}", exc_info=True)
+
+        dlg_modal_excluir_analise.open = False
         page.update()
-        dlg_modal_excluir_analise.open = False  # Close the modal
-        page.update()  # Update the page to reflect the modal closure
 
     dlg_modal_excluir_analise = ft.AlertDialog(
         title=ft.Text("Confirmar exclusão"),
