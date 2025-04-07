@@ -24,42 +24,57 @@ graph_type_to_image = {
     "Adapter Content": "adapter_content.png",
 }
 
-async def display_graph(page, token, graph_type, sample_name, user_id):
+async def display_graph(page, token, graph_type, sample_name, user_id, analysis_type):
     # Extract the sample code from the sample name
     sample_code = sample_name.split('.')[0]
 
-    # Define the path to the zip file and the image inside it
-    zip_path = f"../users/{user_id}/QC/{sample_code}.fastq/{sample_code}_fastqc.zip"
-    image_path = f"{sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
+    # Define the path to the zip file and the image inside it based on analysis_type
+    if analysis_type == "QC":
+        zip_path = f"../users/{user_id}/QC/{sample_code}.fastq/{sample_code}_fastqc.zip"
+        image_path = f"{sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
+    elif analysis_type == "QC_PostTrim":
+        trimmed_sample_code = sample_code.replace("_post_trim", "_trimmed")
+        zip_path = f"../users/{user_id}/QC_PostTrim/{trimmed_sample_code}.fastq/{trimmed_sample_code}_fastqc.zip"
+        image_path = f"{trimmed_sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
+    else:
+        logger.error(f"Unsupported analysis type: {analysis_type}")
+        return None
 
     # Extract the image from the zip file
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        with zip_ref.open(image_path) as image_file:
-            image_data = image_file.read()
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zip_ref.open(image_path) as image_file:
+                image_data = image_file.read()
 
-    # Encode the image data to base64
-    image_base64 = base64.b64encode(image_data).decode('utf-8')
+        # Encode the image data to base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
 
-    # Create an Image control with the extracted image data
-    image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN)
+        # Create an Image control with the extracted image data
+        image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN)
 
-    # Create an InteractiveViewer with the extracted image data
-    interactive_viewer = ft.InteractiveViewer(
-        min_scale=0.1,
-        max_scale=15,
-        boundary_margin=ft.margin.all(20),
-        on_interaction_start=lambda e: print(e),
-        on_interaction_end=lambda e: print(e),
-        on_interaction_update=lambda e: print(e),
-        content=image_control
-    )
+        # Create an InteractiveViewer with the extracted image data
+        interactive_viewer = ft.InteractiveViewer(
+            min_scale=0.1,
+            max_scale=15,
+            boundary_margin=ft.margin.all(20),
+            on_interaction_start=lambda e: print(e),
+            on_interaction_end=lambda e: print(e),
+            on_interaction_update=lambda e: print(e),
+            content=image_control
+        )
 
-    return interactive_viewer
+        return interactive_viewer
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return ft.Text(f"Error: File not found - {e}", color=ft.colors.RED)
+    except Exception as e:
+        logger.error(f"Error extracting or displaying graph: {e}", exc_info=True)
+        return ft.Text(f"Error: {e}", color=ft.colors.RED)
 
-def create_dropdown_menu(page, token, sample_name, user_id):
+def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
     async def on_change(e):
         selected_graph = e.control.value
-        graph_control = await display_graph(page, token, selected_graph, sample_name, user_id)
+        graph_control = await display_graph(page, token, selected_graph, sample_name, user_id, analysis_type)
         
         # Find the container_pre_visualizacao and update its content
         for control in page.controls:

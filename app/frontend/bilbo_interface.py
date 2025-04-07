@@ -5,7 +5,7 @@ from .procedures.menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
 from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table, delete_trimmed_samples  # Import the trimmagem modal and table
-from .procedures.viewer import create_dropdown_menu, display_graph  # Updated import
+from .procedures.quality_analysis_post_trim import show_quality_analysis_post_trim_modal, create_tabela_amostras_pos_trimmagem, update_tabela_amostras_pos_trimmagem, delete_quality_analysis_post_trim_results  # Removendo a importação de 'show_quality_analysis_post_trim_table', pois ela não existe no módulo
 from .procedures.utils import log_message  # Updated import
 from .components.general_components import create_table, create_button  # Updated import
 import websockets  # New import
@@ -35,6 +35,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
 
     tabela_amostras_trimmadas = create_tabela_amostras_trimmadas(page, token)  # Pass token as argument
 
+    tabela_amostras_pos_trimmagem = create_tabela_amostras_pos_trimmagem(page, token)  # Pass token as argument
+
     # Function to toggle buttons
     async def toggle_buttons(controls, tabela):
         container_amostras.content.controls = [tabela] + controls
@@ -61,7 +63,15 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     async def excluir_amostras_trimmadas_handler(e):
         await delete_trimmed_samples(page, token, tabela_amostras_trimmadas, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
+    async def show_quality_analysis_post_trim_modal_handler(e):
+        await show_quality_analysis_post_trim_modal(page, token, container_menu_direita, tabela_amostras_trimmadas, atualizar_tabela, user_id)
+
+    async def excluir_qualidade_post_trim_handler(e):
+        await delete_quality_analysis_post_trim_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+
+    # Adicionando a chamada para atualizar a tabela ao selecionar "Análise de Qualidade (Pós Trimmagem)"
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
+        logger.info(f"Alterando para o estágio: {stage_id}")
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
         if stage_id == 1:
             await toggle_buttons([
@@ -80,6 +90,12 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
                 iniciar_trimmagem_button,
                 excluir_trimmagem_button,
             ], tabela_amostras_local)
+        elif stage_id == 4:  # Análise de qualidade pós-trimmagem stage
+            await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)  # Atualiza a tabela imediatamente
+            await toggle_buttons([
+                create_button("Analisar qualidade (pós trimmagem)", show_quality_analysis_post_trim_modal_handler),
+                create_button("Excluir resultados de qualidade", excluir_qualidade_post_trim_handler, color=ft.colors.RED),
+            ], tabela_amostras_pos_trimmagem)
 
     # Define the "Analisar qualidade" button
     analisar_qualidade_button = create_button(
