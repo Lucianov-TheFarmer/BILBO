@@ -6,12 +6,12 @@ from .procedures.sample_operations import adicionar_amostra, excluir_amostras_se
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
 from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table, delete_trimmed_samples  # Import the trimmagem modal and table
 from .procedures.quality_analysis_post_trim import show_quality_analysis_post_trim_modal, create_tabela_amostras_pos_trimmagem, update_tabela_amostras_pos_trimmagem, delete_quality_analysis_post_trim_results  # Removendo a importação de 'show_quality_analysis_post_trim_table', pois ela não existe no módulo
+from .procedures.alignment import create_tabela_alinhamento, update_tabela_alinhamento, iniciar_alinhamento, excluir_alinhamento, show_genomes_modal  # Atualizado
 from .procedures.utils import log_message  # Updated import
 from .components.general_components import create_table, create_button  # Updated import
 import websockets  # New import
 import httpx
 import logging
-from .procedures.alignment import create_tabela_alinhamento, update_tabela_alinhamento, iniciar_alinhamento, excluir_alinhamento, show_genomes_modal  # Atualizado
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG level

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import SampleStage, User
@@ -80,3 +80,36 @@ def delete_alignment_result(sample_name: str, db: Session = Depends(get_db), cur
     else:
         logger.warning(f"Resultado de alinhamento {sample_name} não encontrado no banco de dados.")
     return {"message": f"Resultado de alinhamento {sample_name} excluído com sucesso"}
+
+
+@router.get("/genomes/search")
+def search_genomes(taxon: str = None, accession: str = None, current_user: User = Depends(get_current_user)):
+    """Search for genomes using a Bash script."""
+    try:
+        if taxon:
+            search_type = "taxon"
+            search_value = taxon
+        elif accession:
+            search_type = "accession"
+            search_value = accession
+        else:
+            raise HTTPException(status_code=400, detail="Either 'taxon' or 'accession' must be provided.")
+
+        script_path = "/app/backend/scripts/search_genomes.sh"
+        command = ["bash", script_path, search_type, search_value]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            logger.error(f"Erro ao buscar genomas: {stderr.strip()}")
+            raise HTTPException(status_code=500, detail=f"Erro ao buscar genomas: {stderr.strip()}")
+
+        # Parse the output into a list of dictionaries
+        lines = stdout.strip().split("\n")
+        headers = lines[0].split("\t")
+        genomes = [dict(zip(headers, line.split("\t"))) for line in lines[1:]]
+
+        return {"genomes": genomes}
+    except Exception as e:
+        logger.error(f"Erro ao buscar genomas: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar genomas: {e}")
