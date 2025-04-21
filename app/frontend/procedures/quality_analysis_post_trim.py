@@ -104,12 +104,14 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
     async def confirm_delete(e):
         selected_samples = []
 
-        # Corrigir a seleção para pares de amostras
+        # Correctly access the text inside the Container
         for row in tabela_amostras_pos_trimmagem.rows:
             if isinstance(row.cells[2].content, ft.Checkbox) and row.cells[2].content.value:
-                sample_name = row.cells[0].content.value
-                if isinstance(sample_name, str):
-                    selected_samples.append(sample_name)
+                container = row.cells[0].content  # This is the Container
+                if isinstance(container, ft.Container) and isinstance(container.content, ft.Row):
+                    text_widget = container.content.controls[0].content  # Access the Text widget inside the Row
+                    if isinstance(text_widget, ft.Text):
+                        selected_samples.append(text_widget.value)
 
         if not selected_samples:
             logger.error("Nenhum resultado de análise selecionado.")

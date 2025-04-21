@@ -3,7 +3,7 @@
 sra_code=$1
 user_id=$2
 output_dir="../users/${user_id}/samples/${sra_code}"
-log_file="/tmp/${sra_code}_download.log"
+log_file="/app/backend/logs/${sra_code}_download.log"
 
 # Verifique se o tmux está instalado, caso contrário, instale-o
 if ! command -v tmux &> /dev/null; then

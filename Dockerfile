@@ -24,7 +24,7 @@ RUN apt-get install -y \
     gstreamer1.0-x
 
 # Baixe e instale o SRA Toolkit
-RUN wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-ubuntu64.tar.gz -O sratoolkit.tar.gz && \
+RUN wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/3.1.1/sratoolkit.3.1.1-ubuntu64.tar.gz -O sratoolkit.tar.gz && \
     tar -xzf sratoolkit.tar.gz && \
     rm sratoolkit.tar.gz && \
     mv sratoolkit.* /usr/local/sratoolkit

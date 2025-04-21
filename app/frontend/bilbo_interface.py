@@ -17,6 +17,14 @@ import logging
 logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG level
 logger = logging.getLogger(__name__)
 
+# Disable httpx logs
+httpx_logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.WARNING)
+
+# Disable FastAPI access logs
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.setLevel(logging.WARNING)
+
 async def show_bilbo_interface(page, logout, username, token, user_id):  # Updated function signature
     print("Entering show_bilbo_interface")
     page.controls.clear()

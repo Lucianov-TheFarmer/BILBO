@@ -226,7 +226,7 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
-                        if websocket_connection is None or websocket_connection.closed:
+                        if websocket_connection is None:
                             websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
                         
                         while True:

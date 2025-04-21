@@ -53,3 +53,23 @@ Apr 21 16:28:12 ... starting to sort Suffix Array. This may take a long time...
 Number of chunks: 4;   chunks size limit: 24755472 bytes
 Apr 21 16:28:12 ... sorting Suffix Array chunks and saving them to disk...
 Writing 566144 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_3 ; empty space on disk = 23623729152 bytes ... done
+Writing 24586120 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_1 ; empty space on disk = 23609901056 bytes ...Writing 24511280 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_0 ; empty space on disk = 23605104640 bytes ...Writing 24602888 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_2 ; empty space on disk = 23595003904 bytes ... done
+ done
+ done
+Apr 21 16:28:13 ... loading chunks from disk, packing SA...
+Apr 21 16:28:14 ... finished generating suffix array
+Apr 21 16:28:14 ... generating Suffix Array index
+Apr 21 16:28:44 ... completed Suffix Array index
+Apr 21 16:28:44   Finished preparing junctions
+Apr 21 16:28:44 ..... finished inserting junctions into genome
+Apr 21 16:28:44 ... writing Genome to disk ...
+Writing 4718592 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//Genome ; empty space on disk = 22273912832 bytes ... done
+SA size in bytes: 38293632
+Apr 21 16:28:44 ... writing Suffix Array to disk ...
+Writing 38293632 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA ; empty space on disk = 22269194240 bytes ... done
+Apr 21 16:28:44 ... writing SAindex to disk
+Writing 8 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 22230896640 bytes ... done
+Writing 120 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 22230896640 bytes ... done
+Writing 1565873491 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 22230896640 bytes ... done
+Apr 21 16:29:21 ..... finished successfully
+DONE: Genome generation, EXITING
