@@ -53,6 +53,9 @@ async def update_tabela_alinhamento(page, token, user_id):
                         # Executar a função assíncrona no contexto do loop de eventos
                         asyncio.run(view_alignment_log(page, token, s, user_id))
 
+                    # Determinar se o botão de log deve estar ativo ou inativo
+                    log_button_disabled = sample["status"] != "Completed"
+
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
                             cells=[
@@ -63,7 +66,8 @@ async def update_tabela_alinhamento(page, token, user_id):
                                     ft.IconButton(
                                         icon=ft.icons.DESCRIPTION,
                                         tooltip="Visualizar log",
-                                        on_click=view_log_handler,
+                                        on_click=view_log_handler if not log_button_disabled else None,
+                                        disabled=log_button_disabled,  # Desativar botão se não for "Completed"
                                     )
                                 ),
                                 ft.DataCell(ft.Checkbox()),
@@ -247,25 +251,49 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
 
     # Atualiza a tabela de amostras trimmadas
     async def update_tabela_trimmados():
+        """Atualiza a tabela de amostras trimmadas disponíveis para alinhamento."""
         headers = {"Authorization": f"Bearer {token}"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
-                if response.status_code == 200:
-                    samples = response.json()
-                    tabela_trimmados.rows.clear()
-                    for sample in samples:
-                        tabela_trimmados.rows.append(
-                            ft.DataRow(
-                                cells=[
-                                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
-                                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                    ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample)),
-                                ],
-                            )
+                # Obter amostras trimmadas (stage_id=3)
+                response_trimmados = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
+                if response_trimmados.status_code == 200:
+                    trimmed_samples = response_trimmados.json()
+                    logger.info(f"Amostras trimmadas (stage_id=3): {trimmed_samples}")
+                else:
+                    logger.error(f"Erro ao obter amostras trimmadas: {response_trimmados.status_code} - {response_trimmados.text}")
+                    trimmed_samples = []
+
+                # Obter amostras já alinhadas (stage_id=5)
+                response_alinhadas = await client.get("http://bioinfo-container:8000/alignment/", headers=headers)
+                if response_alinhadas.status_code == 200:
+                    aligned_samples = {sample["name"].replace(".bam", "") for sample in response_alinhadas.json()}
+                    logger.info(f"Amostras alinhadas (stage_id=5): {aligned_samples}")
+                else:
+                    logger.error(f"Erro ao obter amostras alinhadas: {response_alinhadas.status_code} - {response_alinhadas.text}")
+                    aligned_samples = set()
+
+                # Filtrar amostras trimmadas que ainda não foram alinhadas
+                available_samples = [
+                    sample for sample in trimmed_samples
+                    if sample["name"].replace("_1_trimmed.fastq", "").replace("_2_trimmed.fastq", "") not in aligned_samples
+                ]
+                logger.info(f"Amostras disponíveis para alinhamento: {available_samples}")
+
+                # Atualizar a tabela com as amostras disponíveis
+                tabela_trimmados.rows.clear()
+                for sample in available_samples:
+                    tabela_trimmados.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample)),
+                            ],
                         )
-                    page.update()
+                    )
+                page.update()
         except Exception as e:
             logger.error(f"Erro ao atualizar tabela de trimmados: {e}")
 

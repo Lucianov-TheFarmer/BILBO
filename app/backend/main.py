@@ -44,7 +44,7 @@ print("Registered routes before mounting Flet:", app.routes)
 print("Mounting Flet app")
 from frontend import main
 
-flet_asgi_app = ft.app(main.main, export_asgi_app=True)
+flet_asgi_app = ft.app(main.main, export_asgi_app=True, assets_dir="assets")
 app.mount("/frontend", flet_asgi_app)
 
 print("Registered routes after mounting Flet:", app.routes)
