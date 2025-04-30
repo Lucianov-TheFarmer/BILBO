@@ -2,7 +2,10 @@ import flet as ft
 import httpx
 import logging
 import asyncio
+import json
+import websockets
 from .utils import log_message
+from .viewer import view_alignment_log  # Importar a função de exibição de logs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +22,7 @@ def create_tabela_alinhamento(page, token):
     async def toggle_select_all_alignment(e):
         """Select or deselect all rows in the alignment table."""
         for row in tabela_alinhamento.rows:
-            row.cells[3].content.value = e.control.value
+            row.cells[4].content.value = e.control.value
         page.update()
 
     tabela_alinhamento = ft.DataTable(
@@ -32,10 +35,11 @@ def create_tabela_alinhamento(page, token):
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),  # Checkbox in the header
         ],
         rows=[],
+        column_spacing=15,
     )
     return tabela_alinhamento
 
-async def update_tabela_alinhamento(page, token):
+async def update_tabela_alinhamento(page, token, user_id):
     """Updates the alignment table with data from the backend."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
@@ -45,15 +49,25 @@ async def update_tabela_alinhamento(page, token):
                 samples = response.json()
                 tabela_alinhamento.rows.clear()
                 for sample in samples:
+                    def view_log_handler(e, s=sample["name"]):
+                        # Executar a função assíncrona no contexto do loop de eventos
+                        asyncio.run(view_alignment_log(page, token, s, user_id))
+
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Text(sample["log"], style=ft.TextStyle(size=12))),
+                                ft.DataCell(
+                                    ft.IconButton(
+                                        icon=ft.icons.DESCRIPTION,
+                                        tooltip="Visualizar log",
+                                        on_click=view_log_handler,
+                                    )
+                                ),
                                 ft.DataCell(ft.Checkbox()),
-                            ],
+                            ]
                         )
                     )
                 page.update()
@@ -66,41 +80,379 @@ async def update_tabela_alinhamento(page, token):
 # Alignment Operations
 # ----------------------------------------
 
-async def iniciar_alinhamento(page, token, selected_samples):
+async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, params, atualizar_tabela, container_menu_direita, tabela_amostras_local):
     """Starts the alignment process for selected samples."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=300) as client:
+            # Add all samples to the database
             response = await client.post(
-                "http://bioinfo-container:8000/alignment/start",
-                json={"samples": selected_samples},
+                "http://bioinfo-container:8000/alignment/add_samples",
+                data={
+                    "samples": json.dumps(selected_samples),  # Serializar a lista como JSON
+                    "genome": genome,
+                },
                 headers=headers,
             )
-            if response.status_code == 200:
-                logger.info("Alinhamento iniciado com sucesso!")
-                await log_message(page, "Alinhamento iniciado com sucesso!")
-                await update_tabela_alinhamento(page, token)
-            else:
-                logger.error(f"Erro ao iniciar alinhamento: {response.status_code} - {response.text}")
-                await log_message(page, f"Erro ao iniciar alinhamento: {response.status_code} - {response.text}")
+            if response.status_code != 200:
+                logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
+                await log_message(page, f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
+                return
+
+            # Extrair basenames únicos das amostras
+            basenames = list({sample.split('_')[0] for sample in selected_samples})
+            logger.info(f"Basenames identificados no frontend: {basenames}")
+
+            # Process samples one by one
+            for basename in basenames:
+                response = await client.post(
+                    "http://bioinfo-container:8000/alignment/start",
+                    data={"sample": basename, "genome": genome, "token": token},
+                    params={"threads": params["threads"]},
+                    headers=headers,
+                )
+                if response.status_code == 200:
+                    await update_tabela_alinhamento(page, token, user_id)  # Replace `1` with the actual user_id
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+
+                    # Intercept WebSocket logs
+                    async with websockets.connect(f"ws://bioinfo-container:8000/ws?token={token}") as websocket:
+                        async for message in websocket:
+                            if f"Alinhamento concluído para {basename}" in message:
+                                await log_message(page, message)
+                                await update_tabela_alinhamento(page, token, user_id)  # Replace `1` with the actual user_id
+                                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                                break  # Sair do loop WebSocket após receber a mensagem de conclusão
+                else:
+                    logger.error(f"Erro ao iniciar alinhamento para {basename}: {response.status_code} - {response.text}")
+                    await log_message(page, f"Erro ao iniciar alinhamento para {basename}: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Erro ao iniciar alinhamento: {e}", exc_info=True)
         await log_message(page, f"Erro ao iniciar alinhamento: {e}")
 
-async def excluir_alinhamento(page, token, selected_samples):
-    """Deletes selected alignment results."""
-    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    try:
-        async with httpx.AsyncClient() as client:
-            for sample in selected_samples:
-                response = await client.delete(f"http://bioinfo-container:8000/alignment/{sample}", headers=headers)
+async def excluir_alinhamento(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela):
+    """Exclui os alinhamentos selecionados após confirmação."""
+    async def confirm_delete(e):
+        if confirmation_field.value.strip().lower() != "confirmar":
+            await log_message(page, "Confirmação inválida. Digite 'Confirmar' para prosseguir.")
+            return
+
+        headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+        try:
+            async with httpx.AsyncClient() as client:
+                for sample in selected_samples:
+                    response = await client.delete(f"http://bioinfo-container:8000/alignment/{sample}", headers=headers)
+                    if response.status_code == 200:
+                        logger.info(f"Alinhamento {sample} excluído com sucesso!")
+                        await log_message(page, f"Alinhamento {sample} excluído com sucesso!")
+                    else:
+                        logger.error(f"Erro ao excluir alinhamento {sample}: {response.status_code} - {response.text}")
+            await update_tabela_alinhamento(page, token, user_id)  # Replace `1` with the actual user_id
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+            page.update()
+        except Exception as e:
+            logger.error(f"Erro ao excluir alinhamentos: {e}", exc_info=True)
+
+        dlg_modal_excluir_alinhamento.open = False
+        page.update()
+
+    # Modal de confirmação
+    confirmation_field = ft.TextField(
+        hint_text="Digite 'Confirmar' para excluir os alinhamentos selecionados.",
+        border_radius=ft.border_radius.all(4),
+        multiline=False,
+        expand=1,
+    )
+    dlg_modal_excluir_alinhamento = ft.AlertDialog(
+        title=ft.Text("Confirmar exclusão"),
+        content=confirmation_field,
+        actions=[
+            ft.TextButton(
+                "Excluir",
+                on_click=confirm_delete,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                width=200,
+                height=40,
+            ),
+        ],
+        actions_alignment=ft.MainAxisAlignment.CENTER,
+    )
+
+    page.open(dlg_modal_excluir_alinhamento)
+
+async def show_alignment_modal(page, token, user_id, atualizar_tabela, container_menu_direita, tabela_amostras_local):
+    """Exibe o modal para configurar e iniciar o alinhamento."""
+    global tabela_trimmados, tabela_genomas_referencia
+
+    # Tabela de amostras trimmadas
+    async def toggle_select_sample(e):
+        """Seleciona ou desmarca uma amostra e garante que pares PE sejam selecionados juntos."""
+        selected_sample = e.control.data  # Recupera o nome da amostra
+        is_selected = e.control.value
+
+        # Verifica se a amostra é PE (possui _1_trimmed.fastq e _2_trimmed.fastq)
+        if selected_sample.endswith("_1_trimmed.fastq"):
+            paired_sample = selected_sample.replace("_1_trimmed.fastq", "_2_trimmed.fastq")
+        elif selected_sample.endswith("_2_trimmed.fastq"):
+            paired_sample = selected_sample.replace("_2_trimmed.fastq", "_1_trimmed.fastq")
+        else:
+            paired_sample = None
+
+        # Atualiza o estado da amostra pareada
+        if paired_sample:
+            for row in tabela_trimmados.rows:
+                sample_name = row.cells[0].content.value
+                if sample_name == paired_sample:
+                    row.cells[3].content.value = is_selected  # Seleciona ou desmarca a amostra pareada
+                    break
+
+        # Atualiza a página para refletir as mudanças
+        page.update()
+
+    async def toggle_select_all_trimmados(e):
+        """Seleciona ou desmarca todas as amostras na tabela."""
+        for row in tabela_trimmados.rows:
+            row.cells[3].content.value = e.control.value
+        page.update()
+
+    tabela_trimmados = ft.DataTable(
+        heading_row_color=ft.colors.BLACK12,
+        columns=[
+            ft.DataColumn(ft.Text("Identificação")),
+            ft.DataColumn(ft.Text("Tamanho")),
+            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmados)),  # Checkbox no cabeçalho
+        ],
+        rows=[],
+    )
+
+    # Tabela de genomas de referência
+    def handle_checkbox_selection(row_index):
+        """Permite selecionar apenas um genoma de referência por vez."""
+        for i, row in enumerate(tabela_genomas_referencia.rows):
+            checkbox = row.cells[3].content
+            checkbox.value = (i == row_index)  # Apenas o checkbox clicado permanece selecionado
+        page.update()
+
+    tabela_genomas_referencia = ft.DataTable(
+        heading_row_color=ft.colors.BLACK12,
+        columns=[
+            ft.DataColumn(ft.Text("Identificação")),
+            ft.DataColumn(ft.Text("Tamanho")),
+            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text("")),  # Sem checkbox no cabeçalho
+        ],
+        rows=[],
+    )
+
+    # Atualiza a tabela de amostras trimmadas
+    async def update_tabela_trimmados():
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
                 if response.status_code == 200:
-                    logger.info(f"Resultado de alinhamento {sample} excluído com sucesso!")
-                else:
-                    logger.error(f"Erro ao excluir alinhamento {sample}: {response.status_code} - {response.text}")
-        await update_tabela_alinhamento(page, token)
-    except Exception as e:
-        logger.error(f"Erro ao excluir alinhamento: {e}", exc_info=True)
+                    samples = response.json()
+                    tabela_trimmados.rows.clear()
+                    for sample in samples:
+                        tabela_trimmados.rows.append(
+                            ft.DataRow(
+                                cells=[
+                                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample)),
+                                ],
+                            )
+                        )
+                    page.update()
+        except Exception as e:
+            logger.error(f"Erro ao atualizar tabela de trimmados: {e}")
+
+    # Atualiza a tabela de genomas de referência
+    async def update_tabela_genomas_referencia():
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get("http://bioinfo-container:8000/genomes/", headers=headers)
+                if response.status_code == 200:
+                    genomes = response.json()
+                    tabela_genomas_referencia.rows.clear()
+                    for index, genome in enumerate(genomes):  # Use enumerate to get the correct row index
+                        tabela_genomas_referencia.rows.append(
+                            ft.DataRow(
+                                cells=[
+                                    ft.DataCell(ft.Text(genome["name"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Text(genome["size"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Text(genome["status"], style=ft.TextStyle(size=12))),
+                                    ft.DataCell(ft.Checkbox(on_change=lambda e, row_index=index: handle_checkbox_selection(row_index))),
+                                ],
+                            )
+                        )
+                    page.update()
+        except Exception as e:
+            logger.error(f"Erro ao atualizar tabela de genomas: {e}")
+
+    # Campos de parâmetros do STAR
+    threads_field = ft.TextField(
+        label="Threads",
+        value="4",
+        tooltip="Número de threads para o STAR. Valor padrão: 4.",
+        width=300,
+    )
+    out_filter_type_field = ft.TextField(
+        label="outFilterType",
+        value="",
+        tooltip="Reduz junções espúrias (Opcional). Ex.: BySJout.",
+        width=300,
+    )
+    out_filter_multimap_field = ft.TextField(
+        label="outFilterMultimapNmax",
+        value="",
+        tooltip="Máximo de alinhamentos múltiplos permitidos (Opcional).",
+        width=300,
+    )
+    align_sj_overhang_min_field = ft.TextField(
+        label="alignSJoverhangMin",
+        value="",
+        tooltip="Sobreposição mínima para junções não anotadas (Opcional).",
+        width=300,
+    )
+    align_sjdb_overhang_min_field = ft.TextField(
+        label="alignSJDBoverhangMin",
+        value="",
+        tooltip="Sobreposição mínima para junções anotadas (Opcional).",
+        width=300,
+    )
+    out_filter_mismatch_max_field = ft.TextField(
+        label="outFilterMismatchNmax",
+        value="",
+        tooltip="Máximo de mismatches por par (Opcional).",
+        width=300,
+    )
+    out_filter_mismatch_over_read_field = ft.TextField(
+        label="outFilterMismatchNoverReadLmax",
+        value="",
+        tooltip="Máximo de mismatches relativo ao comprimento da leitura (Opcional).",
+        width=300,
+    )
+    align_intron_min_field = ft.TextField(
+        label="alignIntronMin",
+        value="",
+        tooltip="Comprimento mínimo do intron (Opcional).",
+        width=300,
+    )
+    align_intron_max_field = ft.TextField(
+        label="alignIntronMax",
+        value="",
+        tooltip="Comprimento máximo do intron (Opcional).",
+        width=300,
+    )
+    align_mates_gap_max_field = ft.TextField(
+        label="alignMatesGapMax",
+        value="",
+        tooltip="Distância máxima entre mates (Opcional).",
+        width=300,
+    )
+
+    # Função para iniciar o alinhamento
+    async def start_alignment(e):
+        selected_samples = [row.cells[0].content.value for row in tabela_trimmados.rows if row.cells[-1].content.value]
+        selected_genomes = [row.cells[0].content.value for row in tabela_genomas_referencia.rows if row.cells[-1].content.value]
+
+        if not selected_samples:
+            await log_message(page, "Nenhuma amostra selecionada para alinhamento.")
+            return
+        if not selected_genomes:
+            await log_message(page, "Nenhum genoma de referência selecionado.")
+            return
+
+        params = {
+            "threads": threads_field.value,
+            "outFilterType": out_filter_type_field.value,
+            "outFilterMultimapNmax": out_filter_multimap_field.value,
+            "alignSJoverhangMin": align_sj_overhang_min_field.value,
+            "alignSJDBoverhangMin": align_sjdb_overhang_min_field.value,
+            "outFilterMismatchNmax": out_filter_mismatch_max_field.value,
+            "outFilterMismatchNoverReadLmax": out_filter_mismatch_over_read_field.value,
+            "alignIntronMin": align_intron_min_field.value,
+            "alignIntronMax": align_intron_max_field.value,
+            "alignMatesGapMax": align_mates_gap_max_field.value,
+        }
+
+        dlg_modal_alignment.open = False
+        page.update()
+
+        # Log com o nome das amostras
+        await log_message(page, f"Iniciando alinhamento para as amostras: {', '.join(selected_samples)}")
+        await iniciar_alinhamento(page, token, user_id, selected_samples, selected_genomes[0], params, atualizar_tabela, container_menu_direita, tabela_amostras_local)
+
+    # Modal de alinhamento
+    dlg_modal_alignment = ft.AlertDialog(
+        title=ft.Text("Configurar Alinhamento"),
+        content=ft.Container(
+            content=ft.ListView(
+                controls=[
+                    ft.Text("Amostras Trimmadas", style=ft.TextStyle(size=14, weight="bold")),
+                    ft.Container(height=10),
+                    tabela_trimmados,
+                    ft.Container(height=10),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Container(height=10),
+                    ft.Text("Genomas de Referência", style=ft.TextStyle(size=14, weight="bold")),
+                    ft.Container(height=10),
+                    tabela_genomas_referencia,
+                    ft.Container(height=10),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Container(height=10),
+                    ft.Text("Parâmetros adicionais do STAR", style=ft.TextStyle(size=14, weight="bold")),
+                    ft.Container(height=20),
+                    ft.Row(
+                        controls=[
+                            ft.Column(
+                                controls=[
+                                    threads_field,
+                                    out_filter_type_field,
+                                    out_filter_multimap_field,
+                                    align_sj_overhang_min_field,
+                                    align_sjdb_overhang_min_field,
+                                ],
+                                spacing=20,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Column(
+                                controls=[
+                                    out_filter_mismatch_max_field,
+                                    out_filter_mismatch_over_read_field,
+                                    align_intron_min_field,
+                                    align_intron_max_field,
+                                    align_mates_gap_max_field,
+                                ],
+                                spacing=20,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                        ],
+                        spacing=50,  # Espaçamento entre as colunas
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                ],
+            ),
+            width=900,  # Largura ajustada para acomodar os campos maiores
+        ),
+        actions=[
+            ft.TextButton(
+                "Iniciar Alinhamento",
+                on_click=start_alignment,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+            ),
+        ],
+        actions_alignment=ft.MainAxisAlignment.CENTER,
+    )
+
+    # Atualiza as tabelas e abre o modal
+    await update_tabela_trimmados()
+    await update_tabela_genomas_referencia()
+    page.open(dlg_modal_alignment)
 
 # ----------------------------------------
 # Reference Genome Management
@@ -324,8 +676,9 @@ async def show_genomes_modal(page, token, user_id):
 
     # Update rows to include checkboxes with selection handling
     def update_rows_with_checkboxes(data):
+        """Atualiza as linhas da tabela de genomas disponíveis com checkboxes."""
         tabela_genomas_disponiveis.rows.clear()
-        for i, genome in enumerate(data):
+        for i, genome in enumerate(data):  # Corrigido para usar apenas dois valores (índice e item)
             tabela_genomas_disponiveis.rows.append(
                 ft.DataRow(
                     cells=[

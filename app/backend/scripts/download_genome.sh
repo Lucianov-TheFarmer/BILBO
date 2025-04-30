@@ -39,14 +39,15 @@ fi
 # Start a new tmux session to download the genome
 echo "Starting tmux session $TMUX_SESSION_NAME for genome download..." >> "$LOG_FILE"
 tmux new-session -d -s "$TMUX_SESSION_NAME" "
-    datasets download genome accession $ACCESSION --filename $ACCESSION.zip --include genome,gtf &&
+    datasets download genome accession $ACCESSION --filename $ACCESSION.zip --include genome,gtf,gff3 &&
     mv $ACCESSION.zip $SHARED_DIR &&
     unzip -o $SHARED_DIR/$ACCESSION.zip -d $GENOME_DIR &&
     rm $SHARED_DIR/$ACCESSION.zip &&
     echo 'Unzipped genome files for $ACCESSION.' >> $LOG_FILE &&
-    # Locate and rename .fna and .gtf files
+    # Locate and rename .fna, .gtf, and .gff3 files
     FNA_FILE=\$(find $GENOME_DIR -type f -name '*.fna') &&
     GTF_FILE=\$(find $GENOME_DIR -type f -name '*.gtf') &&
+    GFF3_FILE=\$(find $GENOME_DIR -type f -name '*.gff3') &&
     if [ -f \"\$FNA_FILE\" ]; then
         mv \"\$FNA_FILE\" \"$GENOME_DIR/genomic.fa\" &&
         echo 'Renamed \$FNA_FILE to genomic.fa.' >> $LOG_FILE
@@ -59,10 +60,17 @@ tmux new-session -d -s "$TMUX_SESSION_NAME" "
     else
         echo 'Error: .gtf file not found for $ACCESSION.' >> $LOG_FILE
     fi &&
+    if [ -f \"\$GFF3_FILE\" ]; then
+        mv \"\$GFF3_FILE\" \"$GENOME_DIR/genomic.gff3\" &&
+        echo 'Renamed \$GFF3_FILE to genomic.gff3.' >> $LOG_FILE
+    else
+        echo 'Error: .gff3 file not found for $ACCESSION.' >> $LOG_FILE
+    fi &&
     # Remove unnecessary files
     rm -rf \"$GENOME_DIR/ncbi_dataset\" \"$GENOME_DIR/md5sum.txt\" \"$GENOME_DIR/README.md\" &&
     echo 'Removed unnecessary files for $ACCESSION.' >> $LOG_FILE &&
     echo 'Genoma de referência $ACCESSION baixado, descompactado, renomeado e limpo com sucesso.' >> $LOG_FILE
+    echo \"$GENOME_DIR\" > \"$SHARED_DIR/${ACCESSION}_path.txt\"  # Salvar o caminho absoluto
 "
 
 # Check if the tmux session was created successfully

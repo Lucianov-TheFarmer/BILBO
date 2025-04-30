@@ -6,7 +6,7 @@ from .procedures.sample_operations import adicionar_amostra, excluir_amostras_se
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
 from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table, delete_trimmed_samples  # Import the trimmagem modal and table
 from .procedures.quality_analysis_post_trim import show_quality_analysis_post_trim_modal, create_tabela_amostras_pos_trimmagem, update_tabela_amostras_pos_trimmagem, delete_quality_analysis_post_trim_results  # Removendo a importação de 'show_quality_analysis_post_trim_table', pois ela não existe no módulo
-from .procedures.alignment import create_tabela_alinhamento, update_tabela_alinhamento, iniciar_alinhamento, excluir_alinhamento, show_genomes_modal  # Atualizado
+from .procedures.alignment import show_alignment_modal, show_genomes_modal, create_tabela_alinhamento, update_tabela_alinhamento, iniciar_alinhamento, excluir_alinhamento  # Atualizado
 from .procedures.utils import log_message  # Updated import
 from .components.general_components import create_table, create_button  # Updated import
 import websockets  # New import
@@ -80,6 +80,20 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     async def excluir_qualidade_post_trim_handler(e):
         await delete_quality_analysis_post_trim_results(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
+    async def iniciar_alinhamento_handler(e):
+        await show_alignment_modal(page, token, user_id, atualizar_tabela, container_menu_direita, tabela_amostras_local)
+
+    async def excluir_alinhamento_handler(e):
+        selected_samples = [row.cells[0].content.value for row in tabela_alinhamento.rows if row.cells[4].content.value]
+        if not selected_samples:
+            await log_message(page, "Nenhuma amostra selecionada para exclusão.")
+            return
+        await excluir_alinhamento(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
+
+    async def ver_genomas_referencia_handler(e):
+        await show_genomes_modal(page, token, user_id)
+
+
     # Adicionando a chamada para atualizar a tabela ao selecionar "Análise de Qualidade (Pós Trimmagem)"
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
@@ -108,35 +122,12 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
                 create_button("Excluir resultados de qualidade", excluir_qualidade_post_trim_handler, color=ft.colors.RED),
             ], tabela_amostras_pos_trimmagem)
         elif stage_id == 5:  # Alinhamento stage
-            await update_tabela_alinhamento(page, token)  # Atualiza a tabela de alinhamento
+            await update_tabela_alinhamento(page, token, user_id)  # Atualiza a tabela de alinhamento
             await toggle_buttons([
                 create_button("Iniciar alinhamento", iniciar_alinhamento_handler),
                 create_button("Excluir alinhamento", excluir_alinhamento_handler, color=ft.colors.RED),
                 create_button("Ver genomas de referência", ver_genomas_referencia_handler, color=ft.colors.ORANGE),
             ], tabela_alinhamento)
-
-    # Define o botão "Iniciar alinhamento"
-    async def iniciar_alinhamento_handler(e):
-        logger.info("Iniciando alinhamento...")
-        selected_samples = [row.cells[0].content.value for row in tabela_alinhamento.rows if row.cells[4].content.value]
-        if not selected_samples:
-            await log_message(page, "Nenhuma amostra selecionada para alinhamento.")
-            return
-        await iniciar_alinhamento(page, token, selected_samples)
-
-    # Define o botão "Excluir alinhamento"
-    async def excluir_alinhamento_handler(e):
-        logger.info("Excluindo alinhamento...")
-        selected_samples = [row.cells[0].content.value for row in tabela_alinhamento.rows if row.cells[4].content.value]
-        if not selected_samples:
-            await log_message(page, "Nenhuma amostra selecionada para exclusão.")
-            return
-        await excluir_alinhamento(page, token, selected_samples)
-
-    # Define o botão "Ver genomas de referência"
-    async def ver_genomas_referencia_handler(e):
-        logger.info("Visualizando genomas de referência...")
-        await show_genomes_modal(page, token, user_id)
 
     # Define the "Analisar qualidade" button
     analisar_qualidade_button = create_button(

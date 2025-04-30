@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import SampleStage, User
-from ..utils import get_current_user
+from ..utils import get_current_user, manager  # Atualizado para incluir manager
 import subprocess
 import os
 import logging
 import time
+import json
+import shutil
+from pydantic import BaseModel, Field
+from typing import Optional
+import asyncio
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,6 +33,22 @@ def calculate_directory_size(directory: str) -> str:
     return f"{size_in_bytes / (1024 * 1024):.2f} MB"
 
 # ----------------------------------------
+# Pydantic Models
+# ----------------------------------------
+
+class AdditionalParams(BaseModel):
+    threads: int = Field(..., description="Número de threads para o STAR")
+    outFilterType: Optional[str] = Field(None, description="Reduz junções espúrias (Opcional)")
+    outFilterMultimapNmax: Optional[str] = Field(None, description="Máximo de alinhamentos múltiplos permitidos (Opcional)")
+    alignSJoverhangMin: Optional[str] = Field(None, description="Sobreposição mínima para junções não anotadas (Opcional)")
+    alignSJDBoverhangMin: Optional[str] = Field(None, description="Sobreposição mínima para junções anotadas (Opcional)")
+    outFilterMismatchNmax: Optional[str] = Field(None, description="Máximo de mismatches por par (Opcional)")
+    outFilterMismatchNoverReadLmax: Optional[str] = Field(None, description="Máximo de mismatches relativo ao comprimento da leitura (Opcional)")
+    alignIntronMin: Optional[str] = Field(None, description="Comprimento mínimo do intron (Opcional)")
+    alignIntronMax: Optional[str] = Field(None, description="Comprimento máximo do intron (Opcional)")
+    alignMatesGapMax: Optional[str] = Field(None, description="Distância máxima entre mates (Opcional)")
+
+# ----------------------------------------
 # Routes for Alignment
 # ----------------------------------------
 
@@ -36,68 +57,221 @@ def get_alignment_results(db: Session = Depends(get_db), current_user: User = De
     """Fetch alignment results for the current user."""
     user_id = current_user.id
     results = db.query(SampleStage).filter(SampleStage.stage_id == 5, SampleStage.user_id == user_id).all()
-    return [{"name": result.name, "size": result.size, "status": result.status, "log": result.log} for result in results]
+    return [{"name": result.name, "size": result.size, "status": result.status} for result in results]
 
-@router.post("/alignment/start")
-def start_alignment(samples: list[str], db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Start the alignment process for selected samples."""
+@router.post("/alignment/add_samples")
+def add_samples(
+    samples: str = Form(...),  # Receber como string JSON
+    genome: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add all samples to the database with status 'Pending'."""
     user_id = current_user.id
-    base_path = f"../users/{user_id}/samples"
-    alignment_path = f"../users/{user_id}/alignment"
-    os.makedirs(alignment_path, exist_ok=True)
+    base_path = f"../users/{user_id}/trimmed"
 
-    for sample in samples:
-        sample_stage = db.query(SampleStage).filter(SampleStage.name == sample, SampleStage.user_id == user_id).first()
-        if not sample_stage:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sample} not found")
+    # Decodificar JSON de samples
+    try:
+        samples_list = json.loads(samples)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON format for samples.")
 
-        command = [
-            "bash",
-            "/app/backend/scripts/alignment.sh",
-            sample,
-            alignment_path,
-        ]
-        logger.info(f"Executing alignment command: {' '.join(command)}")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
+    # Validate genome format
+    if "(" in genome and ")" in genome:
+        accession = genome.split("(")[-1].strip(")")
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid genome format. Accession not found.")
 
-        if process.returncode != 0:
-            logger.error(f"Erro no alinhamento para {sample}: {stderr.strip()}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro no alinhamento para {sample}: {stderr.strip()}")
+    # Extrair basenames únicos das amostras
+    basenames = list({sample.split('_')[0] for sample in samples_list})
+    logger.info(f"Basenames identificados: {basenames}")
 
-        # Update database
+    # Adicionar basenames ao banco de dados
+    for basename in basenames:
+        sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
+        sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
+
+        if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
+            )
+
+        # Adicionar basename ao banco de dados com status 'Pending'
         new_stage = SampleStage(
-            sample_id=sample_stage.sample_id,
             stage_id=5,
-            name=sample,
-            size=None,
-            status="Completed",
-            log=stdout,
+            name=f"{basename}.bam",
+            sra_code=basename,
+            status="Pending",
             user_id=user_id,
         )
         db.add(new_stage)
+
     db.commit()
-    return {"message": "Alinhamento iniciado com sucesso"}
+    return {"message": "Samples added successfully."}
+
+@router.post("/alignment/start")
+async def start_alignment(
+    sample: str = Form(...),
+    genome: str = Form(...),
+    threads: int = Query(..., description="Número de threads para o STAR"),
+    additional_params: AdditionalParams = Depends(),
+    token: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start the alignment process for a single sample."""
+    user_id = current_user.id
+    base_path = f"../users/{user_id}/trimmed"
+    alignment_path = f"../users/{user_id}/alignment"
+    os.makedirs(alignment_path, exist_ok=True)
+
+    # Validate genome format
+    if "(" in genome and ")" in genome:
+        accession = genome.split("(")[-1].strip(")")
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid genome format. Accession not found.")
+
+    genome_dir = f"../users/ref_genomes/{accession}/STAR_index"
+    if not os.path.exists(genome_dir):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Genome index not found at {genome_dir}. Ensure the genome is indexed correctly.",
+        )
+
+    basename = sample.split('_')[0]
+    sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
+    sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
+
+    if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
+        )
+
+    # Update sample status to 'Aligning'
+    sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == basename,
+        SampleStage.stage_id == 5,
+        SampleStage.user_id == user_id,
+    ).first()
+
+    if not sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    if sample_stage.status != "Pending":
+        raise HTTPException(status_code=400, detail="Sample is already being processed or completed")
+
+    sample_stage.status = "Aligning"
+    db.commit()
+
+    # Prepare command for alignment
+    command = [
+        "bash",
+        "/app/backend/scripts/alignment.sh",
+        basename,
+        str(user_id),
+        alignment_path,
+        genome_dir,
+        str(threads),
+        token,
+    ]
+
+    if additional_params:
+        for key, value in additional_params.dict().items():
+            if value is not None and key != "threads":
+                command.append(f"--{key}={value}")
+
+    # Execute alignment
+    logger.info(f"Executing alignment command: {' '.join(command)}")
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    return {"message": f"Alignment started for {basename}"}
+
+@router.post("/alignment/update_status")
+async def update_alignment_status(
+    sra_code: str = Form(...),
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Atualiza o status e o tamanho do arquivo BAM no banco de dados."""
+    user_id = current_user.id
+    alignment_path = f"../users/{user_id}/alignment/{sra_code}/{sra_code}.bam"
+
+    # Verificar se o arquivo BAM existe
+    if not os.path.exists(alignment_path):
+        raise HTTPException(status_code=404, detail=f"Arquivo BAM {alignment_path} não encontrado.")
+
+    # Calcular o tamanho do arquivo BAM
+    bam_size = os.path.getsize(alignment_path)
+    bam_size_mb = f"{bam_size / (1024 * 1024):.2f} MB"
+
+    # Atualizar o status e o tamanho no banco de dados
+    sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code,
+        SampleStage.stage_id == 5,
+        SampleStage.user_id == user_id,
+    ).first()
+
+    if not sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    sample_stage.status = status
+    sample_stage.size = bam_size_mb
+    db.commit()
+
+    # Emitir mensagem para o frontend
+    await manager.broadcast(f"Alinhamento concluído para {sra_code}")
+
+    return {"message": f"Status atualizado para {sra_code}", "size": bam_size_mb}
 
 @router.delete("/alignment/{sample_name}")
 def delete_alignment_result(sample_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Delete alignment results for a specific sample."""
     user_id = current_user.id
-    alignment_path = f"../users/{user_id}/alignment/{sample_name}"
-    if os.path.exists(alignment_path):
-        os.remove(alignment_path)
-        logger.info(f"Arquivo de alinhamento {alignment_path} excluído com sucesso.")
-    else:
-        logger.warning(f"Arquivo de alinhamento {alignment_path} não encontrado.")
+    alignment_dir = f"../users/{user_id}/alignment/{sample_name}".replace(".bam", "")
 
-    sample_stage = db.query(SampleStage).filter(SampleStage.name == sample_name, SampleStage.stage_id == 5, SampleStage.user_id == user_id).first()
-    if sample_stage:
+    # Excluir o diretório de alinhamento associado
+    if os.path.exists(alignment_dir):
+        try:
+            shutil.rmtree(alignment_dir)
+            logger.info(f"Diretório de alinhamento {alignment_dir} excluído com sucesso.")
+        except Exception as e:
+            logger.error(f"Erro ao excluir o diretório {alignment_dir}: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro ao excluir o diretório {alignment_dir}.")
+    else:
+        logger.warning(f"Diretório de alinhamento {alignment_dir} não encontrado.")
+
+    # Remover a entrada correspondente no banco de dados
+    sample_stage = db.query(SampleStage).filter(
+        SampleStage.name == sample_name,
+        SampleStage.stage_id == 5,
+        SampleStage.user_id == user_id,
+    ).first()
+
+    if not sample_stage:
+        logger.warning(f"Alinhamento {sample_name} não encontrado no banco de dados.")
+        return {"message": f"Alinhamento {sample_name} já foi excluído ou não existe."}
+
+    try:
         db.delete(sample_stage)
         db.commit()
-        logger.info(f"Resultado de alinhamento {sample_name} excluído do banco de dados.")
-    else:
-        logger.warning(f"Resultado de alinhamento {sample_name} não encontrado no banco de dados.")
-    return {"message": f"Resultado de alinhamento {sample_name} excluído com sucesso"}
+        logger.info(f"Alinhamento {sample_name} excluído com sucesso do banco de dados.")
+        return {"message": f"Alinhamento {sample_name} excluído com sucesso."}
+    except Exception as e:
+        logger.error(f"Erro ao excluir alinhamento {sample_name} do banco de dados: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao excluir alinhamento do banco de dados.")
+
+@router.post("/ws/")
+async def broadcast_message(message: str = Form(...)):
+    """Broadcast a message to all WebSocket clients."""
+    try:
+        await manager.broadcast(message)
+        return {"message": "Broadcast sent successfully"}
+    except Exception as e:
+        logger.error(f"Erro ao enviar mensagem de broadcast: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao enviar mensagem de broadcast")
 
 # ----------------------------------------
 # Routes for Reference Genomes
@@ -179,7 +353,9 @@ def index_genome(
 ):
     """Index a genome using STAR."""
     try:
-        genome_dir = f"../users/ref_genomes/{accession}"
+        genome_dir = f"/users/ref_genomes/{accession}"
+
+        # Verificar se o diretório do genoma existe
         # if not os.path.exists(genome_dir):
             # raise HTTPException(status_code=404, detail=f"Diretório do genoma {accession} não encontrado.")
 

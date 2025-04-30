@@ -6,6 +6,7 @@ import zipfile
 import os
 from io import BytesIO
 import base64  # New import
+import re  # Importar regex
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +71,72 @@ async def display_graph(page, token, graph_type, sample_name, user_id, analysis_
     except Exception as e:
         logger.error(f"Error extracting or displaying graph: {e}", exc_info=True)
         return ft.Text(f"Error: {e}", color=ft.colors.RED)
+
+async def display_log(page, log_content):
+    """Displays the log content in the viewer."""
+    try:
+        # Usar regex para substituir os espaços variáveis, ajustar o formato do texto e remover espaços iniciais
+        formatted_content = re.sub(r"\s*\|\s*", ": ", log_content)  # Substituir "|       " ou "| " por ": "
+        formatted_content = re.sub(r"\t", "    ", formatted_content)  # Substituir tabulações por espaços
+        formatted_content = re.sub(r"^\s+", "", formatted_content, flags=re.MULTILINE)  # Remover espaços no início das linhas
+
+        # Adicionar quebras de linha antes dos títulos do relatório
+        titles = [
+            "UNIQUE READS:",
+            "MULTI-MAPPING READS:",
+            "UNMAPPED READS:",
+            "CHIMERIC READS:"
+        ]
+        for title in titles:
+            formatted_content = formatted_content.replace(title, f"\n{title}")
+
+        # Criar um controle de texto com fonte monoespaçada para alinhamento
+        log_control = ft.Text(
+            formatted_content,
+            selectable=True,
+            style=ft.TextStyle(size=12, font_family="Consolas"),  # Fonte monoespaçada
+            text_align=ft.TextAlign.LEFT,  # Alinhar o texto à esquerda
+        )
+
+        # Atualizar o container de pré-visualização mantendo o tamanho original e permitindo rolagem
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,  # Garantir que o container mantenha o tamanho original
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,  # Permitir que o conteúdo ocupe todo o espaço disponível
+                                        ),
+                                        padding=ft.padding.all(10),  # Adicionar padding para melhor visualização
+                                    )
+                                ]
+                                page.update()
+                                return
+    except Exception as e:
+        logger.error(f"Erro ao exibir o log no viewer: {e}", exc_info=True)
+
+async def view_alignment_log(page, token, sample_name, user_id):
+    """Displays the alignment log in the viewer."""
+    log_path = f"../users/{user_id}/alignment/{sample_name.replace('.bam', '')}/{sample_name.replace('.bam', 'Log.final.out')}"
+    try:
+        # Ler o arquivo de log diretamente do sistema de arquivos
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as log_file:
+                log_content = log_file.read()
+        else:
+            log_content = f"Erro: Arquivo de log não encontrado em {log_path}"
+
+        # Atualizar o viewer com o conteúdo do log
+        await display_log(page, log_content)
+    except Exception as e:
+        logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
+        await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
 
 def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
     async def on_change(e):

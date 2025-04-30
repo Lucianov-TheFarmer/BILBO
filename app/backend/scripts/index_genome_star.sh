@@ -21,7 +21,10 @@ SJDB_OVERHANG="$2"
 THREADS="$3"
 INDEX_DIR="$GENOME_DIR/STAR_index"
 
-# Ensure the genome directory exists
+# Converter GENOME_DIR para um caminho absoluto
+GENOME_DIR=$(realpath "$GENOME_DIR")
+
+# Verificar se o diretório existe
 if [ ! -d "$GENOME_DIR" ]; then
     echo "Error: Genome directory $GENOME_DIR does not exist." >> "$LOG_FILE"
     exit 1
