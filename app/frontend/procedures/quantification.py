@@ -82,6 +82,21 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     samples = []
 
+    # Campos para o usuário inserir os parâmetros -t e -i
+    feature_type_field = ft.TextField(
+        label="Feature Type (-t)",
+        hint_text="Exemplo: CDS, gene, exon",
+        border_radius=ft.border_radius.all(4),
+        expand=1,
+    )
+
+    id_attribute_field = ft.TextField(
+        label="ID Attribute (-i)",
+        hint_text="Exemplo: ID, Parent, locus_tag",
+        border_radius=ft.border_radius.all(4),
+        expand=1,
+    )
+
     async def toggle_select_all(e):
         """Select or deselect all rows in the quantification table."""
         for row in tabela_quantificacao_modal.rows:
@@ -214,7 +229,16 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
         title=ft.Text("Iniciar Quantificação"),
         content=ft.Container(
             content=ft.ListView(
-                controls=[tabela_quantificacao_modal],
+                controls=[
+                    tabela_quantificacao_modal,
+                    ft.Row(
+                        controls=[
+                            feature_type_field,
+                            id_attribute_field,
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                ],
             ),
             width=600,
         ),

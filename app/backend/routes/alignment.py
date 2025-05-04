@@ -335,12 +335,23 @@ def download_genome(
                         break
             if download_process.poll() is not None and download_process.returncode != 0:
                 raise HTTPException(status_code=500, detail="Erro ao baixar o genoma.")
-            time.sleep(2)
 
         return {"message": f"Download do genoma {accession} concluído com sucesso."}
     except Exception as e:
         logger.error(f"Erro ao baixar genoma: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao baixar genoma: {e}")
+
+@router.get("/genomes/{accession}/analyze")
+def analyze_gff(accession: str):
+    """Executa o script analyze_gff.py para o genoma especificado e retorna o resultado."""
+    gff_file = f"../users/ref_genomes/{accession}/genomic.gff"
+    command = ["python", "backend/scripts/analyze_gff.py", gff_file]
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        return {"output": result.stdout}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao executar analyze_gff.py: {e.stderr}")
 
 @router.post("/genomes/index")
 def index_genome(
@@ -353,7 +364,7 @@ def index_genome(
 ):
     """Index a genome using STAR."""
     try:
-        genome_dir = f"/users/ref_genomes/{accession}"
+        genome_dir = f"../users/ref_genomes/{accession}"
 
         # Verificar se o diretório do genoma existe
         # if not os.path.exists(genome_dir):

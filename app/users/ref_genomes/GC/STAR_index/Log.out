@@ -1,0 +1,36 @@
+STAR version=2.7.11b
+STAR compilation time,server,dir=2025-01-09T12:32:06+0000 :/opt/conda/conda-bld/star_1736425784849/work/source
+##### Command Line:
+/opt/conda/envs/bioinfo/bin/STAR-avx2 --runThreadN 4 --runMode genomeGenerate --genomeDir users/ref_genomes/GC*/STAR_index --genomeFastaFiles users/ref_genomes/GC*/genomic.fa --sjdbGTFfile users/ref_genomes/GC*/genomic.gtf --sjdbOverhang 100
+##### Initial USER parameters from Command Line:
+###### All USER parameters from Command Line:
+runThreadN                    4     ~RE-DEFINED
+runMode                       genomeGenerate        ~RE-DEFINED
+genomeDir                     users/ref_genomes/GC*/STAR_index     ~RE-DEFINED
+genomeFastaFiles              users/ref_genomes/GC*/genomic.fa        ~RE-DEFINED
+sjdbGTFfile                   users/ref_genomes/GC*/genomic.gtf     ~RE-DEFINED
+sjdbOverhang                  100     ~RE-DEFINED
+##### Finished reading parameters from all sources
+
+##### Final user re-defined parameters-----------------:
+runMode                           genomeGenerate   
+runThreadN                        4
+genomeDir                         users/ref_genomes/GC*/STAR_index
+genomeFastaFiles                  users/ref_genomes/GC*/genomic.fa   
+sjdbGTFfile                       users/ref_genomes/GC*/genomic.gtf
+sjdbOverhang                      100
+
+-------------------------------
+##### Final effective command line:
+/opt/conda/envs/bioinfo/bin/STAR-avx2   --runMode genomeGenerate      --runThreadN 4   --genomeDir users/ref_genomes/GC*/STAR_index   --genomeFastaFiles users/ref_genomes/GC*/genomic.fa      --sjdbGTFfile users/ref_genomes/GC*/genomic.gtf   --sjdbOverhang 100
+----------------------------------------
+
+Number of fastq files for each mate = 1
+ParametersSolo: --soloCellFilterType CellRanger2.2 filtering parameters:  3000 0.99 10
+Finished loading and checking parameters
+--genomeDir directory exists and will be overwritten: users/ref_genomes/GC*/STAR_index/
+May 04 21:25:36 ... starting to generate Genome files
+
+EXITING because of INPUT ERROR: could not open genomeFastaFile: users/ref_genomes/GC*/genomic.fa
+
+May 04 21:25:36 ...... FATAL ERROR, exiting

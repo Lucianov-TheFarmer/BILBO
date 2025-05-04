@@ -8,6 +8,7 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 # Start logging
 echo "Starting genome indexing with STAR..." > "$LOG_FILE"
+echo "Script executado a partir de: $(pwd)" >> "$LOG_FILE"
 
 # Check if the genome directory, sjdbOverhang, and threads are provided
 if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
@@ -17,9 +18,6 @@ if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
 fi
 
 GENOME_DIR="$1"
-
-# Convert GENOME_DIR to an absolute path
-GENOME_DIR=$(realpath "$GENOME_DIR")
 
 SJDB_OVERHANG="$2"
 THREADS="$3"

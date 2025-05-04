@@ -505,11 +505,22 @@ async def show_genomes_modal(page, token, user_id):
                                     ft.DataCell(ft.Text(genome["size"], style=ft.TextStyle(size=12))),
                                     ft.DataCell(ft.Text(genome["status"], style=ft.TextStyle(size=12))),
                                     ft.DataCell(
-                                        ft.IconButton(
-                                            icon=ft.icons.DELETE,
-                                            tooltip="Excluir genoma",
-                                            on_click=lambda e, accession=genome["name"].split("(")[-1].strip(")"): open_confirmation_modal(accession),
-                                            icon_color=ft.colors.RED,
+                                        ft.Row(
+                                            controls=[
+                                                ft.IconButton(
+                                                    icon=ft.icons.DESCRIPTION,
+                                                    tooltip="Analisar GFF",
+                                                    on_click=lambda e, accession=genome["name"].split("(")[-1].strip(")"): view_gff_analysis(accession, page, token),
+                                                ),
+                                                ft.IconButton(
+                                                    icon=ft.icons.DELETE,
+                                                    tooltip="Excluir genoma",
+                                                    on_click=lambda e, accession=genome["name"].split("(")[-1].strip(")"): open_confirmation_modal(accession),
+                                                    icon_color=ft.colors.RED,
+                                                ),
+                                            ],
+                                            alignment=ft.MainAxisAlignment.CENTER,  # Centralizar ícones
+                                            spacing=10,
                                         )
                                     ),
                                 ],
@@ -520,6 +531,43 @@ async def show_genomes_modal(page, token, user_id):
                     await log_message(page, f"Erro ao atualizar tabela de genomas: {response.status_code} - {response.text}")
         except Exception as ex:
             await log_message(page, f"Erro ao atualizar tabela de genomas: {ex}")
+
+    async def fetch_gff_analysis(accession, token):
+        """Faz a chamada ao backend para obter a análise do GFF."""
+        logger.info(f"Iniciando chamada ao backend para análise do GFF: {accession}")
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"http://bioinfo-container:8000/genomes/{accession}/analyze", headers=headers)
+                if response.status_code == 200:
+                    logger.info(f"Análise do GFF recebida com sucesso para {accession}")
+                    return response.json()["output"]
+                else:
+                    logger.error(f"Erro ao analisar GFF: {response.status_code} - {response.text}")
+                    return f"Erro ao analisar GFF: {response.status_code} - {response.text}"
+        except Exception as ex:
+            logger.error(f"Erro ao chamar o backend para análise do GFF: {ex}", exc_info=True)
+            return f"Erro ao chamar o backend para análise do GFF: {ex}"
+
+    def view_gff_analysis(accession, page, token):
+        """Exibe o resultado do comando analyze_gff.py em um modal."""
+        logger.info(f"Exibindo modal para análise do GFF: {accession}")
+        dlg_gff_analysis = ft.AlertDialog(
+            title=ft.Text(f"Análise do GFF para {accession}"),
+            content=ft.Text("Carregando análise...", style=ft.TextStyle(size=12)),
+            actions=[],
+            actions_alignment=ft.MainAxisAlignment.CENTER,
+        )
+        page.open(dlg_gff_analysis)
+
+        # Chamar a função de backend com asyncio.run
+        logger.info(f"Chamando o backend para análise do GFF: {accession}")
+        analysis_result = asyncio.run(fetch_gff_analysis(accession, token))
+
+        # Atualizar o modal com o resultado
+        dlg_gff_analysis.content = ft.Text(analysis_result, style=ft.TextStyle(size=12), selectable=True)
+        page.update()
+        logger.info(f"Modal atualizado com o resultado da análise do GFF para {accession}")
 
     async def delete_genome(accession):
         headers = {"Authorization": f"Bearer {token}"}
@@ -566,7 +614,7 @@ async def show_genomes_modal(page, token, user_id):
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text("Ações"), heading_row_alignment=ft.MainAxisAlignment.CENTER),
         ],
         rows=[],
     )
@@ -791,6 +839,9 @@ async def show_genomes_modal(page, token, user_id):
 async def download_genome(page, token, accession, organism_name, sjdb_overhang, threads):
     """Download a genome and trigger indexing."""
     headers = {"Authorization": f"Bearer {token}"}
+    log_file_path = "/app/backend/logs/download_genome.log"
+    success_message = f"Genoma de referência {accession} baixado, descompactado, renomeado e limpo com sucesso."
+
     try:
         async with httpx.AsyncClient(timeout=3600) as client:
             await log_message(page, f"Iniciando download do genoma {accession}...")
@@ -800,10 +851,20 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
                 headers=headers,
             )
             if response.status_code == 200:
-                await log_message(page, f"Download do genoma {accession} concluído com sucesso.")
+                while True:
+                    try:
+                        with open(log_file_path, "r") as log_file:
+                            log_content = log_file.read()
+                            if success_message in log_content:
+                                await log_message(page, f"Download do genoma {accession} concluído com sucesso.")
+                                break
+                    except FileNotFoundError:
+                        logger.warning(f"Arquivo de log {log_file_path} ainda não foi criado.")
+                    await asyncio.sleep(3)
+
                 await index_genome(page, token, accession, organism_name, int(sjdb_overhang), int(threads))
             else:
-                await log_message(page, f"Erro ao baixar genoma: {response.status_code} - {response.text}")
+                await log_message(page, f"Erro ao iniciar download do genoma: {response.status_code} - {response.text}")
     except Exception as ex:
         await log_message(page, f"Erro ao baixar genoma: {ex}")
 

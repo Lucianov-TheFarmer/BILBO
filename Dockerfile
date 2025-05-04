@@ -46,6 +46,8 @@ RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.27.0 sqlalchemy==2.0.3
 
 RUN apt-get -y install tmux htop
 
+RUN pip3 install RSeQC==5.0.4
+
 # Copie os scripts para o contêiner
 COPY app /app
 

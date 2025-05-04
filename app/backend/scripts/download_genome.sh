@@ -70,7 +70,6 @@ tmux new-session -d -s "$TMUX_SESSION_NAME" "
     rm -rf \"$GENOME_DIR/ncbi_dataset\" \"$GENOME_DIR/md5sum.txt\" \"$GENOME_DIR/README.md\" &&
     echo 'Removed unnecessary files for $ACCESSION.' >> $LOG_FILE &&
     echo 'Genoma de referência $ACCESSION baixado, descompactado, renomeado e limpo com sucesso.' >> $LOG_FILE
-    echo \"$GENOME_DIR\" > \"$SHARED_DIR/${ACCESSION}_path.txt\"  # Salvar o caminho absoluto
 "
 
 # Check if the tmux session was created successfully
