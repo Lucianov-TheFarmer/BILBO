@@ -17,17 +17,18 @@ if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
 fi
 
 GENOME_DIR="$1"
+
+# Convert GENOME_DIR to an absolute path
+GENOME_DIR=$(realpath "$GENOME_DIR")
+
 SJDB_OVERHANG="$2"
 THREADS="$3"
 INDEX_DIR="$GENOME_DIR/STAR_index"
 
-# Converter GENOME_DIR para um caminho absoluto
-GENOME_DIR=$(realpath "$GENOME_DIR")
-
-# Verificar se o diretório existe
+# Ensure the genome directory exists
 if [ ! -d "$GENOME_DIR" ]; then
-    echo "Error: Genome directory $GENOME_DIR does not exist." >> "$LOG_FILE"
-    exit 1
+    echo "Genome directory $GENOME_DIR does not exist. Creating it now..." >> "$LOG_FILE"
+    mkdir -p "$GENOME_DIR"
 fi
 
 # Ensure the STAR index directory exists
