@@ -510,7 +510,8 @@ async def show_genomes_modal(page, token, user_id):
                                                 ft.IconButton(
                                                     icon=ft.icons.DESCRIPTION,
                                                     tooltip="Analisar GFF",
-                                                    on_click=lambda e, accession=genome["name"].split("(")[-1].strip(")"): view_gff_analysis(accession, page, token),
+                                                    on_click=lambda e, accession=genome["name"].split("(")[-1].strip(")"): view_gff_analysis(accession, page, token) if genome.get("status", "").lower() == "completed" else None,
+                                                    disabled=genome.get("status", "").lower() != "completed"                                                
                                                 ),
                                                 ft.IconButton(
                                                     icon=ft.icons.DELETE,

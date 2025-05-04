@@ -3,6 +3,7 @@ import asyncio
 import httpx
 import logging
 from .utils import log_message
+from .viewer import view_quantification_log
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,7 +45,8 @@ async def update_tabela_quantificacao(page, token, user_id):
                 tabela_quantificacao.rows.clear()
                 for sample in samples:
                     def view_log_handler(e, s=sample["name"]):
-                        asyncio.run(view_quantification_log(page, token, s, user_id))
+                        # Executar a função assíncrona no contexto do loop de eventos
+                        asyncio.run(view_quantification_log_handler(page, token, s, user_id))
 
                     # Determinar se o botão de log deve estar ativo ou inativo
                     log_button_disabled = sample["status"].lower() != "completed"
@@ -73,9 +75,9 @@ async def update_tabela_quantificacao(page, token, user_id):
     except Exception as e:
         logger.error(f"Erro ao atualizar a tabela de quantificação: {e}", exc_info=True)
 
-async def view_quantification_log(page, token, sample_name, user_id):
+async def view_quantification_log_handler(page, token, sample_name, user_id):
     """Exibe o log de quantificação para uma amostra específica."""
-    page.open(ft.SnackBar(ft.Text(f"Exibindo log para {sample_name}")))
+    await view_quantification_log(page, token, sample_name, user_id)
 
 async def show_quantification_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     """Exibe o modal de quantificação com a tabela de seleção e o formulário de parâmetros."""
@@ -160,7 +162,15 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
         """Inicia a quantificação: adiciona as amostras à fila e processa uma por uma."""
         selected_samples = [row.cells[0].content.value for row in tabela_quantificacao_modal.rows if row.cells[3].content.value]
         if not selected_samples:
+            log_message(page, "Nenhuma amostra selecionada para quantificação.")
             logger.error("Nenhuma amostra selecionada para quantificação.")
+            return
+
+        feature_type = feature_type_field.value.strip()
+        id_attribute = id_attribute_field.value.strip()
+
+        if not feature_type or not id_attribute:
+            await log_message(page, "Os campos 'Feature Type' e 'ID Attribute' são obrigatórios.")
             return
 
         await log_message(page, f"Adicionando amostras à fila: {selected_samples}")
@@ -173,7 +183,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     "http://bioinfo-container:8000/quantification/add_to_queue",
-                    json={"samples": selected_samples},
+                    json={"samples": selected_samples, "feature_type": feature_type, "id_attribute": id_attribute},
                     headers=headers,
                 )
                 if response.status_code == 200:
@@ -198,7 +208,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                     async with httpx.AsyncClient(timeout=300.0) as client:  # Aumentar o tempo limite para evitar ReadTimeout
                         response = await client.post(
                             "http://bioinfo-container:8000/quantification/start_processing",
-                            json={"samples": [sample]},
+                            json={"samples": [sample], "feature_type": feature_type, "id_attribute": id_attribute},
                             headers=headers,
                         )
                         if response.status_code == 200:
@@ -231,6 +241,9 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
             content=ft.ListView(
                 controls=[
                     tabela_quantificacao_modal,
+                    ft.Container(height=10),
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Container(height=10),
                     ft.Row(
                         controls=[
                             feature_type_field,

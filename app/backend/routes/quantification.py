@@ -15,6 +15,8 @@ router = APIRouter()
 
 class QuantificationRequest(BaseModel):
     samples: list[str]
+    feature_type: str
+    id_attribute: str
 
 @router.post("/quantification/add_to_queue")
 def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -46,27 +48,32 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
     return {"message": "Amostras adicionadas à fila com sucesso"}
 
 @router.post("/quantification/start_processing")
-async def start_processing(request: QuantificationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def start_processing(
+    request: QuantificationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Processa as amostras de quantificação uma por uma."""
     user_id = current_user.id
     for sample_name in request.samples:
         sample_stage = db.query(SampleStage).filter(
             SampleStage.name == f"{sample_name.replace('.bam', '.txt')}",
             SampleStage.stage_id == 6,
-            SampleStage.user_id == user_id
+            SampleStage.user_id == user_id,
         ).first()
 
         if not sample_stage:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sample_name} not found in queue")
+            raise HTTPException(status_code=404, detail=f"Sample {sample_name} not found in queue")
 
         # Atualizar status para "counting" durante o processamento
         sample_stage.status = "counting"
         db.commit()
 
         # Executar o script de quantificação
-        command = f"bash /app/backend/scripts/quantification.sh {sample_name} {user_id}"
+        command = f"bash /app/backend/scripts/quantification.sh {sample_name} {user_id} {request.feature_type} {request.id_attribute}"
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
+
         if process.returncode != 0:
             logger.error(f"Erro ao executar quantificação para {sample_name}: {stderr}")
             sample_stage.status = "Erro"
@@ -79,10 +86,8 @@ async def start_processing(request: QuantificationRequest, db: Session = Depends
             quantification_size = os.path.getsize(quantification_path)
             quantification_size_kb = f"{quantification_size / 1024:.2f} KB"
             sample_stage.size = quantification_size_kb
-
-        # Atualizar o status para "completed"
-        sample_stage.status = "completed"
-        db.commit()
+            sample_stage.status = "completed"
+            db.commit()
 
         # Emitir mensagem para o frontend
         await manager.broadcast(f"Quantificação concluída para {sample_name}")

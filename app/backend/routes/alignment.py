@@ -428,6 +428,17 @@ def delete_reference_genome(accession: str, db: Session = Depends(get_db), curre
         else:
             logger.warning(f"Diretório do genoma {accession} não encontrado.")
 
+        # Caminho do arquivo de log
+        log_file_path = "/app/backend/logs/download_genome.log"
+
+        # Excluir o arquivo de log, se existir
+        if os.path.exists(log_file_path):
+            try:
+                os.remove(log_file_path)
+                logger.info(f"Arquivo de log {log_file_path} excluído com sucesso.")
+            except Exception as e:
+                logger.warning(f"Erro ao excluir o arquivo de log {log_file_path}: {e}")
+
         db.delete(genome_stage)
         db.commit()
         logger.info(f"Genoma de referência {accession} excluído do banco de dados.")

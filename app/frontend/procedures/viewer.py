@@ -121,6 +121,40 @@ async def display_log(page, log_content):
     except Exception as e:
         logger.error(f"Erro ao exibir o log no viewer: {e}", exc_info=True)
 
+async def display_quantification_log(page, log_content):
+    """Exibe o conteúdo do log de quantificação no viewer."""
+    try:
+        # Criar um controle de texto com fonte monoespaçada para alinhamento
+        log_control = ft.Text(
+            log_content,
+            selectable=True,
+            style=ft.TextStyle(size=12, font_family="Consolas"),  # Fonte monoespaçada
+            text_align=ft.TextAlign.LEFT,  # Alinhar o texto à esquerda
+        )
+
+        # Atualizar o container de pré-visualização mantendo o tamanho original e permitindo rolagem
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,  # Garantir que o container mantenha o tamanho original
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,  # Permitir que o conteúdo ocupe todo o espaço disponível
+                                        ),
+                                        padding=ft.padding.all(10),  # Adicionar padding para melhor visualização
+                                    )
+                                ]
+                                page.update()
+                                return
+    except Exception as e:
+        logger.error(f"Erro ao exibir o log de quantificação no viewer: {e}", exc_info=True)
+
 async def view_alignment_log(page, token, sample_name, user_id):
     """Displays the alignment log in the viewer."""
     log_path = f"../users/{user_id}/alignment/{sample_name.replace('.bam', '')}/{sample_name.replace('.bam', 'Log.final.out')}"
@@ -137,6 +171,21 @@ async def view_alignment_log(page, token, sample_name, user_id):
     except Exception as e:
         logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
         await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
+
+async def view_quantification_log(page, token, sample_name, user_id):
+    """Exibe o log de quantificação no viewer."""
+    log_path = f"../users/{user_id}/quantification/{sample_name}"
+    try:
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as log_file:
+                log_content = log_file.read()
+        else:
+            log_content = f"Erro: Arquivo de log não encontrado em {log_path}"
+
+        await display_quantification_log(page, log_content)
+    except Exception as e:
+        logger.error(f"Erro ao exibir o log de quantificação: {e}", exc_info=True)
+        await display_quantification_log(page, f"Erro ao exibir o log de quantificação: {e}")
 
 def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
     async def on_change(e):
