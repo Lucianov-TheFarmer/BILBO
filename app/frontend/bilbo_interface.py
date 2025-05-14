@@ -274,7 +274,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
         )
     )
 
-    menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local)
+    menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
     # Call atualizar_tabela to populate the table initially
     print("Calling atualizar_tabela")

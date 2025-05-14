@@ -1,5 +1,10 @@
 import flet as ft
 from .sample_operations import adicionar_amostra
+from .quality_analysis import show_quality_analysis_modal
+from .trimmagem import show_trimmagem_modal
+from .quality_analysis_post_trim import show_quality_analysis_post_trim_modal
+from .alignment import show_alignment_modal, show_genomes_modal
+from .quantification import show_quantification_modal
 import asyncio
 
 def menubar_clicar_item(e):
@@ -16,13 +21,13 @@ def menubar_fechar_item(e):
 def menubar_passar_por_cima_item(e):
     print(f"{e.control.content.value}.on_hover")
 
-def create_menu_item(label, close_on_click=True, style=None):
+def create_menu_item(label, close_on_click=True, style=None, on_click=None):
     """Helper function to create a menu item button."""
     return ft.MenuItemButton(
         content=ft.Text(label),
         close_on_click=close_on_click,
         style=style or ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
-        on_click=lambda e: None,  # Make the button clickable but do nothing
+        on_click=on_click,  # Pass the on_click handler
     )
 
 async def mudar_tema(page):
@@ -32,7 +37,7 @@ async def mudar_tema(page):
         page.theme_mode = ft.ThemeMode.LIGHT
     page.update()
 
-def create_menubar(page, token, container_menu_direita, tabela_amostras_local):
+def create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     return ft.MenuBar(
         controls=[
             ft.SubmenuButton(
@@ -53,34 +58,49 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local):
                 controls=[
                     create_menu_item("Adicionar FASTQ"),
                     create_menu_item("Adicionar via URL"),
-                    create_menu_item("Adicionar via SRA"),  # Temporarily no functionality
+                    create_menu_item(
+                        "Adicionar via SRA",
+                        on_click=lambda e: asyncio.run(adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local))
+                    ),
                 ],
             ),
             ft.SubmenuButton(
                 content=ft.Text("Qualidade"),
                 controls=[
-                    create_menu_item("Verificar qualidade"),
-                    create_menu_item("Filtragem"),
+                    create_menu_item(
+                        "Verificar qualidade",
+                        on_click=lambda e: asyncio.run(show_quality_analysis_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id))),
+                    create_menu_item(
+                        "Trimmagem",
+                        on_click=lambda e: asyncio.run(show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local,  atualizar_tabela))),
+                    create_menu_item(
+                        "Verificar qualidade pós-trimmagem",
+                        on_click=lambda e: asyncio.run(show_quality_analysis_post_trim_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id))),
                 ],
             ),
             ft.SubmenuButton(
                 content=ft.Text("Alinhamento"),
                 controls=[
-                    create_menu_item("Adicionar genoma de referência"),
-                    create_menu_item("Alinhar com o genoma de referência"),
+                    create_menu_item(
+                        "Adicionar genoma de referência",
+                        on_click=lambda e: asyncio.run(show_genomes_modal(page, token, user_id))),
+                    create_menu_item(
+                        "Alinhar com o genoma de referência",
+                        on_click=lambda e: asyncio.run(show_alignment_modal(page, token, user_id, atualizar_tabela, container_menu_direita, tabela_amostras_local))),
                 ],
             ),
             ft.SubmenuButton(
                 content=ft.Text("Quantificação"),
                 controls=[
-                    create_menu_item("Quantificar reads alinhadas"),
+                    create_menu_item(
+                        "Quantificar reads alinhadas",
+                        on_click=lambda e: asyncio.run(show_quantification_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id))),
                 ],
             ),
             ft.SubmenuButton(
                 content=ft.Text("Expressão diferencial"),
                 controls=[
-                    create_menu_item("Normalização"),
-                    create_menu_item("Tabelas de expressão diferencial"),
+                    create_menu_item("Definir contrastes"),                  
                     create_menu_item("Obter genes diferencialmente expressos"),
                 ],
             ),
