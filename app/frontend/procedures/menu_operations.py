@@ -5,6 +5,7 @@ from .trimmagem import show_trimmagem_modal
 from .quality_analysis_post_trim import show_quality_analysis_post_trim_modal
 from .alignment import show_alignment_modal, show_genomes_modal
 from .quantification import show_quantification_modal
+from .contrasts import show_contrasts_modal  # Import the new modal function
 import asyncio
 
 def menubar_clicar_item(e):
@@ -100,7 +101,10 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
             ft.SubmenuButton(
                 content=ft.Text("Expressão diferencial"),
                 controls=[
-                    create_menu_item("Definir contrastes"),                  
+                    create_menu_item(
+                        "Definir contrastes",
+                        on_click=lambda e: asyncio.run(show_contrasts_modal(page, token, user_id))
+                    ),
                     create_menu_item("Obter genes diferencialmente expressos"),
                 ],
             ),
