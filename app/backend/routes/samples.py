@@ -237,7 +237,9 @@ def create_stages(db: Session = Depends(get_db)):
         {"id": 4, "name": "qualidade2"},
         {"id": 5, "name": "alinhamento"},
         {"id": 6, "name": "quantificacao"},
-        {"id": 7, "name": "referencia"}
+        {"id": 7, "name": "referencia"},
+        {"id": 8, "name": "contraste"}
+
     ]
     for stage in stages:
         db_stage = db.query(Stage).filter(Stage.id == stage["id"]).first()
