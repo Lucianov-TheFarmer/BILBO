@@ -5,8 +5,8 @@ from typing import List
 from fastapi import WebSocket, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from .database import get_db
-from .models import User
+from .db.database import get_db
+from .db.models import User
 
 SECRET_KEY = "your_secret_key"
 ALGORITHM = "HS256"

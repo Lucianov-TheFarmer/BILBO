@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from typing import List
-from ..database import get_db
-from ..models import SampleStage, User, Stage  # Remova 'Sample'
+from ..db.database import get_db
+from ..db.models import SampleStage, User, Stage  # Remova 'Sample'
 from ..utils import get_current_user, manager  # Atualizado
 from pydantic import BaseModel
 import subprocess
@@ -22,11 +22,6 @@ class SampleCreateRequest(BaseModel):
 class SampleStageCreateRequest(BaseModel):
     stage_id: int
     status: str
-
-def get_next_sample_id(db: Session) -> int:
-    """Get the next unique sample_id for stage_id 1."""
-    max_sample_id = db.query(SampleStage.sample_id).filter(SampleStage.stage_id == 1).order_by(SampleStage.sample_id.desc()).first()
-    return (max_sample_id[0] + 1) if max_sample_id and max_sample_id[0] else 1
 
 def update_sample_status(db: Session, sra_code: str, status: str):
     """Update the status of a sample."""
@@ -48,12 +43,9 @@ def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), 
         if existing_sample_stage:
             continue  # Skip existing samples
 
-        # Generate a unique sample_id
-        new_sample_id = get_next_sample_id(db)
 
         # Create a new sample stage for stage_id 1
         db_sample_stage = SampleStage(
-            sample_id=new_sample_id,
             stage_id=1,
             name=f"{sra_code}.fastq",
             sra_code=sra_code,
@@ -198,7 +190,6 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
     # Atualizar os registros para _1.fastq e _2.fastq com o sra_code correto
     db_sample_stage_1 = SampleStage(
-        sample_id=db_sample_stage.sample_id,  # Use the same sample_id
         stage_id=1,
         name=f"{sra_code_basename}_1.fastq",
         sra_code=sra_code_basename,  # Usar apenas o basename
@@ -207,7 +198,6 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
         user_id=current_user.id,
     )
     db_sample_stage_2 = SampleStage(
-        sample_id=db_sample_stage.sample_id,  # Use the same sample_id
         stage_id=1,
         name=f"{sra_code_basename}_2.fastq",
         sra_code=sra_code_basename,  # Usar apenas o basename
@@ -251,7 +241,7 @@ def create_stages(db: Session = Depends(get_db)):
 
 @router.post("/samples/{sample_id}/stages/")
 def create_sample_stage(sample_id: int, request: SampleStageCreateRequest, db: Session = Depends(get_db)):
-    db_sample_stage = SampleStage(sample_id=sample_id, stage_id=request.stage_id)
+    db_sample_stage = SampleStage(stage_id=request.stage_id)
     db.add(db_sample_stage)
     db.commit()
     db.refresh(db_sample_stage)
@@ -259,12 +249,12 @@ def create_sample_stage(sample_id: int, request: SampleStageCreateRequest, db: S
 
 @router.get("/samples/{sample_id}/stages/")
 def get_sample_stages(sample_id: int, db: Session = Depends(get_db)):
-    sample_stages = db.query(SampleStage).filter(SampleStage.sample_id == sample_id).all()
+    sample_stages = db.query(SampleStage).all()
     return sample_stages
 
 @router.put("/samples/{sample_id}/stages/{stage_id}")
 def update_sample_stage(sample_id: int, stage_id: int, status: str, db: Session = Depends(get_db)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == sample_id, SampleStage.stage_id == stage_id).first()
+    db_sample_stage = db.query(SampleStage).filter(SampleStage.stage_id == stage_id).first()
     if not db_sample_stage:
         raise HTTPException(status_code=404, detail="Sample stage not found")
     db_sample_stage.status = status

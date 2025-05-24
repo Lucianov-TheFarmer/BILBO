@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Form, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from ..database import get_db
-from ..models import SampleStage, User
+from ..db.database import get_db
+from ..db.models import SampleStage, User
 from ..utils import get_current_user, manager
 import subprocess
 import logging
@@ -34,7 +34,6 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
 
         # Criar um novo estágio para quantificação (stage_id=6) com extensão .txt
         new_sample_stage = SampleStage(
-            sample_id=db_sample_stage.sample_id,
             stage_id=6,
             name=f"{sample_name.replace('.bam', '.txt')}",
             sra_code=db_sample_stage.sra_code,
@@ -90,7 +89,7 @@ async def start_processing(
             db.commit()
 
         # Emitir mensagem para o frontend
-        await manager.broadcast(f"Quantificação concluída para {sample_name}")
+        # await manager.broadcast(f"Quantificação concluída para {sample_name}")
 
     return {"message": "Processamento de quantificação iniciado"}
 

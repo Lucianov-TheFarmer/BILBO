@@ -124,6 +124,8 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
                         async for message in websocket:
                             if f"Alinhamento concluído para {basename}" in message:
                                 await log_message(page, message)
+                                # Adiciona log_message para a amostra concluída
+                                await log_message(page, f"Alinhamento concluído para {basename}")
                                 await update_tabela_alinhamento(page, token, user_id)  # Replace `1` with the actual user_id
                                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                                 break  # Sair do loop WebSocket após receber a mensagem de conclusão

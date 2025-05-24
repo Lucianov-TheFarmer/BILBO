@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
+# from database import Base
 from .database import Base
 
 class User(Base):
@@ -16,7 +17,6 @@ class Stage(Base):
 class SampleStage(Base):
     __tablename__ = "sample_stages"
     id = Column(Integer, primary_key=True, index=True)
-    sample_id = Column(Integer, index=True)  # Unique sample identifier for stage_id 1
     stage_id = Column(Integer, ForeignKey("stages.id"))
     name = Column(String)  # Name of the file or stage-specific identifier
     sra_code = Column(String, index=True)  # SRA code of the sample

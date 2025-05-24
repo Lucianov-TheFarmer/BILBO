@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
-from ..database import get_db
-from ..models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
-from ..utils import get_current_user
+from ..db.database import get_db
+from ..db.models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
+from ..utils import get_current_user, manager
 import subprocess
 import os
 import json
 import logging
+import asyncio
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -127,7 +128,6 @@ def start_trimmagem(
                 trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
                 trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
                 db_sample_stage_trimmed = SampleStage(
-                    sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id original
                     stage_id=3,  # ID do estágio de trimmagem
                     name=trimmed_name,
                     sra_code=base_name,
@@ -139,6 +139,12 @@ def start_trimmagem(
             db.commit()
 
             logger.info(f"Trimmagem completed successfully for paired sample {base_name}.")
+
+            # Enviar mensagem de conclusão via WebSocket
+            try:
+                asyncio.run(manager.broadcast(f"Trimmagem concluída para {base_name}"))
+            except Exception as e:
+                logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
 
         # Processar amostras SE
         for sample in single_samples:
@@ -187,7 +193,6 @@ def start_trimmagem(
             trimmed_name = f"{sample}_trimmed.fastq"
             trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
             db_sample_stage_trimmed = SampleStage(
-                sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id original
                 stage_id=3,  # ID do estágio de trimmagem
                 name=trimmed_name,
                 sra_code=sample.split("_")[0],
@@ -199,6 +204,12 @@ def start_trimmagem(
         db.commit()
 
         logger.info(f"Trimmagem completed successfully for single sample {sample}.")
+
+        # Enviar mensagem de conclusão via WebSocket
+        # try:
+        #     asyncio.run(manager.broadcast(f"Trimmagem concluída para {sample}"))
+        # except Exception as e:
+        #     logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
 
         # Limpar arquivo de adaptadores personalizados
         if adapter_file and os.path.exists(adapter_file):

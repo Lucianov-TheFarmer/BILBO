@@ -225,6 +225,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                                 logger.error(f"Erro ao calcular tamanho do arquivo para {sample_txt}: {size_response.status_code} - {size_response.text}")
 
                             logger.info(f"Processamento concluído para {sample}")
+                            await log_message(page, f"Quantificação concluída para {sample}")
                             await update_tabela_quantificacao(page, token, user_id)
                             await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                             page.update()

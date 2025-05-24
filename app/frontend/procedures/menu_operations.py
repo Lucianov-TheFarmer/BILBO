@@ -105,6 +105,11 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                         "Definir contrastes",
                         on_click=lambda e: asyncio.run(show_contrasts_modal(page, token, user_id))
                     ),
+                    create_menu_item(
+                        "Pré-processamento",
+                        on_click=lambda e: asyncio.run(show_contrasts_modal(page, token, user_id))
+                    ),
+
                     create_menu_item("Obter genes diferencialmente expressos"),
                 ],
             ),

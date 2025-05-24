@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from sqlalchemy.orm import Session
-from ..database import get_db
-from ..models import SampleStage, User
+from ..db.database import get_db
+from ..db.models import SampleStage, User
 from ..utils import get_current_user
 import logging
 

@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel  # Import BaseModel
-from ..database import get_db
-from ..models import SampleStage, User, Stage  # Substitua 'Sample' por 'SampleStage'
+from ..db.database import get_db
+from ..db.models import SampleStage, User, Stage  # Substitua 'Sample' por 'SampleStage'
 from ..utils import get_current_user, manager  # Atualizado
 import subprocess
 import os
 import logging
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +36,6 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
 
         # Criar um novo estágio para análise de qualidade (stage_id=2)
         new_sample_stage = SampleStage(
-            sample_id=db_sample_stage.sample_id,  # Reutilizar o sample_id da amostra original
             stage_id=2,  # ID do estágio de análise de qualidade
             name=f"{db_sample_stage.sra_code}{suffix}.html",  # Nome do arquivo de saída com sufixo
             sra_code=db_sample_stage.sra_code,  # Usar apenas o basename
@@ -56,23 +56,34 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
         new_sample_stage.status = "Completed"
         db.commit()
 
+        # Enviar mensagem de conclusão via WebSocket
+        try:
+            asyncio.run(manager.broadcast(f"Análise de qualidade concluída para {name}"))
+        except Exception as e:
+            logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
+
     return {"message": "Quality analysis started successfully"}
         
 @router.post("/quality_analysis/update_status")
-async def update_quality_analysis_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
-    db_sample = db.query(SampleStage).filter(SampleStage.sra_code == sra_code).first()
-    if db_sample is None:
+async def update_quality_analysis_status(
+    sra_code: str = Form(...),
+    status: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    # Atualize apenas o registro correto, sem sobrescrever o nome
+    updated = False
+    for suffix in ["_1", "_2"]:
+        name = f"{sra_code}{suffix}.html"
+        db_sample_stage = db.query(SampleStage).filter(
+            SampleStage.name == name,
+            SampleStage.stage_id == 2
+        ).first()
+        if db_sample_stage:
+            db_sample_stage.status = status
+            db.commit()
+            updated = True
+    if not updated:
         raise HTTPException(status_code=404, detail="Sample not found")
-    db_sample.status = status
-    db.commit()
-
-    # Update the sample stage
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sample_id == db_sample.id, SampleStage.stage_id == 2).first()
-    if db_sample_stage:
-        db_sample_stage.name = f"{sra_code}.html"
-        db.commit()
-
-    await manager.broadcast(f"Análise de qualidade da amostra {sra_code} {status.lower()}.")
     return {"message": f"Sample {sra_code} status updated to {status}"}
 
 @router.get("/quality_analysis/completed")

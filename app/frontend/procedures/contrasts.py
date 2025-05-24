@@ -2,6 +2,7 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from .utils import log_message  # Import log_message
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -11,11 +12,19 @@ async def fetch_samples():
     """Fetch samples from the backend."""
     logger.info("Fetching samples from the backend.")
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/contrasts/samples")
-        response.raise_for_status()
-        samples = response.json()
-        logger.info(f"Fetched samples: {samples}")
-        return samples
+        try:
+            response = await client.get("http://localhost:8000/contrasts/samples")
+            response.raise_for_status()
+            samples = response.json()
+            logger.info(f"Fetched samples: {samples}")
+            return samples
+        except httpx.HTTPStatusError as ex:
+            if ex.response.status_code == 404:
+                logger.warning("No samples found (404).")
+                return None
+            else:
+                logger.error(f"Error fetching samples: {ex}")
+                raise
 
 async def fetch_existing_contrasts(token):
     """Fetch existing contrasts from the backend."""
@@ -36,6 +45,10 @@ async def show_contrasts_modal(page, token, user_id):
 
     # Fetch samples and build sra_code -> id mapping
     samples = await fetch_samples()
+    if samples is None or len(samples) == 0:
+        await log_message(page, "Nenhuma amostra disponível para definição de contrastes.")
+        return
+
     sra_code_to_id = {}
     for sample in samples:
         # Remove .txt if present for mapping
@@ -59,9 +72,14 @@ async def show_contrasts_modal(page, token, user_id):
         """Adds a dropdown and remove button below the specified side of the row."""
         logger.info(f"Adding repetition handler for side: {side}")
         repetition_container = row.controls[1].controls[0 if side == "left" else 1]
-        dropdown = ft.Dropdown(width=200)
+        dropdown = ft.Dropdown()
         await populate_dropdown(dropdown, selected_value)
-        dropdown.on_change = lambda e: used_samples.add(dropdown.value)
+        # Corrigir: garantir que o valor do dropdown seja atualizado no objeto Python
+        def on_dropdown_change(e):
+            dropdown.value = e.control.value  # Sincroniza valor do objeto Python
+            used_samples.add(dropdown.value)
+            logger.info(f"Dropdown changed: {dropdown.value}")
+        dropdown.on_change = on_dropdown_change
         logger.info(f"Dropdown created for side {side}.")
         remove_button = ft.IconButton(
             icon=ft.icons.REMOVE_CIRCLE_OUTLINE,
@@ -225,99 +243,119 @@ async def show_contrasts_modal(page, token, user_id):
     def add_contrast_handler(e):
         """Adds a new contrast row with editable fields and repetition buttons."""
         logger.info("Adding a new contrast row.")
-        left_field = ft.Column(
+        # Coluna esquerda: Grupo 1
+        left_field = ft.TextField(label="Grupo 1", width=200, text_align=ft.TextAlign.CENTER)
+        left_repetition_column = ft.Column(spacing=5)
+        left_buttons_row = ft.Row(
             controls=[
-                ft.TextField(label="Grupo 1", width=200, text_align=ft.TextAlign.CENTER),
-            ],
-            spacing=5,
-            alignment=ft.MainAxisAlignment.CENTER,
-        )
-        right_field = ft.Column(
-            controls=[
-                ft.TextField(label="Grupo 2", width=200, text_align=ft.TextAlign.CENTER),
-            ],
-            spacing=5,
-            alignment=ft.MainAxisAlignment.CENTER,
-        )
-        left_repetition_controls = ft.Column(
-            controls=[
-                ft.Column(spacing=5),  # Container for repetitions
-                ft.Column(
-                    controls=[
-                        ft.TextButton(
-                            "Adicionar repetição",
-                            on_click=lambda e: run_async(add_repetition_handler(new_row, "left")),
-                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-                        ),
-                        ft.TextButton(
-                            "Limpar repetições",
-                            on_click=lambda e: clear_repetitions(new_row, "left"),
-                            style=ft.ButtonStyle(
-                                shape=ft.RoundedRectangleBorder(radius=10),
-                                color=ft.colors.RED,
-                            ),
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=10,
+                ft.TextButton(
+                    "Adicionar repetição",
+                    on_click=lambda e: run_async(add_repetition_handler(new_row, "left")),
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                ),
+                ft.TextButton(
+                    "Limpar repetições",
+                    on_click=lambda e: clear_repetitions(new_row, "left"),
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                        color=ft.colors.RED,
+                    ),
                 ),
             ],
             spacing=10,
+            alignment=ft.MainAxisAlignment.START,
         )
-        right_repetition_controls = ft.Column(
+        left_column = ft.Column(
             controls=[
-                ft.Column(spacing=5),  # Container for repetitions
-                ft.Column(
-                    controls=[
-                        ft.TextButton(
-                            "Adicionar repetição",
-                            on_click=lambda e: run_async(add_repetition_handler(new_row, "right")),
-                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-                        ),
-                        ft.TextButton(
-                            "Limpar repetições",
-                            on_click=lambda e: clear_repetitions(new_row, "right"),
-                            style=ft.ButtonStyle(
-                                shape=ft.RoundedRectangleBorder(radius=10),
-                                color=ft.colors.RED,
-                            ),
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=10,
+                left_field,
+                left_repetition_column,
+                left_buttons_row,
+            ],
+            spacing=10,
+            alignment=ft.MainAxisAlignment.START,
+        )
+
+        # Coluna direita: Grupo 2
+        right_field = ft.TextField(label="Grupo 2", width=200, text_align=ft.TextAlign.CENTER)
+        right_repetition_column = ft.Column(spacing=5)
+        right_buttons_row = ft.Row(
+            controls=[
+                ft.TextButton(
+                    "Adicionar repetição",
+                    on_click=lambda e: run_async(add_repetition_handler(new_row, "right")),
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                ),
+                ft.TextButton(
+                    "Limpar repetições",
+                    on_click=lambda e: clear_repetitions(new_row, "right"),
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                        color=ft.colors.RED,
+                    ),
                 ),
             ],
             spacing=10,
+            alignment=ft.MainAxisAlignment.START,
         )
+        right_column = ft.Column(
+            controls=[
+                right_field,
+                right_repetition_column,
+                right_buttons_row,
+            ],
+            spacing=10,
+            alignment=ft.MainAxisAlignment.START,
+        )
+
+        # Linha dos campos de grupo e lixeira
+        group_row = ft.Row(
+            controls=[
+                left_field,
+                ft.Icon(
+                    name=ft.icons.REMOVE,  # Non-interactive icon
+                    size=24,
+                    color=ft.colors.BLACK38,
+                ),
+                right_field,
+                ft.IconButton(
+                    icon=ft.icons.DELETE,
+                    icon_color=ft.colors.RED,  # Make the trash icon red
+                    tooltip="Excluir contraste",
+                    on_click=lambda e: remove_contrast_handler(new_row),
+                ),
+            ],
+            spacing=20,
+            alignment=ft.MainAxisAlignment.SPACE_EVENLY,
+        )
+
+        # Linha das repetições e botões, alinhadas verticalmente
+        repetitions_row = ft.Row(
+            controls=[
+                ft.Column(
+                    controls=[
+                        left_repetition_column,
+                        left_buttons_row,
+                    ],
+                    spacing=10,
+                    alignment=ft.MainAxisAlignment.START,
+                ),
+                ft.Column(
+                    controls=[
+                        right_repetition_column,
+                        right_buttons_row,
+                    ],
+                    spacing=10,
+                    alignment=ft.MainAxisAlignment.START,
+                ),
+            ],
+            spacing=40,
+            alignment=ft.MainAxisAlignment.START,
+        )
+
         new_row = ft.Column(
             controls=[
-                ft.Row(
-                    controls=[
-                        left_field,
-                        ft.Icon(
-                            name=ft.icons.REMOVE,  # Non-interactive icon
-                            size=24,
-                            color=ft.colors.BLACK38,
-                        ),
-                        right_field,
-                        ft.IconButton(
-                            icon=ft.icons.DELETE,
-                            icon_color=ft.colors.RED,  # Make the trash icon red
-                            tooltip="Excluir contraste",
-                            on_click=lambda e: remove_contrast_handler(new_row),
-                        ),
-                    ],
-                    spacing=20,
-                    alignment=ft.MainAxisAlignment.SPACE_EVENLY,
-                ),
-                ft.Row(
-                    controls=[
-                        left_repetition_controls,
-                        right_repetition_controls,
-                    ],
-                    spacing=20,
-                    alignment=ft.MainAxisAlignment.SPACE_EVENLY,
-                ),
+                group_row,
+                repetitions_row,
             ],
             spacing=10,
         )
@@ -419,28 +457,69 @@ async def show_contrasts_modal(page, token, user_id):
         """Handles the close button click."""
         logger.info("Close button clicked. Sending data to backend and closing modal.")
 
-        # Prepare data to send to the backend
         contrasts_data = []
+        logger.info(f"contrast_rows.controls: {contrast_rows.controls}")
         for i in range(0, len(contrast_rows.controls), 2):  # Skip dividers
             row = contrast_rows.controls[i]
-            left_group = row.controls[0].controls[0].controls[0].value  # Access TextField value for Grupo 1
-            right_group = row.controls[0].controls[2].controls[0].value  # Access TextField value for Grupo 2
+            logger.info(f"Processing row {i}: {row}")
+            group_row = row.controls[0]  # ft.Row: [left_field, icon, right_field, delete_button]
 
-            left_repetitions = [
-                dropdown.controls[0].value for dropdown in row.controls[1].controls[0].controls[:-1]
-                if isinstance(dropdown, ft.Row) and dropdown.controls[0].value
-            ]
-            right_repetitions = [
-                dropdown.controls[0].value for dropdown in row.controls[1].controls[1].controls[:-1]
-                if isinstance(dropdown, ft.Row) and dropdown.controls[0].value
-            ]
+            # Corrigir: pode ser ft.TextField ou ft.Column (quando já salvo)
+            def get_group_value(field):
+                # Se for TextField, retorna .value
+                if hasattr(field, "value"):
+                    return field.value
+                # Se for Column, pega o primeiro controle e retorna .value se for TextField
+                if isinstance(field, ft.Column) and field.controls:
+                    ctrl = field.controls[0]
+                    if hasattr(ctrl, "value"):
+                        return ctrl.value
+                # fallback
+                return ""
 
-            contrasts_data.append({
-                "group_1": left_group,
-                "group_2": right_group,
-                "repetitions_1": left_repetitions,
-                "repetitions_2": right_repetitions,
-            })
+            left_field = group_row.controls[0]
+            right_field = group_row.controls[2]
+            left_group = get_group_value(left_field)
+            right_group = get_group_value(right_field)
+            logger.info(f"left_group: {left_group}, right_group: {right_group}")
+
+            repetitions_row = row.controls[1]  # ft.Row: [left_column, right_column]
+            left_column = repetitions_row.controls[0]  # ft.Column
+            right_column = repetitions_row.controls[1]  # ft.Column
+
+            logger.info(f"left_column.controls: {getattr(left_column, 'controls', None)}")
+            logger.info(f"right_column.controls: {getattr(right_column, 'controls', None)}")
+
+            left_repetition_rows = left_column.controls[1:-1]
+            right_repetition_rows = right_column.controls[1:-1]
+            logger.info(f"left_repetition_rows: {left_repetition_rows}, right_repetition_rows: {right_repetition_rows}")
+
+            def extract_repetitions(repetition_rows):
+                reps = []
+                logger.info(f"extract_repetitions: repetition_rows = {repetition_rows}")
+                for idx, row in enumerate(repetition_rows):
+                    logger.info(f"extract_repetitions: row[{idx}] = {row}, type={type(row)}")
+                    if isinstance(row, ft.Row) and len(row.controls) > 0:
+                        dropdown = row.controls[0]
+                        logger.info(f"extract_repetitions: row[{idx}].dropdown = {dropdown}, value={getattr(dropdown, 'value', None)}")
+                        if hasattr(dropdown, "value") and dropdown.value:
+                            reps.append(dropdown.value)
+                logger.info(f"Extracted repetitions: {reps}")
+                return reps
+
+            left_repetitions = extract_repetitions(left_repetition_rows)
+            right_repetitions = extract_repetitions(right_repetition_rows)
+            logger.info(f"left_repetitions: {left_repetitions}, right_repetitions: {right_repetitions}")
+
+            if left_group and right_group and left_repetitions and right_repetitions:
+                contrasts_data.append({
+                    "group_1": left_group,
+                    "group_2": right_group,
+                    "repetitions_1": left_repetitions,
+                    "repetitions_2": right_repetitions,
+                })
+            else:
+                logger.info(f"Contrast not added: left_group={left_group}, right_group={right_group}, left_repetitions={left_repetitions}, right_repetitions={right_repetitions}")
 
         logger.info(f"Prepared contrasts data: {contrasts_data}")
 
@@ -459,6 +538,9 @@ async def show_contrasts_modal(page, token, user_id):
                     )
                     if response.status_code == 200:
                         logger.info("Data successfully sent to backend.")
+                        # Corrigido: evitar f-string aninhada com colchetes
+                        contrast_names = ' x '.join([f"{c['group_1']} x {c['group_2']}" for c in contrasts_data])
+                        await log_message(page, f"Contraste {contrast_names} salvo com sucesso.")
                     else:
                         logger.error(f"Failed to send data to backend: {response.status_code} - {response.text}")
             except Exception as ex:
@@ -486,7 +568,7 @@ async def show_contrasts_modal(page, token, user_id):
                 ],
                 spacing=20,
             ),
-            width=600,
+            width=700,
             height=500,  # Set height to enable scrolling
         ),
         actions=[

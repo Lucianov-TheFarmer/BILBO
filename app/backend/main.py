@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import flet as ft
 import logging
 from .utils import manager
-from .database import engine
-from .models import Base
+from .db.database import engine
+from .db.models import Base
 from .routes import auth, samples, quality_analysis, trimmagem, quality_analysis_post_trim, alignment, quantification, contrasts
 
 logging.basicConfig(level=logging.INFO)

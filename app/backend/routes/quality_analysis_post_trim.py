@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from ..database import get_db
-from ..models import SampleStage, User
+from ..db.database import get_db
+from ..db.models import SampleStage, User
 from ..utils import get_current_user, manager
 import subprocess
 import os
 import logging
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,7 +44,6 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
             continue
 
         new_sample_stage = SampleStage(
-            sample_id=db_sample_stage.sample_id,
             stage_id=4,
             name=f"{basename}_post_trim.html",
             sra_code=db_sample_stage.sra_code,
@@ -62,6 +62,12 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
 
         new_sample_stage.status = "Completed"
         db.commit()
+
+        # Enviar mensagem de conclusão via WebSocket
+        try:
+            asyncio.run(manager.broadcast(f"Análise de qualidade pós-trimmagem concluída para {name}"))
+        except Exception as e:
+            logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
 
     return {"message": "Quality analysis post-trimmagem started successfully"}
 

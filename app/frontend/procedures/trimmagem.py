@@ -493,7 +493,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
                     if response.status_code == 200:
                         logger.info("Trimmagem concluída com sucesso!")
-                        await log_message(page, "Trimmagem concluída com sucesso!")
+                        # await log_message(page, "Trimmagem concluída com sucesso!")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Atualiza corretamente
                         await update_trimmagem_table(page, token)  # Corrigido para evitar erro de callable
                         page.update()
@@ -627,7 +627,7 @@ async def processar_trimmagem(page, token, selected_samples, container_menu_dire
             )
             if response.status_code == 200:
                 logger.info("Trimmagem concluída com sucesso!")
-                await log_message(page, "Trimmagem concluída com sucesso!")
+                # await log_message(page, "Trimmagem concluída com sucesso!")
 
                 # Atualizar tabelas após o processamento
                 await update_trimmagem_table(page, token)
