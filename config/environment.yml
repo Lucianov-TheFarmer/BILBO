@@ -18,3 +18,7 @@ dependencies:
   - bedtools=2.31.1
   - stringtie=2.2.3
   - ncbi-datasets-cli=18.0.2
+  - r-base=4.4.0
+  - r-httr
+  - r-data.table
+  - r-tidyverse
