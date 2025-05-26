@@ -538,9 +538,15 @@ async def show_contrasts_modal(page, token, user_id):
                     )
                     if response.status_code == 200:
                         logger.info("Data successfully sent to backend.")
-                        # Corrigido: evitar f-string aninhada com colchetes
-                        contrast_names = ' x '.join([f"{c['group_1']} x {c['group_2']}" for c in contrasts_data])
-                        await log_message(page, f"Contraste {contrast_names} salvo com sucesso.")
+                        # Formatação aprimorada da mensagem de múltiplos contrastes
+                        contrast_names_list = [f"{c['group_1']} x {c['group_2']}" for c in contrasts_data]
+                        if len(contrast_names_list) == 1:
+                            msg = f"Contraste {contrast_names_list[0]} salvo com sucesso."
+                        else:
+                            msg = "Contrastes "
+                            msg += ", ".join(contrast_names_list[:-1])
+                            msg += f" e {contrast_names_list[-1]} salvo com sucesso."
+                        await log_message(page, msg)
                     else:
                         logger.error(f"Failed to send data to backend: {response.status_code} - {response.text}")
             except Exception as ex:
@@ -556,6 +562,7 @@ async def show_contrasts_modal(page, token, user_id):
         content=ft.Container(
             content=ft.ListView(
                 controls=[
+                    ft.Container(height=3),
                     contrast_rows,
                     ft.Container(
                         content=ft.TextButton(
@@ -565,7 +572,7 @@ async def show_contrasts_modal(page, token, user_id):
                         ),
                         alignment=ft.alignment.center,
                     ),
-                ],
+                ],                
                 spacing=20,
             ),
             width=700,

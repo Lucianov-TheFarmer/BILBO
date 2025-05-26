@@ -84,12 +84,12 @@ def main():
                 return
 
     try:
-        logger.info("\nBuilding Docker containers...\n")
-        build_rc = run_command_dynamic_output("docker-compose build")
-        if build_rc != 0:
-            logger.error("Docker build failed.")
-            stop_containers()
-            sys.exit(1)
+        # logger.info("\nBuilding Docker containers...\n")
+        # build_rc = run_command_dynamic_output("docker-compose build")
+        # if build_rc != 0:
+        #     logger.error("Docker build failed.")
+        #     stop_containers()
+        #     sys.exit(1)
 
         logger.info("Starting Docker containers...")
         up_process = run_command("docker-compose up -d")

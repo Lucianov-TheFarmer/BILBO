@@ -74,7 +74,7 @@ async def start_preprocess(
         f.write("\n".join(lines))
 
     # Execute o script R em background
-    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess_counter.R"))
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R"))
     try:
         subprocess.Popen(["Rscript", script_path])
     except Exception as e:
