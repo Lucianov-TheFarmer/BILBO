@@ -48,10 +48,12 @@ RUN apt-get -y install tmux htop
 
 RUN pip3 install RSeQC==5.0.4
 
-# Instalação dos pacotes R: BiocManager, edgeR e ggplot2 (após o ambiente conda estar pronto)
+# Instalação dos pacotes R: BiocManager, edgeR, ggplot2, pheatmap e gplots (após o ambiente conda estar pronto)
 RUN Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
     Rscript -e "BiocManager::install('edgeR', ask=FALSE, update=FALSE)" && \
-    Rscript -e "install.packages('ggplot2', repos='https://cloud.r-project.org')"
+    Rscript -e "install.packages('ggplot2', repos='https://cloud.r-project.org')" && \
+    Rscript -e "install.packages('pheatmap', repos='https://cloud.r-project.org')" && \
+    Rscript -e "install.packages('gplots', repos='https://cloud.r-project.org')"
 
 # Copie os scripts para o contêiner
 COPY app /app

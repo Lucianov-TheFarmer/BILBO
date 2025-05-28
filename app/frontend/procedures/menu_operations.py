@@ -5,8 +5,8 @@ from .trimmagem import show_trimmagem_modal
 from .quality_analysis_post_trim import show_quality_analysis_post_trim_modal
 from .alignment import show_alignment_modal, show_genomes_modal
 from .quantification import show_quantification_modal
-from .contrasts import show_contrasts_modal  # Import the new modal function
-from .preprocess import show_preprocess_modal  # <-- ADICIONE ESTA LINHA
+from .contrasts import show_contrasts_modal
+from .preprocess import show_preprocess_modal, show_exploratory_dropdown
 import asyncio
 
 def menubar_clicar_item(e):
@@ -108,7 +108,11 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                     ),
                     create_menu_item(
                         "Pré-processamento",
-                        on_click=lambda e: asyncio.run(show_preprocess_modal(page, token, user_id))  # <-- ALTERE ESTA LINHA
+                        on_click=lambda e: asyncio.run(show_preprocess_modal(page, token, user_id))
+                    ),
+                    create_menu_item(
+                        "Análise exploratória",
+                        on_click=lambda e: asyncio.run(show_exploratory_dropdown(page, user_id))
                     ),
                     create_menu_item("Obter genes diferencialmente expressos"),
                 ],

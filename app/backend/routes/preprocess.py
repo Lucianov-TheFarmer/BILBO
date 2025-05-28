@@ -59,12 +59,12 @@ async def start_preprocess(
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                lines.append(f"./quantification/{filename}\t{group_1}\t{group_1}")
+                lines.append(f"../quantification/{filename}\t{group_1}\t{group_1}")
         for sra in reps_2:
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                lines.append(f"./quantification/{filename}\t{group_2}\t{group_2}")
+                lines.append(f"../quantification/{filename}\t{group_2}\t{group_2}")
 
     # Caminho correto: users/{user_id}/preprocess/Targets.txt (users está no mesmo nível de app)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
@@ -73,10 +73,10 @@ async def start_preprocess(
     with open(targets_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
-    # Execute o script R em background
+    # Execute o script R em background, passando user_id como argumento
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R"))
     try:
-        subprocess.Popen(["Rscript", script_path])
+        subprocess.Popen(["Rscript", script_path, str(user_id)])
     except Exception as e:
         # Logue o erro, mas não interrompa a resposta
         print(f"Erro ao executar o script R: {e}")
