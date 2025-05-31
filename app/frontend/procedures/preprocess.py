@@ -87,14 +87,20 @@ async def show_preprocess_modal(page, token, user_id):
     dlg_modal = ft.AlertDialog(
         title=ft.Text("Pré-processamento"),
         content=ft.Container(
-            content=ft.DataTable(
-                columns=[
-                    ft.DataColumn(ft.Text("Contraste")),
-                    ft.DataColumn(select_all_checkbox),
+            content=ft.Column(
+                controls=[
+                    ft.DataTable(
+                        columns=[
+                            ft.DataColumn(ft.Text("Contraste")),
+                            ft.DataColumn(select_all_checkbox),
+                        ],
+                        rows=data_rows,
+                        heading_row_height=40,
+                        column_spacing=20,
+                    )
                 ],
-                rows=data_rows,
-                heading_row_height=40,
-                column_spacing=20,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
             ),
             width=400,
             height=400,

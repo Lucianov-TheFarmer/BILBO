@@ -43,7 +43,9 @@ async def start_preprocess(
     ).all()
     sra_to_filename = {s.sra_code: s.name for s in quant_samples}
 
+    # Evitar duplicação de linhas no Targets.txt (mesmo arquivo, grupo e descrição)
     lines = ["files\tgroup\tdescription"]
+    seen = set()
     for contrast in contrasts:
         # Exemplo de nome: Sun_C1(A1;A2;A3;A4)*Shade_C1(A5;A6;A7;A8)
         try:
@@ -59,12 +61,18 @@ async def start_preprocess(
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                lines.append(f"../quantification/{filename}\t{group_1}\t{group_1}")
+                line_tuple = (filename, group_1, group_1)
+                if line_tuple not in seen:
+                    lines.append(f"../quantification/{filename}\t{group_1}\t{group_1}")
+                    seen.add(line_tuple)
         for sra in reps_2:
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                lines.append(f"../quantification/{filename}\t{group_2}\t{group_2}")
+                line_tuple = (filename, group_2, group_2)
+                if line_tuple not in seen:
+                    lines.append(f"../quantification/{filename}\t{group_2}\t{group_2}")
+                    seen.add(line_tuple)
 
     # Caminho correto: users/{user_id}/preprocess/Targets.txt (users está no mesmo nível de app)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))

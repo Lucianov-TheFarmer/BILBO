@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Track the WebSocket connection
-websocket_connection = None
 first_check_done = False
 
 tabela_amostras = create_table(
@@ -44,6 +43,14 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
                     samples = response.json()
                     for sample in samples:
                         logger.info(f"Amostra {sample['sra_code']} adicionada com sucesso!")
+                elif response.status_code == 400:
+                    # Mensagem de erro para SRA inválido
+                    try:
+                        detail = response.json().get("detail", "")
+                    except Exception:
+                        detail = response.text
+                    logger.error(f"Erro ao adicionar amostras: {detail}")
+                    await log_message(page, f"Erro ao adicionar amostras: {detail}")
                 else:
                     logger.error(f"Erro ao adicionar amostras: {response.status_code} - {response.text}")
         except Exception as e:
@@ -94,12 +101,14 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
                     if response.status_code == 200:
                         logger.info(f"Amostra {sra_code} excluída com sucesso!")
                         await log_message(page, f"Amostra {sra_code} excluída com sucesso!")
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                        page.update()
                     else:
                         logger.error(f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
                         await log_message(page, f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
-
-            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-            page.update()
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                        page.update()
+            
         except Exception as e:
             logger.error(f"Erro ao excluir amostras: {e}", exc_info=True)
 
@@ -207,7 +216,6 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
             logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
 
 async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostras_local):
-    global websocket_connection
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
@@ -226,17 +234,16 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
-                        if websocket_connection is None:
-                            websocket_connection = await websockets.connect("ws://bioinfo-container:8000/ws")
-                        
-                        while True:
-                            message = await websocket_connection.recv()
-                            await log_message(page, message)
-                            if "Download da amostra" in message and "completed" in message:
-                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)  # Passe container_menu_direita
-                                break
-                            else:
-                                logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
+                        # Use uma nova conexão WebSocket para cada download
+                        async with websockets.connect("ws://bioinfo-container:8000/ws") as ws:
+                            while True:
+                                message = await ws.recv()
+                                await log_message(page, message)
+                                if "Download da amostra" in message and "concluído" in message:
+                                    await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
+                                    break
+                                else:
+                                    logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()

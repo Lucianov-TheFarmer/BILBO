@@ -36,6 +36,10 @@ def update_sample_status(db: Session, sra_code: str, status: str):
 def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     created_samples = []
     for sra_code in request.sra_codes:
+        # Validação básica do código SRA (exemplo: SRR, ERR, DRR seguido de números)
+        if not isinstance(sra_code, str) or not sra_code or not sra_code.upper().startswith(("SRR", "ERR", "DRR")) or not sra_code[3:].isdigit():
+            raise HTTPException(status_code=400, detail=f"Código SRA inválido: {sra_code}")
+
         # Check if the sample already exists
         existing_sample_stage = db.query(SampleStage).filter(
             SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
@@ -43,11 +47,10 @@ def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), 
         if existing_sample_stage:
             continue  # Skip existing samples
 
-
         # Create a new sample stage for stage_id 1
         db_sample_stage = SampleStage(
             stage_id=1,
-            name=f"{sra_code}.fastq",
+            name=f"{sra_code}",
             sra_code=sra_code,
             size=request.size,
             status="Pending",
@@ -77,8 +80,8 @@ def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), cu
 
 @router.delete("/samples/{sra_code}")
 def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Remover o sufixo do nome do arquivo, se existir (_1.fastq ou _2.fastq)
-    sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "")
+    # Remover o sufixo do nome do arquivo, se existir (.fastq, _1.fastq ou _2.fastq)
+    sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "").replace(".fastq", "")
 
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code_basename,  # Usar apenas o basename
@@ -91,6 +94,9 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
 
     user_id = current_user.id
 
+    db.delete(db_sample_stage)
+    db.commit()
+
     # Verificar e excluir arquivos em subdiretórios
     for suffix in ["_1.fastq", "_2.fastq"]:
         file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
@@ -100,12 +106,11 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
                 logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
             except Exception as e:
                 logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
-                raise HTTPException(status_code=500, detail=f"Erro ao excluir arquivo {file_path} do sistema de arquivos.")
+                # Não levanta HTTPException aqui, apenas loga o erro
         else:
             logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
+            # Não levanta HTTPException, apenas loga o aviso
 
-    db.delete(db_sample_stage)
-    db.commit()
     return {"message": "Sample and associated files deleted successfully"}
 
 @router.get("/samples/status/{sra_code}")
@@ -117,28 +122,38 @@ def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user
 
 @router.post("/samples/download")
 def download_pending_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    logger.info("Iniciando download_pending_samples endpoint")
     pending_sample = db.query(SampleStage).filter(SampleStage.status == "Pending", SampleStage.stage_id == 1).first()
     if not pending_sample:
+        logger.warning("Nenhuma amostra pendente encontrada para download")
         raise HTTPException(status_code=404, detail="No pending samples found")
 
     sra_code = pending_sample.sra_code
     user_id = current_user.id
+    logger.info(f"Marcando amostra {sra_code} como 'In Progress' para o usuário {user_id}")
     pending_sample.status = "In Progress"
     db.commit()
 
     command = f"bash /app/backend/scripts/download_script.sh {sra_code} {user_id}"
+    logger.info(f"Executando comando: {command}")
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
     def update_status():
         try:
-            process.wait()
+            logger.info(f"Aguardando término do processo de download para {sra_code}")
+            stdout, _ = process.communicate()
+            logger.info(f"Saída do script de download para {sra_code}:\n{stdout}")
             db_sample = db.query(SampleStage).filter(SampleStage.sra_code == sra_code).first()
             if process.returncode == 0:
+                logger.info(f"Download da amostra {sra_code} concluído com sucesso. Atualizando status para 'Completed'.")
                 db_sample.status = "Completed"
                 db.commit()
                 asyncio.run(manager.broadcast(f"Download da amostra {sra_code} concluído."))
                 return
+            else:
+                logger.error(f"Download da amostra {sra_code} falhou com código {process.returncode}")
         except Exception as e:
+            logger.error(f"Erro ao atualizar status da amostra {sra_code}: {e}")
             db_sample.status = "Failed"
             db.commit()
         finally:
@@ -157,42 +172,49 @@ async def update_sample_status_endpoint(sra_code: str = Form(...), status: str =
         db_sample_stage.name = f"{sra_code}.fastq"
         db.commit()
 
-    await manager.broadcast(f"Download da amostra {sra_code} {status.lower()}.")
+    # await manager.broadcast(f"Download da amostra {sra_code} {status.lower()}.")
     return {"message": f"Sample {sra_code} status updated to {status}"}
 
 @router.post("/samples/calculate_size")
 async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    logger.info(f"Iniciando cálculo de tamanho para {sra_code}")
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
     ).first()
     if db_sample_stage is None or db_sample_stage.status != "Completed":
+        logger.warning(f"Amostra {sra_code} não encontrada ou não está 'Completed'")
         raise HTTPException(status_code=404, detail="Sample not found or not completed")
 
     user_id = current_user.id
 
     command = f"python3 /app/backend/scripts/calculate_size.py {sra_code} {user_id}"
+    logger.info(f"Executando comando para calcular tamanho: {command}")
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout, stderr = process.communicate()
 
+    logger.info(f"Saída do cálculo de tamanho para {sra_code}: {stdout}")
+    if stderr:
+        logger.error(f"Erro do cálculo de tamanho para {sra_code}: {stderr}")
+
     if process.returncode != 0:
-        print(f"Error calculating size: {stderr}", file=sys.stderr)
+        logger.error(f"Erro ao calcular tamanho: {stderr}")
         raise HTTPException(status_code=500, detail="Error calculating size")
 
     sizes = stdout.strip().split(',')
     if len(sizes) != 2:
-        print(f"Invalid size format returned by script: {stdout}", file=sys.stderr)
+        logger.error(f"Formato de tamanho inválido retornado pelo script: {stdout}")
         raise HTTPException(status_code=500, detail="Invalid size format returned by script")
 
     size_1, size_2 = sizes
 
     # Extrair o basename do sra_code
     sra_code_basename = sra_code.split("_")[0]
+    logger.info(f"Atualizando registros para {sra_code_basename}_1.fastq e {sra_code_basename}_2.fastq")
 
-    # Atualizar os registros para _1.fastq e _2.fastq com o sra_code correto
     db_sample_stage_1 = SampleStage(
         stage_id=1,
         name=f"{sra_code_basename}_1.fastq",
-        sra_code=sra_code_basename,  # Usar apenas o basename
+        sra_code=sra_code_basename,
         size=size_1,
         status="Completed",
         user_id=current_user.id,
@@ -200,7 +222,7 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
     db_sample_stage_2 = SampleStage(
         stage_id=1,
         name=f"{sra_code_basename}_2.fastq",
-        sra_code=sra_code_basename,  # Usar apenas o basename
+        sra_code=sra_code_basename,
         size=size_2,
         status="Completed",
         user_id=current_user.id,
@@ -210,7 +232,8 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
     db.delete(db_sample_stage)
     db.commit()
 
-    await manager.broadcast(f"Tamanho das amostras {sra_code_basename} atualizado.")
+    logger.info(f"Tamanhos das amostras {sra_code_basename} atualizados com sucesso.")
+    # await manager.broadcast(f"Tamanho das amostras {sra_code_basename} atualizado.")
     return {"message": "Sample sizes updated successfully"}
 
 @router.get("/samples/pending_count")
