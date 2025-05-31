@@ -43,9 +43,56 @@ async def start_preprocess(
     ).all()
     sra_to_filename = {s.sra_code: s.name for s in quant_samples}
 
+    # --- VERIFICAÇÃO DE REPETIÇÕES DUPLICADAS ENTRE GRUPOS ---
+    file_to_group = {}
+    for contrast in contrasts:
+        try:
+            left, right = contrast.name.split("*")
+            group_1 = left.split("(")[0].strip()
+            group_2 = right.split("(")[0].strip()
+            reps_1 = left[left.find("(")+1:left.find(")")].split(";") if "(" in left and ")" in left else []
+            reps_2 = right[right.find("(")+1:right.find(")")].split(";") if "(" in right and ")" in right else []
+        except Exception:
+            continue
+
+        files_1 = set()
+        for sra in reps_1:
+            sra = sra.strip()
+            filename = sra_to_filename.get(sra)
+            if filename:
+                files_1.add(filename)
+        files_2 = set()
+        for sra in reps_2:
+            sra = sra.strip()
+            filename = sra_to_filename.get(sra)
+            if filename:
+                files_2.add(filename)
+
+        # Verifica se há interseção entre arquivos dos grupos no mesmo contraste
+        if files_1 & files_2:
+            raise HTTPException(
+                status_code=400,
+                detail="Repetições incompatíveis: uma mesma amostra foi selecionada para mais de um grupo em um contraste."
+            )
+
+        # Verifica se algum arquivo já foi usado em outro grupo em outros contrastes
+        for f in files_1:
+            if f in file_to_group and file_to_group[f] != group_1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Repetições incompatíveis: uma mesma amostra foi selecionada para grupos diferentes em diferentes contrastes."
+                )
+            file_to_group[f] = group_1
+        for f in files_2:
+            if f in file_to_group and file_to_group[f] != group_2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Repetições incompatíveis: uma mesma amostra foi selecionada para grupos diferentes em diferentes contrastes."
+                )
+            file_to_group[f] = group_2
+
     # Evitar duplicação de linhas no Targets.txt (mesmo arquivo, grupo e descrição)
     lines = ["files\tgroup\tdescription"]
-    seen = set()
     for contrast in contrasts:
         # Exemplo de nome: Sun_C1(A1;A2;A3;A4)*Shade_C1(A5;A6;A7;A8)
         try:
@@ -61,18 +108,15 @@ async def start_preprocess(
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                line_tuple = (filename, group_1, group_1)
-                if line_tuple not in seen:
-                    lines.append(f"../quantification/{filename}\t{group_1}\t{group_1}")
-                    seen.add(line_tuple)
+                lines.append(f"../quantification/{filename}\t{group_1}\t{group_1}")
         for sra in reps_2:
             sra = sra.strip()
             filename = sra_to_filename.get(sra)
             if filename:
-                line_tuple = (filename, group_2, group_2)
-                if line_tuple not in seen:
-                    lines.append(f"../quantification/{filename}\t{group_2}\t{group_2}")
-                    seen.add(line_tuple)
+                lines.append(f"../quantification/{filename}\t{group_2}\t{group_2}")
+
+    # Deduplicação final robusta (preserva ordem)
+    lines = list(dict.fromkeys(lines))
 
     # Caminho correto: users/{user_id}/preprocess/Targets.txt (users está no mesmo nível de app)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
