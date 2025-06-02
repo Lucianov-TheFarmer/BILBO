@@ -7,6 +7,7 @@ from .alignment import show_alignment_modal, show_genomes_modal
 from .quantification import show_quantification_modal
 from .contrasts import show_contrasts_modal
 from .preprocess import show_preprocess_modal, show_exploratory_dropdown
+from .deg import run_deg_analysis
 import asyncio
 
 def menubar_clicar_item(e):
@@ -114,7 +115,10 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                         "Análise exploratória",
                         on_click=lambda e: asyncio.run(show_exploratory_dropdown(page, user_id))
                     ),
-                    create_menu_item("Obter genes diferencialmente expressos"),
+                    create_menu_item(
+                        "DEG",
+                        on_click=lambda e: asyncio.run(run_deg_analysis(page, token, user_id))
+                    ),
                 ],
             ),
             ft.SubmenuButton(

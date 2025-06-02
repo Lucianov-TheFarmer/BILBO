@@ -5,7 +5,7 @@ import logging
 from .utils import manager
 from .db.database import engine
 from .db.models import Base
-from .routes import auth, samples, quality_analysis, trimmagem, quality_analysis_post_trim, alignment, quantification, contrasts, preprocess
+from .routes import auth, samples, quality_analysis, trimmagem, quality_analysis_post_trim, alignment, quantification, contrasts, preprocess, deg
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ app.include_router(alignment.router, tags=["alignment"])
 app.include_router(quantification.router, tags=["quantification"])
 app.include_router(contrasts.router, tags=["contrasts"])
 app.include_router(preprocess.router, tags=["preprocess"])  # <-- ADICIONE ESTA LINHA
+app.include_router(deg.router, tags=["deg"])
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

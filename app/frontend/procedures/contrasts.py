@@ -244,7 +244,12 @@ async def show_contrasts_modal(page, token, user_id):
         """Adds a new contrast row with editable fields and repetition buttons."""
         logger.info("Adding a new contrast row.")
         # Coluna esquerda: Grupo 1
-        left_field = ft.TextField(label="Grupo 1", width=200, text_align=ft.TextAlign.CENTER)
+        left_field = ft.TextField(
+            label="Grupo 1",
+            width=200,
+            text_align=ft.TextAlign.CENTER,
+            max_length=10  # Limita a 10 caracteres
+        )
         left_repetition_column = ft.Column(spacing=5)
         left_buttons_row = ft.Row(
             controls=[
@@ -276,7 +281,12 @@ async def show_contrasts_modal(page, token, user_id):
         )
 
         # Coluna direita: Grupo 2
-        right_field = ft.TextField(label="Grupo 2", width=200, text_align=ft.TextAlign.CENTER)
+        right_field = ft.TextField(
+            label="Grupo 2",
+            width=200,
+            text_align=ft.TextAlign.CENTER,
+            max_length=10  # Limita a 10 caracteres
+        )
         right_repetition_column = ft.Column(spacing=5)
         right_buttons_row = ft.Row(
             controls=[
