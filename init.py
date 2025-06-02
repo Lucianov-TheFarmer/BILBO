@@ -75,6 +75,20 @@ def fetch_ngrok_url():
         logger.error(f"Failed to fetch ngrok URL: {e}")
     return None
 
+def wait_for_backend_ready(url="http://localhost:8000/docs", timeout=60):
+    logger.info("\nStarting FastAPI...")
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            r = requests.get(url)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    logger.error("Timeout esperando o backend FastAPI.")
+    return False
+
 def main():
     if not is_docker_running():
         if not is_docker_desktop_running():
@@ -94,6 +108,9 @@ def main():
         logger.info("Starting Docker containers...")
         up_process = run_command("docker-compose up -d")
         up_process.wait()
+
+        # Aguarda o backend estar pronto antes de buscar o ngrok
+        wait_for_backend_ready()
 
         logger.info("\nFetching ngrok URL...")
         time.sleep(5)  # Wait for ngrok to initialize
