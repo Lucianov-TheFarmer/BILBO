@@ -104,13 +104,15 @@ async def run_deg_analysis(page, token, user_id):
                         rows=data_rows,
                         heading_row_height=40,
                         column_spacing=20,
+                        expand=True,  # expandir horizontalmente
                     )
                 ],
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             ),
-            width=400,
+            # width=400,
             height=400,
+            expand=True,  # expandir o container para ocupar todo o modal
         ),
         actions=[
             ft.TextButton(
@@ -125,3 +127,61 @@ async def run_deg_analysis(page, token, user_id):
     )
 
     page.open(dlg_modal_deg)
+
+async def show_deg_results(page, token, user_id, container_amostras):
+    await log_message(page, "Buscando abas do DEG.xlsx...")
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    params = {"user_id": user_id}
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get("http://localhost:8000/deg/sheets", headers=headers, params=params)
+            if response.status_code == 200:
+                sheets = response.json().get("sheets", [])
+                if not sheets:
+                    await log_message(page, "Nenhuma aba encontrada em DEG.xlsx.")
+                else:
+                    # Cria tabela com header em negrito e duas colunas extras para ícones
+                    table = ft.DataTable(
+                        columns=[
+                            ft.DataColumn(
+                                ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD),
+                                # Aumenta o tamanho da primeira coluna
+                            ),
+                            ft.DataColumn(ft.Text(" ")),
+                            ft.DataColumn(ft.Text(" ")),
+                        ],
+                        rows=[
+                            ft.DataRow(
+                                cells=[
+                                    ft.DataCell(
+                                        ft.Container(
+                                            content=ft.Text(sheet, text_align=ft.TextAlign.CENTER),
+                                            width=270,
+                                            alignment=ft.alignment.center_left
+                                        )
+                                    ),
+                                    ft.DataCell(
+                                        ft.IconButton(
+                                            icon=ft.icons.TABLE_CHART,
+                                            icon_color=ft.colors.GREEN,
+                                            tooltip="Abrir planilha",
+                                            on_click=lambda e, s=sheet: print(f"Clicou no ícone de planilha para {s}")
+                                        )
+                                    ),
+                                    ft.DataCell(
+                                        ft.IconButton(
+                                            icon=ft.icons.VISIBILITY,
+                                            tooltip="Visualizar",
+                                            on_click=lambda e, s=sheet: print(f"Clicou no ícone de visualização para {s}")
+                                        )
+                                    ),
+                                ]
+                            ) for sheet in sheets
+                        ],
+                    )
+                    container_amostras.content.controls = [table]
+                    page.update()
+            else:
+                await log_message(page, f"Erro ao buscar abas: {response.text}")
+    except Exception as ex:
+        await log_message(page, f"Erro ao buscar abas do DEG.xlsx: {ex}")

@@ -6,6 +6,7 @@ from ..utils import get_current_user
 import subprocess
 import logging
 import os
+import openpyxl  # Adicione esta importação
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -73,3 +74,23 @@ async def run_deg(
 
     logger.info("DEG.xlsx gerado com sucesso.")
     return {"message": "DEG.xlsx gerado com sucesso."}
+
+@router.get("/deg/sheets")
+async def get_deg_sheets(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user_id = request.query_params.get("user_id", current_user.id)
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
+    deg_xlsx = os.path.join(base_dir, "DEG.xlsx")
+    if not os.path.exists(deg_xlsx):
+        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    try:
+        wb = openpyxl.load_workbook(deg_xlsx, read_only=True)
+        sheet_names = wb.sheetnames
+        wb.close()
+        return {"sheets": sheet_names}
+    except Exception as e:
+        logger.error(f"Erro ao ler abas do DEG.xlsx: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")

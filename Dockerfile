@@ -46,7 +46,7 @@ RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.27.0 sqlalchemy==2.0.3
 
 RUN apt-get -y install tmux htop
 
-RUN pip3 install RSeQC==5.0.4
+RUN pip3 install RSeQC==5.0.4 openpyxl==3.1.3 pandas==2.2.3
 
 # Instalação dos pacotes R: BiocManager, edgeR, ggplot2, pheatmap e gplots (após o ambiente conda estar pronto)
 RUN Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
@@ -58,11 +58,7 @@ RUN Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('B
 # Copie os scripts para o contêiner
 COPY app /app
 
-# Copy the download script to the container
-# COPY app/backend/scripts/download_script.sh /app/backend/scripts/download_script.sh
-# RUN chmod +x /app/backend/scripts/download_script.sh
-
-ENV PATH /opt/conda/envs/bioinfo/bin:/app/backend/scripts:$PATH
+ENV PATH=/opt/conda/envs/bioinfo/bin:/app/backend/scripts:$PATH
 
 # Exponha a porta que será usada pelo backend (se for necessário)
 EXPOSE 8000

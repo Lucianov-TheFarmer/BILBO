@@ -7,7 +7,7 @@ from .alignment import show_alignment_modal, show_genomes_modal
 from .quantification import show_quantification_modal
 from .contrasts import show_contrasts_modal
 from .preprocess import show_preprocess_modal, show_exploratory_dropdown
-from .deg import run_deg_analysis
+from .deg import run_deg_analysis, show_deg_results
 import asyncio
 
 def menubar_clicar_item(e):
@@ -116,9 +116,15 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                         on_click=lambda e: asyncio.run(show_exploratory_dropdown(page, user_id))
                     ),
                     create_menu_item(
-                        "DEG",
+                        "Iniciar DEG",
                         on_click=lambda e: asyncio.run(run_deg_analysis(page, token, user_id))
                     ),
+                    create_menu_item(
+                        "Ver resultados de DEG",
+                        on_click=lambda e: asyncio.run(
+                            show_deg_results(page, token, user_id, page.controls[1].controls[0].controls[0])  # container_amostras
+                        )
+                    )
                 ],
             ),
             ft.SubmenuButton(
