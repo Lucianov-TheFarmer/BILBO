@@ -6,7 +6,9 @@ from ..utils import get_current_user
 import subprocess
 import logging
 import os
-import openpyxl  # Adicione esta importação
+import openpyxl
+import pandas as pd
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -94,3 +96,55 @@ async def get_deg_sheets(
     except Exception as e:
         logger.error(f"Erro ao ler abas do DEG.xlsx: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")
+
+@router.get("/deg/sheet_data")
+async def get_deg_sheet_data(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user_id = request.query_params.get("user_id", current_user.id)
+    sheet_name = request.query_params.get("sheet")
+    logger.info(f"[DEG] Requisição para sheet_data: user_id={user_id}, sheet_name={sheet_name}")
+    
+    if not sheet_name:
+        raise HTTPException(status_code=400, detail="Sheet name is required.")
+    
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
+    deg_xlsx = os.path.join(base_dir, "DEG.xlsx")
+    logger.info(f"[DEG] Caminho do arquivo DEG.xlsx: {deg_xlsx}")
+    
+    if not os.path.exists(deg_xlsx):
+        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    
+    try:
+        # Usando pandas para ler o arquivo Excel
+        df = pd.read_excel(deg_xlsx, sheet_name=sheet_name)
+        
+        # Verificar se o DataFrame está vazio
+        if df.empty:
+            logger.info("[DEG] DataFrame vazio encontrado")
+            return {"columns": [], "rows": []}
+        
+        # Converter NaN para strings vazias
+        df = df.fillna("")
+        
+        # Obter colunas e linhas
+        columns = df.columns.tolist()
+        rows = df.values.tolist()
+        
+        logger.info(f"[DEG] Número de colunas: {len(columns)}")
+        logger.info(f"[DEG] Número de linhas: {len(rows)}")
+        
+        return JSONResponse(content={
+            "columns": columns,
+            "rows": rows
+        })
+        
+    except ValueError as e:
+        if "Worksheet named" in str(e):
+            raise HTTPException(status_code=404, detail=f"Aba '{sheet_name}' não encontrada no arquivo.")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"[DEG] Erro ao processar o arquivo Excel com pandas: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro ao processar o arquivo Excel: {e}")

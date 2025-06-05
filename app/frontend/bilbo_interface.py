@@ -186,8 +186,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
                 ft.DataTable(
                     heading_row_color=ft.colors.BLACK12,
                     columns=[
-                        ft.DataColumn(ft.Text("Procedimento")),
-                        ft.DataColumn(ft.Text("Quantidade")),
+                        ft.DataColumn(ft.Text("Procedimento", weight=ft.FontWeight.BOLD)),
+                        ft.DataColumn(ft.Text("Quantidade", weight=ft.FontWeight.BOLD)),
                     ],
                     rows=[
                         ft.DataRow(

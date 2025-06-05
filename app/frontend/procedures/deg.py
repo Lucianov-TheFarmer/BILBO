@@ -2,6 +2,7 @@ import flet as ft
 import httpx
 import asyncio
 import logging
+import pandas as pd
 from .utils import log_message
 
 logging.basicConfig(level=logging.INFO)
@@ -128,8 +129,274 @@ async def run_deg_analysis(page, token, user_id):
 
     page.open(dlg_modal_deg)
 
+async def fetch_sheet_data(token, user_id, sheet_name):
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    params = {"user_id": user_id, "sheet": sheet_name}
+    async with httpx.AsyncClient() as client:
+        response = await client.get("http://localhost:8000/deg/sheet_data", headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()  # {"columns": [...], "rows": [[...], ...]}
+
+async def show_sheet_as_table(page, token, user_id, sheet_name):
+    print(f"[LOG] show_sheet_as_table: sheet_name={sheet_name}")
+    try:
+        data = await fetch_sheet_data(token, user_id, sheet_name)
+        columns = data.get("columns", [])
+        rows = data.get("rows", [])
+        print(f"[LOG] Columns: {columns}")
+        print(f"[LOG] Number of rows: {len(rows)}")
+
+        if not columns or not rows:
+            await log_message(page, "Aba sem colunas ou dados.")
+            # Atualiza o container_pre_visualizacao com mensagem amigável
+            for control in page.controls:
+                if isinstance(control, ft.Row):
+                    for column in control.controls:
+                        if isinstance(column, ft.Column):
+                            for container in column.controls:
+                                if (
+                                    isinstance(container, ft.Container)
+                                    and container.expand == 2
+                                    and isinstance(container.content, ft.Column)
+                                ):
+                                    container.content.controls = [
+                                        ft.Container(
+                                            expand=True,
+                                            content=ft.Text(
+                                                "Nenhum dado disponível nesta aba.",
+                                                color=ft.colors.RED,
+                                                size=16,
+                                                weight=ft.FontWeight.BOLD,
+                                                text_align=ft.TextAlign.CENTER,
+                                            ),
+                                            alignment=ft.alignment.center,
+                                            padding=ft.padding.all(10),
+                                        )
+                                    ]
+                                    page.update()
+                                    return
+            return
+
+        columns = [" " if str(col).startswith("Unnamed") else str(col) for col in columns]
+        all_rows = rows.copy()
+        dt_ref = ft.Ref[ft.DataTable]()
+        search_ref = ft.Ref[ft.TextField]()
+        notfound_ref = ft.Ref[ft.Text]()
+
+        sort_state = {"logFC": 0}
+
+        def format_cell(cell, col_idx):
+            if col_idx == 0:
+                return ft.Text(
+                    str(cell),
+                    selectable=True,
+                    size=14,
+                    no_wrap=True,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    max_lines=1,
+                )
+            try:
+                val = float(cell)
+                return ft.Text(f"{val:.3f}", selectable=True, size=14)
+            except Exception:
+                return ft.Text(str(cell), selectable=True, size=14)
+
+        def filter_rows(e=None, sorted_rows=None):
+            search_value = search_ref.current.value.strip().lower()
+            dt = dt_ref.current
+            dt.rows.clear()
+            filtered = []
+            base_rows = sorted_rows if sorted_rows is not None else all_rows
+            if search_value:
+                filtered = [row for row in base_rows if search_value in str(row[0]).lower()]
+            else:
+                filtered = base_rows
+            if not filtered:
+                notfound_ref.current.visible = True
+            else:
+                notfound_ref.current.visible = False
+                for row in filtered:
+                    dt.rows.append(
+                        ft.DataRow(
+                            [ft.DataCell(format_cell(cell, col_idx)) for col_idx, cell in enumerate(row)]
+                        )
+                    )
+            page.update()
+
+        def sort_logfc(e=None):
+            idx_logfc = 1
+            current = sort_state["logFC"]
+            if current == 0:
+                sort_state["logFC"] = 1
+            elif current == 1:
+                sort_state["logFC"] = -1
+            else:
+                sort_state["logFC"] = 0
+
+            if sort_state["logFC"] == 0:
+                filter_rows()
+            else:
+                reverse = sort_state["logFC"] == -1
+                try:
+                    sorted_rows = sorted(
+                        all_rows,
+                        key=lambda row: float(row[idx_logfc]) if str(row[idx_logfc]).replace('.', '', 1).replace('-', '', 1).isdigit() else float('-inf'),
+                        reverse=reverse
+                    )
+                except Exception:
+                    sorted_rows = all_rows
+                filter_rows(sorted_rows=sorted_rows)
+            update_table()
+
+        # Search bar as header for first column, agora dentro de um container com largura fixa
+        search_bar = ft.Container(
+            width=150,
+            content=ft.TextField(
+                ref=search_ref,
+                label="Buscar gene",
+                tooltip="Digite o nome do gene",
+                value="",
+                on_change=filter_rows,
+                border=ft.InputBorder.OUTLINE,
+                dense=True,
+                filled=True,
+            )
+        )
+
+        # Header da coluna logFC com botão de ordenação e ícone dinâmico, tudo em um container
+        def logfc_header():
+            icon = ft.icons.UNFOLD_MORE
+            if sort_state["logFC"] == 1:
+                icon = ft.icons.ARROW_UPWARD
+            elif sort_state["logFC"] == -1:
+                icon = ft.icons.ARROW_DOWNWARD
+            return ft.Container(
+                content=ft.Row(
+                    spacing=2,
+                    controls=[
+                        ft.Text("logFC", weight=ft.FontWeight.BOLD, size=14),
+                        ft.IconButton(
+                            icon=icon,
+                            icon_size=16,
+                            tooltip="Ordenar logFC",
+                            on_click=sort_logfc,
+                            visual_density=ft.VisualDensity.COMPACT,
+                            style=ft.ButtonStyle(
+                                padding=0,
+                                bgcolor=ft.colors.TRANSPARENT,
+                                shape=ft.RoundedRectangleBorder(radius=4),
+                            ),
+                        ),
+                    ],
+                ),
+                alignment=ft.alignment.center_left,
+            )
+
+        def update_table():
+            table_columns = [
+                ft.DataColumn(search_bar)
+            ]
+            if len(columns) > 1:
+                table_columns.append(
+                    ft.DataColumn(
+                        logfc_header()
+                    )
+                )
+                table_columns += [
+                    ft.DataColumn(
+                        ft.Text(str(col), weight=ft.FontWeight.BOLD, size=14)
+                    ) for col in columns[2:]
+                ]
+            else:
+                table_columns += [
+                    ft.DataColumn(
+                        ft.Text(str(col), weight=ft.FontWeight.BOLD, size=14)
+                    ) for col in columns[1:]
+                ]
+
+            dt = dt_ref.current
+            dt.columns = table_columns
+            page.update()
+
+        # Inicialmente monta os headers
+        table_columns = [
+            ft.DataColumn(search_bar)
+        ]
+        if len(columns) > 1:
+            table_columns.append(
+                ft.DataColumn(
+                    logfc_header()
+                )
+            )
+            table_columns += [
+                ft.DataColumn(
+                    ft.Text(str(col), weight=ft.FontWeight.BOLD, size=14)
+                ) for col in columns[2:]
+            ]
+        else:
+            table_columns += [
+                ft.DataColumn(
+                    ft.Text(str(col), weight=ft.FontWeight.BOLD, size=14)
+                ) for col in columns[1:]
+            ]
+
+        excel_table = ft.DataTable(
+            ref=dt_ref,
+            columns=table_columns,
+            rows=[
+                ft.DataRow(
+                    [ft.DataCell(format_cell(cell, col_idx)) for col_idx, cell in enumerate(row)]
+                ) for row in rows
+            ],
+            column_spacing=8,
+            divider_thickness=1,
+            show_checkbox_column=False,
+            expand=True,
+            heading_row_color=ft.colors.BLACK12,
+        )
+
+        notfound_text = ft.Text(
+            "Nenhum gene encontrado.",
+            ref=notfound_ref,
+            visible=False,
+            color=ft.colors.RED,
+            size=16,
+            weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER,
+        )
+
+        # Atualiza o container_pre_visualizacao para preencher toda a área disponível e permitir rolagem vertical
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if (
+                                isinstance(container, ft.Container)
+                                and container.expand == 2
+                                and isinstance(container.content, ft.Column)
+                            ):
+                                print("[LOG] Atualizando container_pre_visualizacao com tabela Excel")
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.ListView(
+                                            controls=[excel_table, notfound_text],
+                                            spacing=0,
+                                            expand=True,
+                                            auto_scroll=False,
+                                            horizontal=False,
+                                        ),
+                                    )
+                                ]
+                                page.update()
+                                return
+        print("[LOG] container_pre_visualizacao não encontrado")
+    except Exception as ex:
+        print(f"[LOG] Erro ao exibir planilha: {ex}")
+        await log_message(page, f"Erro ao exibir planilha: {ex}")
+
 async def show_deg_results(page, token, user_id, container_amostras):
-    await log_message(page, "Buscando abas do DEG.xlsx...")
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     params = {"user_id": user_id}
     try:
@@ -140,16 +407,14 @@ async def show_deg_results(page, token, user_id, container_amostras):
                 if not sheets:
                     await log_message(page, "Nenhuma aba encontrada em DEG.xlsx.")
                 else:
-                    # Cria tabela com header em negrito e duas colunas extras para ícones
                     table = ft.DataTable(
                         columns=[
                             ft.DataColumn(
                                 ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD),
-                                # Aumenta o tamanho da primeira coluna
                             ),
-                            ft.DataColumn(ft.Text(" ")),
-                            ft.DataColumn(ft.Text(" ")),
+                            ft.DataColumn(ft.Text(""))
                         ],
+                        heading_row_color=ft.Colors.BLACK12,
                         rows=[
                             ft.DataRow(
                                 cells=[
@@ -161,18 +426,26 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                         )
                                     ),
                                     ft.DataCell(
-                                        ft.IconButton(
-                                            icon=ft.icons.TABLE_CHART,
-                                            icon_color=ft.colors.GREEN,
-                                            tooltip="Abrir planilha",
-                                            on_click=lambda e, s=sheet: print(f"Clicou no ícone de planilha para {s}")
-                                        )
-                                    ),
-                                    ft.DataCell(
-                                        ft.IconButton(
-                                            icon=ft.icons.VISIBILITY,
-                                            tooltip="Visualizar",
-                                            on_click=lambda e, s=sheet: print(f"Clicou no ícone de visualização para {s}")
+                                        ft.Container(
+                                            content=ft.Row(
+                                                controls=[
+                                                    ft.IconButton(
+                                                        icon=ft.icons.TABLE_CHART,
+                                                        icon_color=ft.colors.GREEN,
+                                                        tooltip="Abrir planilha",
+                                                        on_click=lambda e, s=sheet: asyncio.run(
+                                                            show_sheet_as_table(page, token, user_id, s)
+                                                        )
+                                                    ),
+                                                    ft.IconButton(
+                                                        icon=ft.icons.VISIBILITY,
+                                                        tooltip="Visualizar",
+                                                        on_click=lambda e, s=sheet: print(f"Clicou no ícone de visualização para {s}")
+                                                    ),
+                                                ],
+                                                spacing=5,
+                                            ),
+                                            alignment=ft.alignment.center_right,
                                         )
                                     ),
                                 ]
