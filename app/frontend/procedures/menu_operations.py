@@ -10,20 +10,6 @@ from .preprocess import show_preprocess_modal, show_exploratory_dropdown
 from .deg import run_deg_analysis, show_deg_results
 import asyncio
 
-def menubar_clicar_item(e):
-    print(f"{e.control.content.value}.on_click")
-    e.page.show_snack_bar(ft.SnackBar(content=ft.Text(f"{e.control.content.value} was clicked!")))
-    e.page.update()
-
-def menubar_abrir_item(e):
-    print(f"{e.control.content.value}.on_open")
-
-def menubar_fechar_item(e):
-    print(f"{e.control.content.value}.on_close")
-
-def menubar_passar_por_cima_item(e):
-    print(f"{e.control.content.value}.on_hover")
-
 def create_menu_item(label, close_on_click=True, style=None, on_click=None):
     """Helper function to create a menu item button."""
     return ft.MenuItemButton(
@@ -112,26 +98,33 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                         on_click=lambda e: asyncio.run(show_preprocess_modal(page, token, user_id))
                     ),
                     create_menu_item(
-                        "Análise exploratória",
-                        on_click=lambda e: asyncio.run(show_exploratory_dropdown(page, user_id))
-                    ),
-                    create_menu_item(
                         "Iniciar DEG",
                         on_click=lambda e: asyncio.run(run_deg_analysis(page, token, user_id))
+                    ),
+                ],
+            ),
+            ft.SubmenuButton(
+                content=ft.Text("Resultados"),
+                controls=[
+                    create_menu_item(
+                        "Análise exploratória",
+                        on_click=lambda e: asyncio.run(show_exploratory_dropdown(page, user_id))
                     ),
                     create_menu_item(
                         "Ver resultados de DEG",
                         on_click=lambda e: asyncio.run(
                             show_deg_results(page, token, user_id, page.controls[1].controls[0].controls[0])  # container_amostras
                         )
-                    )
-                ],
-            ),
-            ft.SubmenuButton(
-                content=ft.Text("Identificação"),
-                controls=[
-                    create_menu_item("Indentificar transcritos via GFF"),
-                    create_menu_item("Identificar transcritos via Blast"),
+                    ),
+                    create_menu_item(
+                        "Barplots",
+                    ),
+                    create_menu_item(
+                        "Diagrama de Venn",
+                    ),
+                    create_menu_item(
+                        "Heatmaps",
+                    ),                    
                 ],
             ),
             ft.SubmenuButton(

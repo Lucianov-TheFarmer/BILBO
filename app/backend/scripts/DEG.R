@@ -1,8 +1,9 @@
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) == 0) {
-  stop("O caminho do diretório preprocess deve ser passado como argumento para o script R.")
+if (length(args) < 2) {
+  stop("Os caminhos dos diretórios preprocess e DEG devem ser passados como argumentos para o script R.")
 }
 preprocess_dir <- args[1]
+deg_dir <- args[2]
 setwd(preprocess_dir)
 
 # Abrir arquivo de log para escrita
@@ -160,7 +161,8 @@ if (length(all_contrasts) > 0) {
   }
 }
 
-saveWorkbook(wb, "DEG.xlsx", overwrite=TRUE)
+# Salvar o arquivo DEG.xlsx no diretório DEG
+saveWorkbook(wb, file.path(deg_dir, "DEG.xlsx"), overwrite=TRUE)
 logmsg("Arquivo DEG.xlsx salvo com sucesso.")
 
 # Fechar o arquivo de log e restaurar saída padrão

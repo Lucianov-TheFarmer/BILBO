@@ -365,7 +365,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
             text_align=ft.TextAlign.CENTER,
         )
 
-        # Atualiza o container_pre_visualizacao para preencher toda a área disponível e permitir rolagem vertical
+        # Permite rolagem horizontal e vertical ao mesmo tempo
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:
@@ -378,15 +378,22 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                             ):
                                 print("[LOG] Atualizando container_pre_visualizacao com tabela Excel")
                                 container.content.controls = [
-                                    ft.Container(
+                                    ft.Column(
                                         expand=True,
-                                        content=ft.ListView(
-                                            controls=[excel_table, notfound_text],
-                                            spacing=0,
-                                            expand=True,
-                                            auto_scroll=False,
-                                            horizontal=False,
-                                        ),
+                                        scroll=ft.ScrollMode.ALWAYS,  # vertical scroll
+                                        controls=[
+                                            ft.Row(
+                                                expand=True,
+                                                scroll=ft.ScrollMode.ALWAYS,  # horizontal scroll
+                                                controls=[
+                                                    ft.Container(
+                                                        expand=True,
+                                                        content=excel_table,
+                                                    )
+                                                ]
+                                            ),
+                                            notfound_text
+                                        ]
                                     )
                                 ]
                                 page.update()
@@ -395,6 +402,42 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
     except Exception as ex:
         print(f"[LOG] Erro ao exibir planilha: {ex}")
         await log_message(page, f"Erro ao exibir planilha: {ex}")
+
+async def show_deg_dropdown(page):
+    # Remove qualquer dropdown ou gráfico anterior do container_pre_visualizacao
+    for control in page.controls:
+        if isinstance(control, ft.Row):
+            for column in control.controls:
+                if isinstance(column, ft.Column):
+                    for container in column.controls:
+                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                            dropdown = ft.Dropdown(
+                                options=[
+                                    ft.dropdown.Option("MA plot"),
+                                    ft.dropdown.Option("Volcano plot"),
+                                    ft.dropdown.Option("Frequência de termos ontológicos"),
+                                ],
+                                width=350,
+                                value="MA plot",
+                            )
+                            # Placeholder para gráfico
+                            img_placeholder = ft.Container(expand=True, alignment=ft.alignment.center)
+                            container.content.controls = [
+                                ft.Container(
+                                    expand=True,
+                                    content=ft.Column(
+                                        controls=[
+                                            ft.Container(height=10),
+                                            ft.Row([dropdown], alignment=ft.MainAxisAlignment.CENTER),
+                                            img_placeholder
+                                        ],
+                                        alignment=ft.MainAxisAlignment.CENTER,
+                                        spacing=0,
+                                    )
+                                )
+                            ]
+                            page.update()
+                            return
 
 async def show_deg_results(page, token, user_id, container_amostras):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -440,7 +483,9 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                                     ft.IconButton(
                                                         icon=ft.icons.VISIBILITY,
                                                         tooltip="Visualizar",
-                                                        on_click=lambda e, s=sheet: print(f"Clicou no ícone de visualização para {s}")
+                                                        on_click=lambda e, s=sheet: asyncio.run(
+                                                            show_deg_dropdown(page)
+                                                        )
                                                     ),
                                                 ],
                                                 spacing=5,

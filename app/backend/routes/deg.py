@@ -24,16 +24,18 @@ async def run_deg(
     contrast_ids = data.get("contrast_ids", [])
     logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids}")
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
+    preprocess_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
+    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+    os.makedirs(deg_dir, exist_ok=True)
     deg_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/DEG.R"))
 
     if not os.path.exists(deg_script):
         logger.error("Arquivo DEG.R não encontrado.")
         raise HTTPException(status_code=500, detail="Arquivo DEG.R não encontrado.")
 
-    if not os.path.exists(base_dir):
-        logger.error(f"Diretório preprocess não encontrado: {base_dir}")
-        raise HTTPException(status_code=500, detail=f"Diretório preprocess não encontrado: {base_dir}")
+    if not os.path.exists(preprocess_dir):
+        logger.error(f"Diretório preprocess não encontrado: {preprocess_dir}")
+        raise HTTPException(status_code=500, detail=f"Diretório preprocess não encontrado: {preprocess_dir}")
 
     # Buscar todos os contrastes do usuário e salvar contrasts_db.txt
     contrasts = db.query(SampleStage).filter(
@@ -41,21 +43,22 @@ async def run_deg(
         SampleStage.user_id == user_id,
         SampleStage.status == "Contrast"
     ).all()
-    contrasts_db_path = os.path.join(base_dir, "contrasts_db.txt")
+    contrasts_db_path = os.path.join(preprocess_dir, "contrasts_db.txt")
     with open(contrasts_db_path, "w", encoding="utf-8") as f:
         f.write("id\tname\n")
         for c in contrasts:
             f.write(f"{c.id}\t{c.name}\n")
 
     # Salvar os contrastes selecionados em um arquivo para o script R ler
-    selected_contrasts_path = os.path.join(base_dir, "selected_contrasts.txt")
+    selected_contrasts_path = os.path.join(preprocess_dir, "selected_contrasts.txt")
     with open(selected_contrasts_path, "w", encoding="utf-8") as f:
         for cid in contrast_ids:
             f.write(str(cid) + "\n")
 
     try:
+        # Passa ambos os diretórios para o script R: preprocess_dir e deg_dir
         process = subprocess.Popen(
-            ["Rscript", deg_script, base_dir],
+            ["Rscript", deg_script, preprocess_dir, deg_dir],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -70,7 +73,7 @@ async def run_deg(
         logger.error(f"Erro ao executar DEG.R: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao executar DEG.R: {e}")
 
-    deg_xlsx = os.path.join(base_dir, "DEG.xlsx")
+    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
     if not os.path.exists(deg_xlsx):
         raise HTTPException(status_code=500, detail="Arquivo DEG.xlsx não foi gerado.")
 
@@ -84,8 +87,8 @@ async def get_deg_sheets(
     current_user: User = Depends(get_current_user),
 ):
     user_id = request.query_params.get("user_id", current_user.id)
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
-    deg_xlsx = os.path.join(base_dir, "DEG.xlsx")
+    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
     if not os.path.exists(deg_xlsx):
         raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
     try:
@@ -110,8 +113,8 @@ async def get_deg_sheet_data(
     if not sheet_name:
         raise HTTPException(status_code=400, detail="Sheet name is required.")
     
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
-    deg_xlsx = os.path.join(base_dir, "DEG.xlsx")
+    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
     logger.info(f"[DEG] Caminho do arquivo DEG.xlsx: {deg_xlsx}")
     
     if not os.path.exists(deg_xlsx):
