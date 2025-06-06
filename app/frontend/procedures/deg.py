@@ -236,6 +236,8 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
         sort_state = {"logFC": 0}
 
         def format_cell(cell, col_idx):
+            # Limite de largura para todas as células (exceto coluna de busca)
+            max_width = 220
             if col_idx == 0:
                 return ft.Text(
                     str(cell),
@@ -249,7 +251,24 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                 val = float(cell)
                 return ft.Text(f"{val:.3f}", selectable=True, size=14)
             except Exception:
-                return ft.Text(str(cell), selectable=True, size=14)
+                # Para células longas, use um Container com rolagem horizontal
+                return ft.Container(
+                    width=max_width,
+                    content=ft.Row(
+                        controls=[
+                            ft.Text(
+                                str(cell),
+                                selectable=True,
+                                size=14,
+                                max_lines=3,
+                                overflow=ft.TextOverflow.CLIP,
+                            )
+                        ],
+                        scroll=ft.ScrollMode.ALWAYS,  # scroll horizontal individual
+                        expand=True,
+                    ),
+                    alignment=ft.alignment.center_left,
+                )
 
         def filter_rows(e=None, sorted_rows=None):
             search_value = search_ref.current.value.strip().lower()
@@ -258,7 +277,29 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
             filtered = []
             base_rows = sorted_rows if sorted_rows is not None else all_rows
             if search_value:
-                filtered = [row for row in base_rows if search_value in str(row[0]).lower()]
+                # Busca em todas as colunas relevantes: nome do gene (coluna 0), Note GFF, Uniprot *
+                # Descobre os índices das colunas extras
+                note_gff_idx = None
+                uniprot_idxs = []
+                for idx, col in enumerate(columns):
+                    col_l = str(col).lower()
+                    if "note gff" in col_l:
+                        note_gff_idx = idx
+                    if col_l.startswith("uniprot"):
+                        uniprot_idxs.append(idx)
+                def row_matches(row):
+                    # Nome do gene (coluna 0)
+                    if search_value in str(row[0]).lower():
+                        return True
+                    # Note GFF
+                    if note_gff_idx is not None and search_value in str(row[note_gff_idx]).lower():
+                        return True
+                    # Uniprot *
+                    for idx in uniprot_idxs:
+                        if search_value in str(row[idx]).lower():
+                            return True
+                    return False
+                filtered = [row for row in base_rows if row_matches(row)]
             else:
                 filtered = base_rows
             if not filtered:

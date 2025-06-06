@@ -84,14 +84,15 @@ async def run_deg(
     if not os.path.exists(deg_xlsx):
         raise HTTPException(status_code=500, detail="Arquivo DEG.xlsx não foi gerado.")
 
-    # Anotar DEG.xlsx com Name GFF e Product GFF
+    # Anotar DEG.xlsx com Name GFF e Product/Note GFF
     if genome_accession:
         gff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}/genomic.gff"))
-        annotate_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
-        if os.path.exists(gff_path) and os.path.exists(annotate_script):
+        annotate_gff_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
+        annotate_uniprot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_uniprot.py"))
+        if os.path.exists(gff_path) and os.path.exists(annotate_gff_script):
             try:
                 process = subprocess.Popen(
-                    ["python", annotate_script, deg_xlsx, gff_path],
+                    ["python", annotate_gff_script, deg_xlsx, gff_path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -107,6 +108,27 @@ async def run_deg(
                 raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_gff.py: {e}")
         else:
             logger.warning("GFF ou annotate_deg_with_gff.py não encontrado para anotação.")
+
+        # Chamada do novo script Uniprot
+        if os.path.exists(annotate_uniprot_script):
+            try:
+                process = subprocess.Popen(
+                    ["python", annotate_uniprot_script, deg_xlsx],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                stdout, stderr = process.communicate()
+                logger.info(f"Saída do annotate_deg_with_uniprot.py:\n{stdout}")
+                if stderr:
+                    logger.error(f"Erros do annotate_deg_with_uniprot.py:\n{stderr}")
+                if process.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {stderr}")
+            except Exception as e:
+                logger.error(f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
+        else:
+            logger.warning("annotate_deg_with_uniprot.py não encontrado para anotação.")
 
     logger.info("DEG.xlsx gerado com sucesso.")
     return {"message": "DEG.xlsx gerado com sucesso."}
