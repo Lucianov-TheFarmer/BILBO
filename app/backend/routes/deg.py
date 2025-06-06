@@ -22,7 +22,8 @@ async def run_deg(
     data = await request.json()
     user_id = data.get("user_id", current_user.id)
     contrast_ids = data.get("contrast_ids", [])
-    logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids}")
+    genome_accession = data.get("genome_accession")  # <-- novo parâmetro
+    logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids} e genoma {genome_accession}")
 
     preprocess_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
@@ -55,6 +56,12 @@ async def run_deg(
         for cid in contrast_ids:
             f.write(str(cid) + "\n")
 
+    # Salvar o accession do genoma selecionado
+    if genome_accession:
+        genome_file_path = os.path.join(preprocess_dir, "selected_genome.txt")
+        with open(genome_file_path, "w", encoding="utf-8") as f:
+            f.write(str(genome_accession) + "\n")
+
     try:
         # Passa ambos os diretórios para o script R: preprocess_dir e deg_dir
         process = subprocess.Popen(
@@ -76,6 +83,30 @@ async def run_deg(
     deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
     if not os.path.exists(deg_xlsx):
         raise HTTPException(status_code=500, detail="Arquivo DEG.xlsx não foi gerado.")
+
+    # Anotar DEG.xlsx com Name GFF e Product GFF
+    if genome_accession:
+        gff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}/genomic.gff"))
+        annotate_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
+        if os.path.exists(gff_path) and os.path.exists(annotate_script):
+            try:
+                process = subprocess.Popen(
+                    ["python", annotate_script, deg_xlsx, gff_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                stdout, stderr = process.communicate()
+                logger.info(f"Saída do annotate_deg_with_gff.py:\n{stdout}")
+                if stderr:
+                    logger.error(f"Erros do annotate_deg_with_gff.py:\n{stderr}")
+                if process.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_gff.py: {stderr}")
+            except Exception as e:
+                logger.error(f"Erro ao executar annotate_deg_with_gff.py: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_gff.py: {e}")
+        else:
+            logger.warning("GFF ou annotate_deg_with_gff.py não encontrado para anotação.")
 
     logger.info("DEG.xlsx gerado com sucesso.")
     return {"message": "DEG.xlsx gerado com sucesso."}

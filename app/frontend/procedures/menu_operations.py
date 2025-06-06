@@ -8,6 +8,7 @@ from .quantification import show_quantification_modal
 from .contrasts import show_contrasts_modal
 from .preprocess import show_preprocess_modal, show_exploratory_dropdown
 from .deg import run_deg_analysis, show_deg_results
+from .results import show_barplots_table, show_venn_modal, show_heatmap_modal
 import asyncio
 
 def create_menu_item(label, close_on_click=True, style=None, on_click=None):
@@ -117,14 +118,19 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                         )
                     ),
                     create_menu_item(
-                        "Barplots",
+                        "Barplots (Quant. genes Up e Down)",
+                        on_click=lambda e: asyncio.run(
+                            show_barplots_table(page, token, user_id, page.controls[1].controls[0].controls[0])  # Mostra a tabela, não o modal
+                        )
                     ),
                     create_menu_item(
                         "Diagrama de Venn",
+                        on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id))
                     ),
                     create_menu_item(
                         "Heatmaps",
-                    ),                    
+                        on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id))
+                    ),
                 ],
             ),
             ft.SubmenuButton(

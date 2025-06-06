@@ -15,6 +15,13 @@ async def fetch_existing_contrasts(token):
         response.raise_for_status()
         return response.json()
 
+async def fetch_reference_genomes(token):
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    async with httpx.AsyncClient() as client:
+        response = await client.get("http://localhost:8000/genomes/", headers=headers)
+        response.raise_for_status()
+        return response.json()  # [{"name": ..., "size": ..., "status": ...}]
+
 def parse_contrast_name(name):
     try:
         left, right = name.split("*")
@@ -24,8 +31,34 @@ def parse_contrast_name(name):
     except Exception:
         return name
 
+def extract_accession_from_name(name):
+    # Espera formato: "Nome do genoma (ACESSION)"
+    if "(" in name and ")" in name:
+        return name.split("(")[-1].strip(")")
+    return name
+
 async def run_deg_analysis(page, token, user_id):
-    await log_message(page, "Selecione os contrastes para DEG.")
+    await log_message(page, "Selecione o genoma de referência e os contrastes para DEG.")
+    # Buscar genomas de referência disponíveis
+    genomes = await fetch_reference_genomes(token)
+    if not genomes:
+        await log_message(page, "Nenhum genoma de referência disponível.")
+        return
+
+    genome_options = [ft.dropdown.Option(genome["name"]) for genome in genomes]
+    selected_genome = [genome_options[0].key]  # Usar lista mutável para manter referência
+
+    def on_genome_change(e):
+        selected_genome[0] = e.control.value
+
+    genome_dropdown = ft.Dropdown(
+        label="Genoma de referência",
+        options=genome_options,
+        value=genome_options[0].key,
+        on_change=on_genome_change,
+        width=400,
+    )
+
     contrasts = await fetch_existing_contrasts(token)
     selected_ids = set()
     checkboxes = []
@@ -69,9 +102,14 @@ async def run_deg_analysis(page, token, user_id):
         if not selected_ids:
             await log_message(page, "Selecione pelo menos um contraste para DEG!")
             return
-        # Loga os contrastes selecionados
+        if not selected_genome[0]:
+            await log_message(page, "Selecione um genoma de referência!")
+            return
+        # Extrair accession do genoma selecionado
+        genome_accession = extract_accession_from_name(selected_genome[0])
         selected_labels = [parse_contrast_name(c["name"]) for c in contrasts if c["id"] in selected_ids]
         await log_message(page, "Iniciando DEG")
+        await log_message(page, f"Genoma: {selected_genome[0]}")
         await log_message(page, f"Contrastes selecionados para DEG: {', '.join(selected_labels)}")
         dlg_modal_deg.open = False
         page.update()
@@ -80,7 +118,11 @@ async def run_deg_analysis(page, token, user_id):
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "http://localhost:8000/deg/run",
-                    json={"user_id": user_id, "contrast_ids": list(selected_ids)},
+                    json={
+                        "user_id": user_id,
+                        "contrast_ids": list(selected_ids),
+                        "genome_accession": genome_accession,
+                    },
                     headers=headers,
                     timeout=600,
                 )
@@ -97,23 +139,31 @@ async def run_deg_analysis(page, token, user_id):
         content=ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.DataTable(
-                        columns=[
-                            ft.DataColumn(ft.Text("Contraste")),
-                            ft.DataColumn(select_all_checkbox),
+                    ft.Container(height=5),
+                    genome_dropdown,
+                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Row(
+                        controls=[
+                            ft.DataTable(
+                                columns=[
+                                    ft.DataColumn(ft.Text("Contraste", expand=True)),
+                                    ft.DataColumn(select_all_checkbox),
+                                ],
+                                rows=data_rows,
+                                heading_row_height=40,
+                                column_spacing=20,
+                                expand=True,
+                            )
                         ],
-                        rows=data_rows,
-                        heading_row_height=40,
-                        column_spacing=20,
-                        expand=True,  # expandir horizontalmente
-                    )
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        expand=True,
+                    ),
                 ],
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             ),
-            # width=400,
             height=400,
-            expand=True,  # expandir o container para ocupar todo o modal
+            expand=True,
         ),
         actions=[
             ft.TextButton(
@@ -413,6 +463,7 @@ async def show_deg_dropdown(page):
                         if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
                             dropdown = ft.Dropdown(
                                 options=[
+                                    ft.dropdown.Option("Barplot"),
                                     ft.dropdown.Option("MA plot"),
                                     ft.dropdown.Option("Volcano plot"),
                                     ft.dropdown.Option("Frequência de termos ontológicos"),
