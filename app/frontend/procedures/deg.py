@@ -4,6 +4,7 @@ import asyncio
 import logging
 import pandas as pd
 from .utils import log_message
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -269,6 +270,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                         scroll=ft.ScrollMode.ALWAYS,  # scroll horizontal individual
                         expand=True,
                     ),
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     alignment=ft.alignment.center_left,
                 )
 
@@ -496,7 +498,17 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
         print(f"[LOG] Erro ao exibir planilha: {ex}")
         await log_message(page, f"Erro ao exibir planilha: {ex}")
 
-async def show_deg_dropdown(page):
+async def show_deg_dropdown(page, user_id=None, sheet_name=None):
+    # Caminho base dos gráficos DEG
+    deg_dir = f"../users/{user_id}/DEG"
+    # Opções do dropdown e nomes dos arquivos correspondentes
+    DEG_GRAPHS = [
+        ("Barplot", "BARPLOT.ISOLADO - {sheet}.png"),
+        ("MA plot", "MA.ISOLADO - {sheet}.png"),
+        ("Volcano plot", "VOLCANO.ISOLADO - {sheet}.png"),
+        ("Frequência de termos ontológicos", "ONTO_FREQ.ISOLADO - {sheet}.png"),
+    ]
+
     # Remove qualquer dropdown ou gráfico anterior do container_pre_visualizacao
     for control in page.controls:
         if isinstance(control, ft.Row):
@@ -505,17 +517,52 @@ async def show_deg_dropdown(page):
                     for container in column.controls:
                         if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
                             dropdown = ft.Dropdown(
-                                options=[
-                                    ft.dropdown.Option("Barplot"),
-                                    ft.dropdown.Option("MA plot"),
-                                    ft.dropdown.Option("Volcano plot"),
-                                    ft.dropdown.Option("Frequência de termos ontológicos"),
-                                ],
+                                options=[ft.dropdown.Option(title) for title, _ in DEG_GRAPHS],
                                 width=350,
-                                value="Barplot",
+                                value=DEG_GRAPHS[0][0],
                             )
-                            # Placeholder para gráfico
                             img_placeholder = ft.Container(expand=True, alignment=ft.alignment.center)
+
+                            async def display_deg_graph(selected_title):
+                                # Busca o arquivo correspondente ao título selecionado
+                                filename = None
+                                for title, fname in DEG_GRAPHS:
+                                    if title == selected_title:
+                                        filename = fname.format(sheet=sheet_name)
+                                        break
+                                if not filename:
+                                    return ft.Text("Figura não encontrada.", color=ft.colors.RED)
+                                img_path = os.path.join(deg_dir, filename)
+                                if not os.path.exists(img_path):
+                                    return ft.Text(f"Figura não encontrada: {filename}", color=ft.colors.RED)
+                                try:
+                                    with open(img_path, "rb") as f:
+                                        img_data = f.read()
+                                    import base64
+                                    img_base64 = base64.b64encode(img_data).decode("utf-8")
+                                    image_control = ft.Image(src_base64=img_base64)
+                                    interactive_viewer = ft.InteractiveViewer(
+                                        min_scale=0.5,
+                                        max_scale=15,
+                                        boundary_margin=ft.margin.all(10),
+                                        content=image_control,
+                                        constrained=True
+                                    )
+                                    return interactive_viewer
+                                except Exception as e:
+                                    return ft.Text(f"Erro ao carregar imagem: {e}", color=ft.colors.RED)
+
+                            async def on_dropdown_change(e):
+                                selected_title = e.control.value
+                                img = await display_deg_graph(selected_title)
+                                img_placeholder.content = img
+                                page.update()
+
+                            dropdown.on_change = on_dropdown_change
+
+                            # Exibe o primeiro gráfico por padrão
+                            img_placeholder.content = await display_deg_graph(DEG_GRAPHS[0][0])
+
                             container.content.controls = [
                                 ft.Container(
                                     expand=True,
@@ -577,8 +624,9 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                                     ft.IconButton(
                                                         icon=ft.icons.VISIBILITY,
                                                         tooltip="Visualizar",
+                                                        # Corrigido: passa o nome da aba (sheet) para show_deg_dropdown
                                                         on_click=lambda e, s=sheet: asyncio.run(
-                                                            show_deg_dropdown(page)
+                                                            show_deg_dropdown(page, user_id=user_id, sheet_name=s)
                                                         )
                                                     ),
                                                 ],
