@@ -89,6 +89,7 @@ async def run_deg(
         gff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}/genomic.gff"))
         annotate_gff_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
         annotate_uniprot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_uniprot.py"))
+        deg_barplot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/deg_graphs.py"))
         if os.path.exists(gff_path) and os.path.exists(annotate_gff_script):
             try:
                 process = subprocess.Popen(
@@ -129,6 +130,27 @@ async def run_deg(
                 raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
         else:
             logger.warning("annotate_deg_with_uniprot.py não encontrado para anotação.")
+
+        # Chamada do script de barplot isolado
+        if os.path.exists(deg_barplot_script):
+            try:
+                process = subprocess.Popen(
+                    ["python", deg_barplot_script, deg_xlsx, deg_dir],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                stdout, stderr = process.communicate()
+                logger.info(f"Saída do deg_barplot.py:\n{stdout}")
+                if stderr:
+                    logger.error(f"Erros do deg_barplot.py:\n{stderr}")
+                if process.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"Erro ao executar deg_barplot.py: {stderr}")
+            except Exception as e:
+                logger.error(f"Erro ao executar deg_barplot.py: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao executar deg_barplot.py: {e}")
+        else:
+            logger.warning("deg_barplot.py não encontrado para geração de barplots.")
 
     logger.info("DEG.xlsx gerado com sucesso.")
     return {"message": "DEG.xlsx gerado com sucesso."}

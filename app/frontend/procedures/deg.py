@@ -190,6 +190,7 @@ async def fetch_sheet_data(token, user_id, sheet_name):
 async def show_sheet_as_table(page, token, user_id, sheet_name):
     print(f"[LOG] show_sheet_as_table: sheet_name={sheet_name}")
     try:
+        # Loga início da identificação para a aba
         data = await fetch_sheet_data(token, user_id, sheet_name)
         columns = data.get("columns", [])
         rows = data.get("rows", [])
@@ -264,6 +265,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                                 overflow=ft.TextOverflow.CLIP,
                             )
                         ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,  # Alinha verticalmente ao centro
                         scroll=ft.ScrollMode.ALWAYS,  # scroll horizontal individual
                         expand=True,
                     ),
@@ -510,7 +512,7 @@ async def show_deg_dropdown(page):
                                     ft.dropdown.Option("Frequência de termos ontológicos"),
                                 ],
                                 width=350,
-                                value="MA plot",
+                                value="Barplot",
                             )
                             # Placeholder para gráfico
                             img_placeholder = ft.Container(expand=True, alignment=ft.alignment.center)
