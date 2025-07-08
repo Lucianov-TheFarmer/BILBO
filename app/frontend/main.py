@@ -15,6 +15,9 @@ async def main(page: ft.Page):
     async def toggle_theme(e):
         page.theme_mode = ft.ThemeMode.DARK if page.theme_mode == ft.ThemeMode.LIGHT else ft.ThemeMode.LIGHT
         page.update()
+        # Se ainda não há token (está na tela de login), recarrega a interface de login
+        if token is None:
+            await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
 
     async def logout(e):
         nonlocal token, username
@@ -55,13 +58,13 @@ async def main(page: ft.Page):
         page.update()
 
     # Usar credenciais
-    username_input = ft.TextField(label="Username", width=300)
-    password_input = ft.TextField(label="Password", password=True, width=300)
-    await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+    # username_input = ft.TextField(label="Username", width=300)
+    # password_input = ft.TextField(label="Password", password=True, width=300)
+    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
 
     # Entrar automaticamente
-    # username_input = ft.TextField(label="Username", width=300)
-    # username_input.value = "admin"
-    # password_input = ft.TextField(label="Password", password=True, width=300)
-    # password_input.value = "admin"
-    # await login(e=None)
+    username_input = ft.TextField(label="Username", width=300)
+    username_input.value = "admin"
+    password_input = ft.TextField(label="Password", password=True, width=300)
+    password_input.value = "admin"
+    await login(e=None)

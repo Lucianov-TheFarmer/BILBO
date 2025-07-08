@@ -3,18 +3,45 @@ import flet as ft
 import asyncio
 import base64
 
-# Carrega as imagens e converte para base64
+# Carrega as imagens do tema claro e converte para base64
 with open("assets/src/favicon_white.png", "rb") as img_file:
-    image_data = img_file.read()
-    image_base64 = base64.b64encode(image_data).decode('utf-8')
+    favicon_light_base64 = base64.b64encode(img_file.read()).decode('utf-8')
 
 with open("assets/src/UFLA.png", "rb") as img_file:
-    ufla_image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+    ufla_light_base64 = base64.b64encode(img_file.read()).decode('utf-8')
 
 with open("assets/src/LFMP.png", "rb") as img_file:
-    lfmp_image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+    lfmp_light_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+# Carrega as imagens do tema escuro e converte para base64
+with open("assets/src/favicon_black.png", "rb") as img_file:
+    favicon_dark_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+with open("assets/src/UFLA_dark.png", "rb") as img_file:
+    ufla_dark_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+with open("assets/src/LFMP_dark.png", "rb") as img_file:
+    lfmp_dark_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+def get_theme_images(page):
+    """Retorna as imagens apropriadas baseadas no tema da página"""
+    if page.theme_mode == ft.ThemeMode.DARK:
+        return {
+            'favicon': favicon_dark_base64,
+            'ufla': ufla_dark_base64,
+            'lfmp': lfmp_dark_base64
+        }
+    else:
+        return {
+            'favicon': favicon_light_base64,
+            'ufla': ufla_light_base64,
+            'lfmp': lfmp_light_base64
+        }
 
 async def show_login_interface(page, login, register, toggle_theme, username_input, password_input, result):
+    # Obtém as imagens baseadas no tema atual
+    theme_images = get_theme_images(page)
+    
     page.controls.clear()
     page.add(
         ft.Container(
@@ -24,7 +51,7 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                         controls=[
                             ft.Container(
                                 content=ft.Image(
-                                    src_base64=ufla_image_base64,
+                                    src_base64=theme_images['ufla'],
                                     width=90,
                                     height=90,
                                     fit=ft.ImageFit.CONTAIN,
@@ -34,7 +61,7 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                             ),
                             ft.Container(
                                 content=ft.Image(
-                                    src_base64=image_base64,
+                                    src_base64=theme_images['favicon'],
                                     width=90,
                                     height=90,
                                     fit=ft.ImageFit.CONTAIN,
@@ -44,7 +71,7 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                             ),
                             ft.Container(
                                 content=ft.Image(
-                                    src_base64=lfmp_image_base64,
+                                    src_base64=theme_images['lfmp'],
                                     width=90,
                                     height=90,
                                     fit=ft.ImageFit.CONTAIN,
