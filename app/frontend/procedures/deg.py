@@ -266,11 +266,9 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                                 overflow=ft.TextOverflow.CLIP,
                             )
                         ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,  # Alinha verticalmente ao centro
                         scroll=ft.ScrollMode.ALWAYS,  # scroll horizontal individual
                         expand=True,
                     ),
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     alignment=ft.alignment.center_left,
                 )
 

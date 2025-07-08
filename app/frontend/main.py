@@ -55,13 +55,13 @@ async def main(page: ft.Page):
         page.update()
 
     # Usar credenciais
-    # username_input = ft.TextField(label="Username", width=300)
-    # password_input = ft.TextField(label="Password", password=True, width=300)
-    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+    username_input = ft.TextField(label="Username", width=300)
+    password_input = ft.TextField(label="Password", password=True, width=300)
+    await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
 
     # Entrar automaticamente
-    username_input = ft.TextField(label="Username", width=300)
-    username_input.value = "admin"
-    password_input = ft.TextField(label="Password", password=True, width=300)
-    password_input.value = "admin"
-    await login(e=None)
+    # username_input = ft.TextField(label="Username", width=300)
+    # username_input.value = "admin"
+    # password_input = ft.TextField(label="Password", password=True, width=300)
+    # password_input.value = "admin"
+    # await login(e=None)

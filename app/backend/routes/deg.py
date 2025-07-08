@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import User, SampleStage
-from ..utils import get_current_user
+from ..utils import get_current_user, manager
 import subprocess
 import logging
 import os
@@ -90,6 +90,7 @@ async def run_deg(
         annotate_gff_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
         annotate_uniprot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_uniprot.py"))
         deg_barplot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/deg_graphs.py"))
+        await manager.broadcast("Iniciando anotação com GFF")
         if os.path.exists(gff_path) and os.path.exists(annotate_gff_script):
             try:
                 process = subprocess.Popen(
@@ -112,6 +113,7 @@ async def run_deg(
 
         # Chamada do novo script Uniprot
         if os.path.exists(annotate_uniprot_script):
+            await manager.broadcast("Iniciando anotação com Uniprot")
             try:
                 process = subprocess.Popen(
                     ["python", annotate_uniprot_script, deg_xlsx],
@@ -133,6 +135,7 @@ async def run_deg(
 
         # Chamada do script de barplot isolado
         if os.path.exists(deg_barplot_script):
+            await manager.broadcast("Gerando figuras")
             try:
                 process = subprocess.Popen(
                     ["python", deg_barplot_script, deg_xlsx, deg_dir],
@@ -153,7 +156,7 @@ async def run_deg(
             logger.warning("deg_barplot.py não encontrado para geração de barplots.")
 
     logger.info("DEG.xlsx gerado com sucesso.")
-    return {"message": "DEG.xlsx gerado com sucesso."}
+    return {"message": "DEG finalizado com sucesso."}
 
 @router.get("/deg/sheets")
 async def get_deg_sheets(

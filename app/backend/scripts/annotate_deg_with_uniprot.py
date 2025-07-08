@@ -2,6 +2,7 @@ import sys
 import pandas as pd
 import requests
 import time
+import threading
 
 def is_plant(lineage, organism=None):
     # Se lineage está vazio, tenta usar o nome do organismo como fallback
@@ -38,16 +39,12 @@ def fetch_uniprot_info(query):
     )
     try:
         resp = requests.get(url, timeout=10)
-        print(f"URL: {url} | Status: {resp.status_code}")  # Print URL and status for debug
         if resp.status_code == 400:
-            print(f"[ERROR] Bad request for query: {query}\nResponse text: {resp.text[:200]}")
             return {}
         if resp.status_code != 200 or not resp.text.strip():
-            print(f"Response text: {resp.text[:200]}")  # Print first 200 chars of response
             return {}
         lines = resp.text.strip().split("\n")
         if len(lines) < 2:
-            print(f"No results for query: {query}")
             return {}
         header = lines[0].split("\t")
         # Parse all results and prioritize plants
@@ -56,7 +53,6 @@ def fetch_uniprot_info(query):
             data = dict(zip(header, line.split("\t")))
             organism = data.get('Organism', '')
             lineage = data.get('Lineage', '')
-            print(f"[DEBUG] Candidate organism: {organism} | Lineage: {lineage}")
             has_function = bool(data.get("Function [CC]", "").strip())
             has_ontology = (
                 bool(data.get("Gene Ontology (cellular component)", "").strip()) or
@@ -64,16 +60,13 @@ def fetch_uniprot_info(query):
                 bool(data.get("Gene Ontology (biological process)", "").strip())
             )
             if (is_plant(lineage, organism) and (has_function or has_ontology)):
-                print("[DEBUG] Selected this as best_data (plant with function/ontology)")
                 best_data = data
                 break
-        # Se não achou planta, pega o primeiro com função/ontologia
         if not best_data:
             for line in lines[1:]:
                 data = dict(zip(header, line.split("\t")))
                 organism = data.get('Organism', '')
                 lineage = data.get('Lineage', '')
-                print(f"[DEBUG] (Fallback) Candidate organism: {organism} | Lineage: {lineage}")
                 has_function = bool(data.get("Function [CC]", "").strip())
                 has_ontology = (
                     bool(data.get("Gene Ontology (cellular component)", "").strip()) or
@@ -81,12 +74,9 @@ def fetch_uniprot_info(query):
                     bool(data.get("Gene Ontology (biological process)", "").strip())
                 )
                 if has_function or has_ontology:
-                    print("[DEBUG] (Fallback) Selected this as best_data (any with function/ontology)")
                     best_data = data
                     break
-        # Se não achou nada, retorna a primeira linha
         if not best_data:
-            print("[DEBUG] No plant or function/ontology found, using first result.")
             best_data = dict(zip(header, lines[1].split("\t")))
         return {
             "Uniprot organism": best_data.get("Organism", ""),
@@ -97,7 +87,6 @@ def fetch_uniprot_info(query):
             "Uniprot Function": best_data.get("Function [CC]", ""),
         }
     except Exception as ex:
-        print(f"Exception for query '{query}': {ex}")
         return {}
 
 def annotate_deg_with_uniprot(deg_xlsx_path):
@@ -114,9 +103,19 @@ def annotate_deg_with_uniprot(deg_xlsx_path):
         # elif "Name GFF" in df.columns and df["Name GFF"].notna().any():
         #     query_col = "Name GFF"
         else:
+            # Garante que as colunas Uniprot existam mesmo se não houver query_col
+            for col in [
+                "Uniprot organism", "Uniprot gene names",
+                "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
+            ]:
+                if col not in df.columns:
+                    df[col] = ""
+            # Salva a aba sobrescrevendo (adiciona colunas vazias)
+            with pd.ExcelWriter(deg_xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                df.to_excel(writer, sheet_name=sheet, index=False)
             continue  # Nenhuma coluna disponível para consulta
 
-        # Prepare columns as string/object dtype to avoid FutureWarning
+        # Garante que as colunas Uniprot existam e sejam do tipo objeto
         for col in [
             "Uniprot organism", "Uniprot gene names",
             "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
@@ -125,21 +124,17 @@ def annotate_deg_with_uniprot(deg_xlsx_path):
                 df[col] = ""
             df[col] = df[col].astype("object")
 
-        count = 0
         for idx, row in df.iterrows():
             query_value = str(row[query_col]).strip()
             if not query_value or query_value == "nan":
                 continue
-            if count < 5:
-                print(f"\n[DEBUG] Querying Uniprot for: '{query_value}'")
             info = fetch_uniprot_info(query_value)
-            if count < 5:
-                print(f"[DEBUG] Result: {info}")
-            for col in info:
-                # Always cast to str to avoid dtype issues
-                df.at[idx, col] = str(info[col]) if info[col] is not None else ""
-            count += 1
-            time.sleep(0.2)  # Evita sobrecarregar a API
+            for col in [
+                "Uniprot organism", "Uniprot gene names",
+                "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
+            ]:
+                df.at[idx, col] = str(info.get(col, "")) if info else ""
+
         # Salva a aba sobrescrevendo
         with pd.ExcelWriter(deg_xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
             df.to_excel(writer, sheet_name=sheet, index=False)
