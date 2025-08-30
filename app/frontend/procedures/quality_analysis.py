@@ -18,12 +18,12 @@ def create_tabela_amostras_qc(page, token):  # Updated function signature
         page.update()
 
     tabela_amostras_qc = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),  # Add checkbox to the header
-            ft.DataColumn(ft.Text("Ações")),  # Add actions column
+            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),  # Add actions column
         ],
         rows=[],
     )

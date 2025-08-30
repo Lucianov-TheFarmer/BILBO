@@ -26,12 +26,12 @@ def create_tabela_alinhamento(page, token):
         page.update()
 
     tabela_alinhamento = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Log")),
+            ft.DataColumn(ft.Text("Identificação",  weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Log", weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),  # Checkbox in the header
         ],
         rows=[],

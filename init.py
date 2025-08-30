@@ -7,6 +7,7 @@ import threading
 import logging
 import yaml
 import requests
+import platform
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -51,19 +52,34 @@ def is_docker_running():
     try:
         subprocess.run(["docker", "info"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
 def start_docker():
-    logger.info("Starting Docker Desktop...")
-    docker_desktop_path = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    subprocess.Popen([docker_desktop_path], shell=True)
+    os_type = platform.system()
+    logger.info(f"Starting Docker on {os_type}...")
+    if os_type == "Windows":
+        docker_desktop_path = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
+        subprocess.Popen([docker_desktop_path], shell=True)
+    elif os_type == "Linux":
+        run_command("sudo systemctl start docker")
+    else:
+        logger.warning(f"Unsupported OS: {os_type}. Docker may need to be started manually.")
     time.sleep(30)
 
 def is_docker_desktop_running():
-    for process in psutil.process_iter(['name']):
-        if process.info['name'] == 'Docker Desktop.exe':
-            return True
+    os_type = platform.system()
+    if os_type == "Windows":
+        for process in psutil.process_iter(['name']):
+            if process.info['name'] == 'Docker Desktop.exe':
+                return True
+        return False
+    elif os_type == "Linux":
+        try:
+            result = subprocess.run(["systemctl", "is-active", "docker"], capture_output=True, text=True)
+            return result.stdout.strip() == "active"
+        except FileNotFoundError:
+            return False # systemctl não encontrado
     return False
 
 def fetch_ngrok_url():
@@ -88,7 +104,7 @@ def wait_for_backend_ready(url="http://localhost:8000/docs", timeout=60):
         except Exception:
             pass
         time.sleep(1)
-    logger.error("Timeout esperando o backend FastAPI.")
+    logger.error("Timeout waiting for the FastAPI backend.")
     return False
 
 def main():
@@ -112,7 +128,7 @@ def main():
         up_process = run_command("docker-compose up -d")
         up_process.wait()
 
-        # Aguarda o backend estar pronto antes de buscar o ngrok
+        # Wait for the backend to be ready before fetching the ngrok URL
         wait_for_backend_ready()
 
         logger.info("\nFetching ngrok URL...")

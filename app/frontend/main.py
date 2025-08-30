@@ -1,5 +1,4 @@
 import httpx
-import requests
 import flet as ft
 from .components.login import show_login_interface
 from .bilbo_interface import show_bilbo_interface
@@ -8,7 +7,14 @@ async def main(page: ft.Page):
     page.title = "Bionformatics and RNA-Seq Lab Online"
     page.theme_mode = ft.ThemeMode.LIGHT
 
-    result = ft.Text()
+    page.snack_bar = ft.SnackBar(content=ft.Text(""), open=False)
+    page.overlay.append(page.snack_bar)
+
+    async def show_snackbar(message):
+        page.snack_bar.content = ft.Text(message)
+        page.snack_bar.open = True
+        await page.update_async()
+
     token = None
     username = None
 
@@ -21,8 +27,13 @@ async def main(page: ft.Page):
         token = None
         username = None
         page.controls.clear()
+        await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
         page.update()
-        await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+
+    async def show_snackbar(message):
+        page.snack_bar.content = ft.Text(message)
+        page.snack_bar.open = True
+        page.update()
 
     async def login(e):
         print("Login button clicked")
@@ -38,10 +49,10 @@ async def main(page: ft.Page):
                 username = username_input.value
                 await show_bilbo_interface(page, logout, username, token, user_id)
             else:
-                result.value = response.json()
+                error_message = response.json().get("detail", "An unknown error occurred.")
+                await show_snackbar(error_message)
         except httpx.RequestError as ex:
-            result.value = f"An error occurred: {ex}"
-        page.update()
+            await show_snackbar(f"An error occurred: {ex}")
 
     async def register(e):
         print("Register function called")
@@ -49,19 +60,15 @@ async def main(page: ft.Page):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post("http://bioinfo-container:8000/register/", params={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
-            result.value = response.json()
+            
+            if response.status_code == 200:
+                await show_snackbar("Registration successful! Please log in.")
+            else:
+                error_message = response.json().get("detail", "An unknown error occurred.")
+                await show_snackbar(error_message)
         except httpx.RequestError as ex:
-            result.value = f"An error occurred: {ex}"
-        page.update()
+            await show_snackbar(f"An error occurred: {ex}")
 
-    # Usar credenciais
-    # username_input = ft.TextField(label="Username", width=300)
-    # password_input = ft.TextField(label="Password", password=True, width=300)
-    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
-
-    # Entrar automaticamente
     username_input = ft.TextField(label="Username", width=300)
-    username_input.value = "admin"
     password_input = ft.TextField(label="Password", password=True, width=300)
-    password_input.value = "admin"
-    await login(e=None)
+    await show_login_interface(page, login, register, toggle_theme, username_input, password_input)

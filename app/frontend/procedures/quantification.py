@@ -20,12 +20,12 @@ def create_tabela_quantificacao(page, token):
             page.update()
 
     tabela_quantificacao = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Log")),
+            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Log", weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_quantification)),  # Checkbox para seleção
         ],
         rows=[],

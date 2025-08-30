@@ -33,9 +33,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
     # Create a new instance of tabela_amostras
     tabela_amostras_local = create_table(
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Status",  weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text(" ")),
         ],
         rows=[],
@@ -176,18 +176,22 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
 
     container_menu_direita = ft.Container(
         expand=2,
-        border=ft.border.all(1, ft.colors.BLACK),
-        border_radius=ft.border_radius.all(3),
+        bgcolor=ft.colors.SURFACE,
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=8, color=ft.colors.with_opacity(0.2, ft.colors.BLACK)),
+        padding=ft.padding.all(12),
         margin=ft.margin.only(0, 5, 0, 0),
         content=ft.ListView(
             expand=1,
-            spacing=10,
+            spacing=15,
             controls=[
                 ft.DataTable(
-                    heading_row_color=ft.colors.BLACK12,
+                    heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
+                    data_row_color=ft.colors.SURFACE,
+                    border=ft.border.all(0.5, ft.colors.OUTLINE_VARIANT),
                     columns=[
                         ft.DataColumn(ft.Text("Procedimento", weight=ft.FontWeight.BOLD)),
-                        ft.DataColumn(ft.Text("Quantidade", weight=ft.FontWeight.BOLD)),
+                        ft.DataColumn(ft.Text("Quantidade", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
                     ],
                     rows=[
                         ft.DataRow(
@@ -269,61 +273,70 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
                             ],
                         ),
                     ],
-                )
+                 )
             ]
         )
     )
 
     menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
-    # Call atualizar_tabela to populate the table initially
     print("Calling atualizar_tabela")
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     container_amostras = ft.Container(
         expand=2,
-        border=ft.border.all(1, ft.colors.BLACK),
-        border_radius=ft.border_radius.all(3),
+        bgcolor=ft.colors.SURFACE,
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=8, spread_radius=1, color=ft.colors.with_opacity(0.25, ft.colors.BLACK)),
+        padding=ft.padding.all(12),
         margin=ft.margin.only(0, 5, 0, 0),
         content=ft.ListView(
             expand=1,
-            spacing=10,
+            spacing=15,
             controls=[
-                tabela_amostras_local,  # Use the local tabela_amostras
+                tabela_amostras_local,
                 create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
                 create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
                 create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
             ]
         )
-    )
+    )   
 
     container_terminal = ft.Container(
         expand=1,
-        border=ft.border.all(1, ft.colors.BLACK),
-        border_radius=ft.border_radius.all(3),
-        alignment=ft.alignment.center,
+        bgcolor=ft.colors.SURFACE,
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.15, ft.colors.BLACK)),
+        alignment=ft.alignment.top_left,
         padding=ft.padding.all(15),
         content=ft.ListView(
             expand=True,
-            spacing=10,
+            spacing=8,
             controls=[]
         )
     )
-
+    
+    page.container_terminal = container_terminal
+    
     container_pre_visualizacao = ft.Container(
         expand=2,
-        border=ft.border.all(1, ft.colors.BLACK),
-        border_radius=ft.border_radius.all(3),
+        bgcolor=ft.colors.SURFACE,
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=8, spread_radius=2, color=ft.colors.with_opacity(0.25, ft.colors.BLACK)),
         margin=ft.margin.only(0, 5, 0, 0),
+        padding=ft.padding.all(12),
         content=ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
             controls=[
                 ft.Container(
-                    expand=True,
-                    content=None  # Placeholder to maintain size
+                    expand=True
                 )
             ]
         )
     )
+    
+    
 
     print("Adding controls to the page")
 
@@ -365,32 +378,22 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
             expand=34,
             controls=[
                 ft.Column(
-                    expand=1,
+                    expand=3,
                     controls=[
-                        container_amostras,
-                        container_terminal
+                        container_menu_direita
                     ]
                 ),
                 ft.Column(
-                    expand=1,
+                    expand=5,
                     controls=[
                         container_pre_visualizacao,
-                        ft.Container(
-                            expand=1,
-                            border=ft.border.all(1, ft.colors.BLACK),
-                            border_radius=ft.border_radius.all(3),
-                        ),
                     ],
                 ),
                 ft.Column(
-                    expand=1,
+                    expand=3,
                     controls=[
-                        container_menu_direita,
-                        ft.Container(
-                            expand=1,
-                            border=ft.border.all(1, ft.colors.BLACK),
-                            border_radius=ft.border_radius.all(3),
-                        ),
+                        container_amostras,
+                        container_terminal
                     ],
                 )
             ],
@@ -406,7 +409,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
         async with websockets.connect("ws://bioinfo-container:8000/ws") as websocket:
             while True:
                 message = await websocket.recv()
-                await log_message(page, message)
+                await log_message(page, message, container_terminal=container_terminal)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                 await update_quality_analysis_table(page, token, user_id)
                 page.update()
