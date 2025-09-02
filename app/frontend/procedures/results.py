@@ -41,14 +41,8 @@ async def delete_barplot_file(token, user_id, filename):
         return response.json()
 
 async def view_barplot_file(token, user_id, filename):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "http://localhost:8000/results/view_barplot_file",
-            params={"user_id": user_id, "filename": filename},
-            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
-        )
-        response.raise_for_status()
-        return response.json()
+    # Para arquivos .png, retornamos apenas o caminho para visualização
+    return {"filename": filename}
 
 async def fetch_venn_files(token, user_id):
     async with httpx.AsyncClient() as client:
@@ -95,35 +89,60 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     
     async def on_view_click(filename):
         try:
-            file_data = await view_barplot_file(token, user_id, filename)
-            content = file_data.get("content", [])
+            # Visualizar imagem do barplot
+            deg_dir = f"../users/{user_id}/DEG"
+            img_path = f"{deg_dir}/{filename}"
             
-            dlg_modal = ft.AlertDialog(
-                title=ft.Text(f"Visualizar: {filename}"),
-                content=ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Text("Contrastes selecionados:", weight=ft.FontWeight.BOLD),
-                            ft.Divider(),
-                            ft.Column(
-                                controls=[ft.Text(f"• {contrast}") for contrast in content],
-                                scroll=ft.ScrollMode.AUTO,
-                            )
+            # Carregar e mostrar a imagem
+            import os
+            abs_img_path = os.path.abspath(os.path.join(os.path.dirname(__file__), img_path))
+            
+            if os.path.exists(abs_img_path):
+                import base64
+                try:
+                    with open(abs_img_path, "rb") as f:
+                        img_data = f.read()
+                    img_base64 = base64.b64encode(img_data).decode("utf-8")
+                    
+                    image_control = ft.Image(src_base64=img_base64)
+                    interactive_viewer = ft.InteractiveViewer(
+                        min_scale=0.5,
+                        max_scale=15,
+                        boundary_margin=ft.margin.all(10),
+                        content=image_control,
+                        constrained=True
+                    )
+                    
+                    dlg_modal = ft.AlertDialog(
+                        title=ft.Text(f"Visualizar: {filename}"),
+                        content=ft.Container(
+                            content=interactive_viewer,
+                            height=600,
+                            width=800,
+                        ),
+                        actions=[
+                            ft.TextButton(
+                                "Fechar",
+                                on_click=lambda e: (setattr(dlg_modal, 'open', False), page.update()),
+                            ),
                         ],
-                        scroll=ft.ScrollMode.AUTO,
-                    ),
-                    height=300,
-                    width=400,
-                ),
-                actions=[
-                    ft.TextButton(
-                        "Fechar",
-                        on_click=lambda e: (setattr(dlg_modal, 'open', False), page.update()),
-                    ),
-                ],
-                actions_alignment=ft.MainAxisAlignment.CENTER,
-            )
-            page.open(dlg_modal)
+                        actions_alignment=ft.MainAxisAlignment.CENTER,
+                    )
+                    page.open(dlg_modal)
+                except Exception as e:
+                    error_dlg = ft.AlertDialog(
+                        title=ft.Text("Erro"),
+                        content=ft.Text(f"Erro ao carregar imagem: {e}"),
+                        actions=[ft.TextButton("OK", on_click=lambda e: (setattr(error_dlg, 'open', False), page.update()))],
+                    )
+                    page.open(error_dlg)
+            else:
+                error_dlg = ft.AlertDialog(
+                    title=ft.Text("Erro"),
+                    content=ft.Text(f"Imagem não encontrada: {filename}"),
+                    actions=[ft.TextButton("OK", on_click=lambda e: (setattr(error_dlg, 'open', False), page.update()))],
+                )
+                page.open(error_dlg)
         except Exception as e:
             print(f"Erro ao visualizar arquivo: {e}")
 
