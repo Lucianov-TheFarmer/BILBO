@@ -7,6 +7,7 @@ services:
       - ./users:/users/
     ports:
       - "8000:8000"
+      
     tty: true
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
@@ -20,19 +21,26 @@ services:
       timeout: 2s
       retries: 10
 
-  ngrok:
-    image: ngrok/ngrok:latest
-    ports:
-      - "4040:4040"
+  ssh-server:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: ssh-container
     environment:
-      - NGROK_AUTHTOKEN=2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD
-    command: http bioinfo-container:8000
-    container_name: ngrok-container
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SUDO_ACCESS=false
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=bilbo123
+      - USER_NAME=bilbo
+    ports:
+      - "0.0.0.0:2222:2222"
+    volumes:
+      - ssh_config:/config
+    networks:
+      - main-net
     depends_on:
       bioinfo:
         condition: service_healthy
-    networks:
-      - main-net
 
   db:
     image: postgres:13
@@ -62,6 +70,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - main-net
 
 networks:
   main-net:
@@ -70,3 +80,4 @@ networks:
 volumes:
   postgres_data:
   users:
+  ssh_config:

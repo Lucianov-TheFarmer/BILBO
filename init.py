@@ -8,17 +8,15 @@ import logging
 import yaml
 import requests
 import platform
+import socket
+import json
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 BUILD = False
-
-def load_ngrok_token():
-    with open('config/ngrok.yml', 'r') as file:
-        config = yaml.safe_load(file)
-    return config['ngrok']['auth_token']
 
 def run_command(command):
     logger.debug(f"Running command: {command}")
@@ -57,7 +55,7 @@ def is_docker_running():
 
 def start_docker():
     os_type = platform.system()
-    logger.info(f"Starting Docker on {os_type}...")
+    logger.info(f"🐳 Starting Docker on {os_type}...")
     if os_type == "Windows":
         docker_desktop_path = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
         subprocess.Popen([docker_desktop_path], shell=True)
@@ -82,69 +80,163 @@ def is_docker_desktop_running():
             return False # systemctl não encontrado
     return False
 
-def fetch_ngrok_url():
+def get_server_ip():
+    """Detecta IP do servidor (público se possível, senão local)"""
     try:
-        response = requests.get('http://localhost:4040/api/tunnels')
-        tunnels = response.json()['tunnels']
-        for tunnel in tunnels:
-            if tunnel['proto'] == 'https':
-                return tunnel['public_url']
+        # Tentar obter IP público a partir do container SSH
+        result = subprocess.run([
+            "docker", "exec", "ssh-container", 
+            "curl", "-s", "https://ipinfo.io/ip"
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
     except Exception as e:
-        logger.error(f"Failed to fetch ngrok URL: {e}")
-    return None
+        logger.debug(f"Failed to get IP from SSH container: {e}")
+    
+    try:
+        # Fallback: IP público do host
+        response = requests.get('https://ipinfo.io/ip', timeout=5)
+        return response.text.strip()
+    except:
+        # Fallback final: IP local
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "localhost"
+        
+def wait_for_ssh_ready(timeout=30):
+    """Aguarda SSH container estar pronto"""
+    logger.info("🔑 Waiting for SSH server...")
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            # Verificar se a porta 2222 está respondendo
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex(('localhost', 2222))
+            sock.close()
+            if result == 0:
+                return True
+        except:
+            pass
+        time.sleep(2)
+    return False
+
+def display_startup_banner():
+    """Mostra banner de inicialização"""
+    print("\n" + "=" * 90)
+    print()
+    print(" " * 28 + "██████╗ ██╗██╗     ██████╗  ██████╗ ")
+    print(" " * 28 + "██╔══██╗██║██║     ██╔══██╗██╔═══██╗")
+    print(" " * 28 + "██████╔╝██║██║     ██████╔╝██║   ██║")
+    print(" " * 28 + "██╔══██╗██║██║     ██╔══██╗██║   ██║")
+    print(" " * 28 + "██████╔╝██║███████╗██████╔╝╚██████╔╝")
+    print(" " * 28 + "╚═════╝ ╚═╝╚══════╝╚═════╝  ╚═════╝ ")
+    print()
+    print(" " * 3 + "Bioinformatics Integration for Large-scale Biological Operations in RNA-seq Analysis")
+    print()
+    print(" " * 31 + "Universidade Federal de Lavras")
+    print(" " * 3 + "Silva, V.L.C.; Alvarenga, J.V.R.; Linhares-Neto, M.V.; Noman, M.; Chalfun-Junior, A.")
+    print()
+    print("=" * 90)
+    print()
+
+def display_ssh_connection_info():
+    """Mostra informações de conexão SSH em formato elegante"""
+    server_ip = get_server_ip()
+    
+    print("\n" + "=" * 90)
+    print("🔧 SSH CONNECTION READY 🔧")
+    print("=" * 90)
+    print(f"🌐 Server IP    : {server_ip}")
+    print(f"🔌 SSH Port     : 2222")
+    print(f"👤 User         : bilbo")
+    print(f"🔐 Password     : bilbo123")
+    print(f"⏰ Started at   : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 90)
+    print()
+    print("📋 CONNECTION COMMAND:")
+    print("─" * 90)
+    print(f"ssh -L 8000:bioinfo-container:8000 bilbo@{server_ip} -p 2222")
+    print("─" * 90)
+    print()
+    print("🌍 ACCESS URL:")
+    print("─" * 90)
+    print("http://localhost:8000/frontend")
+    print("─" * 90)
+    print()
+    print("📝 NOTES:")
+    print("• Multiple users can use the same command simultaneously")
+    print("• Each user will have their own isolated session")
+    print("• Keep this terminal open while using the application")
+    print()
+    print("🚀 Application is ready! Press Ctrl+C to stop.")
+    print("=" * 90)
 
 def wait_for_backend_ready(url="http://localhost:8000/docs", timeout=60):
-    logger.info("\nStarting FastAPI...")
+    logger.info("⚙️  Starting FastAPI backend...")
     start = time.time()
     while time.time() - start < timeout:
         try:
             r = requests.get(url)
             if r.status_code == 200:
+                logger.info("✅ FastAPI backend is ready!")
                 return True
         except Exception:
             pass
         time.sleep(1)
-    logger.error("Timeout waiting for the FastAPI backend.")
+    logger.error("❌ Timeout waiting for the FastAPI backend.")
     return False
 
 def main():
+    # Mostrar banner de inicialização
+    display_startup_banner()
+    
     if not is_docker_running():
         if not is_docker_desktop_running():
             start_docker()
             if not is_docker_running():
-                logger.error("Failed to start Docker. Please start Docker manually.")
+                logger.error("❌ Failed to start Docker. Please start Docker manually.")
                 return
 
     try:
         if BUILD:
-            logger.info("\nBuilding Docker containers...\n")
+            logger.info("\n🔨 Building Docker containers...\n")
             build_rc = run_command_dynamic_output("docker-compose build")
             if build_rc != 0:
-                logger.error("Docker build failed.")
+                logger.error("❌ Docker build failed.")
                 stop_containers()
                 sys.exit(1)
 
-        logger.info("Starting Docker containers...")
+        logger.info("🚀 Starting Docker containers...")
         up_process = run_command("docker-compose up -d")
         up_process.wait()
+        logger.info("✅ Docker containers started!")
 
-        # Wait for the backend to be ready before fetching the ngrok URL
-        wait_for_backend_ready()
+        # Wait for the backend to be ready
+        if not wait_for_backend_ready():
+            return
 
-        logger.info("\nFetching ngrok URL...")
-        time.sleep(5)  # Wait for ngrok to initialize
-        ngrok_url = fetch_ngrok_url()
-        if ngrok_url:
-            logger.info(f"\nNgrok URL: {ngrok_url}/frontend\n")
+        # Wait for SSH server to be ready
+        if wait_for_ssh_ready():
+            logger.info("✅ SSH server is ready!")
+            
+            # Mostrar informações de conexão
+            display_ssh_connection_info()
+            
+            # Aguardar indefinidamente
+            while True:
+                time.sleep(1)
         else:
-            logger.error("Failed to retrieve ngrok URL.")
-
-        logger.info("Application is running. Press Ctrl+C to stop.")
-        while True:
-            time.sleep(1)
+            logger.error("❌ SSH server failed to start")
 
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"❌ An error occurred: {e}")
         stop_containers()
 
 if __name__ == "__main__":
