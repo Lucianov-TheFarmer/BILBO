@@ -24,7 +24,7 @@ def create_table(columns, rows=None, toggle_select_all_handler=None):
         border=ft.border.all(0.6, ft.colors.with_opacity(0.12, ft.colors.PRIMARY)),
 
         # espaçamento entre colunas (melhora legibilidade)
-        column_spacing=20,
+        column_spacing=15,  # Reduzido para economizar espaço
 
         divider_thickness=0.5,
 

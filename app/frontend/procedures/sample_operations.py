@@ -167,6 +167,21 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     tabela_amostras_local.rows.clear()
     tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
     for sample in samples:
+        
+        # Função para download do arquivo da amostra
+        async def download_sample_file(e, sample_name=sample["name"]):
+            try:
+                # Usar localhost para download direto no navegador (bioinfo-container não é acessível do navegador)
+                download_url = f"http://localhost:8000/samples/download/{sample_name}?token={token}"
+                
+                # Usar o método correto do Flet para abrir URL
+                page.launch_url(download_url)
+                await log_message(page, f"Download iniciado para {sample_name}")
+                
+            except Exception as e:
+                logger.error(f"Erro no download de {sample_name}: {e}")
+                await log_message(page, f"Erro no download de {sample_name}: {str(e)}")
+        
         tabela_amostras_local.rows.append(
             ft.DataRow(
                 cells=[
@@ -174,6 +189,11 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                     ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
+                    ft.DataCell(ft.IconButton(
+                        icon=ft.icons.DOWNLOAD,
+                        tooltip="Baixar arquivo da amostra",
+                        on_click=download_sample_file
+                    )),
                 ],
             )
         )
@@ -198,6 +218,21 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
             samples = response.json()
             tabela_amostras_local.rows.clear()
             for sample in samples:
+                
+                # Função para download do arquivo da amostra
+                async def download_sample_file(e, sample_name=sample["name"]):
+                    try:
+                        # Usar localhost para download direto no navegador (bioinfo-container não é acessível do navegador)
+                        download_url = f"http://localhost:8000/samples/download/{sample_name}?token={token}"
+                        
+                        # Usar o método correto do Flet para abrir URL
+                        page.launch_url(download_url)
+                        await log_message(page, f"Download iniciado para {sample_name}")
+                        
+                    except Exception as e:
+                        logger.error(f"Erro no download de {sample_name}: {e}")
+                        await log_message(page, f"Erro no download de {sample_name}: {str(e)}")
+                
                 tabela_amostras_local.rows.append(
                     ft.DataRow(
                         cells=[
@@ -205,6 +240,11 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                             ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Checkbox()),
+                            ft.DataCell(ft.IconButton(
+                                icon=ft.icons.DOWNLOAD,
+                                tooltip="Baixar arquivo da amostra",
+                                on_click=download_sample_file
+                            )),
                         ],
                     )
                 )

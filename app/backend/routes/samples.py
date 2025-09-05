@@ -298,3 +298,60 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
             "name": sample_stage.name,
         })
     return samples
+
+@router.get("/samples/download/{sample_name}")
+def download_sample_file(sample_name: str, token: str = None, db: Session = Depends(get_db)):
+    """Download a sample file with token authentication."""
+    from fastapi.responses import FileResponse
+    from jose import jwt, JWTError
+    from ..utils import SECRET_KEY, ALGORITHM
+    import os
+    
+    # Autenticação via token na query string (para downloads diretos)
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    # Obter usuário pelo username
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    user_id = user.id
+    
+    # Verificar se a amostra existe no banco de dados e pertence ao usuário
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.name == sample_name,
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == user_id
+    ).first()
+    
+    if not db_sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found or access denied")
+    
+    # Determinar o caminho do arquivo
+    sra_code = db_sample_stage.sra_code
+    file_path = f"../users/{user_id}/samples/{sra_code}/{sample_name}"
+    
+    # Verificar se o arquivo existe
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Verificar se o arquivo não está vazio
+    if os.path.getsize(file_path) == 0:
+        raise HTTPException(status_code=422, detail="File is empty")
+    
+    # Retornar o arquivo para download
+    return FileResponse(
+        path=file_path,
+        filename=sample_name,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={sample_name}"}
+    )

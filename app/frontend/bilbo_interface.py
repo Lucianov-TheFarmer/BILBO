@@ -37,6 +37,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
             ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Status",  weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text(" ")),
+            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
         ],
         rows=[],
     )
@@ -53,7 +54,28 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
 
     # Function to toggle buttons
     async def toggle_buttons(controls, tabela):
-        container_amostras.content.controls = [tabela] + controls
+        # Atualiza o container mantendo o mesmo padrão de layout com scroll horizontal
+        container_amostras.content.controls = [
+            # Container com scroll horizontal para a tabela
+            ft.Container(
+                expand=True,
+                content=ft.Row(
+                    expand=True,
+                    scroll=ft.ScrollMode.AUTO,  # Scroll horizontal
+                    controls=[
+                        ft.Container(
+                            content=tabela,
+                            width=650,  # Largura mínima para acomodar todas as colunas
+                        )
+                    ]
+                )
+            ),
+            # Botões em container separado (sem scroll horizontal)
+            ft.Column(
+                spacing=10,
+                controls=controls
+            )
+        ]
         page.update()
 
     async def adicionar_amostra_handler(e):
@@ -290,14 +312,33 @@ async def show_bilbo_interface(page, logout, username, token, user_id):  # Updat
         shadow=ft.BoxShadow(blur_radius=8, spread_radius=1, color=ft.colors.with_opacity(0.25, ft.colors.BLACK)),
         padding=ft.padding.all(12),
         margin=ft.margin.only(0, 5, 0, 0),
-        content=ft.ListView(
-            expand=1,
+        content=ft.Column(
+            expand=True,
             spacing=15,
             controls=[
-                tabela_amostras_local,
-                create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
-                create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
-                create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
+                # Container com scroll horizontal para a tabela
+                ft.Container(
+                    expand=True,
+                    content=ft.Row(
+                        expand=True,
+                        scroll=ft.ScrollMode.AUTO,  # Scroll horizontal
+                        controls=[
+                            ft.Container(
+                                content=tabela_amostras_local,
+                                width=650,  # Largura mínima para acomodar todas as colunas
+                            )
+                        ]
+                    )
+                ),
+                # Botões em container separado (sem scroll horizontal)
+                ft.Column(
+                    spacing=10,
+                    controls=[
+                        create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
+                        create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
+                        create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
+                    ]
+                )
             ]
         )
     )   

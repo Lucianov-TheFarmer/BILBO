@@ -33,7 +33,7 @@ services:
       - USER_PASSWORD=bilbo123
       - USER_NAME=bilbo
     ports:
-      - "0.0.0.0:2222:2222"
+      - "2222:2222"
     volumes:
       - ssh_config:/config
     networks:
