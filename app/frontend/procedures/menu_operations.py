@@ -9,6 +9,7 @@ from .contrasts import show_contrasts_modal
 from .preprocess import show_preprocess_modal, show_exploratory_dropdown
 from .deg import run_deg_analysis, show_deg_results
 from .results import show_barplots_table, show_venn_modal, show_heatmap_modal
+from .upload import show_upload_fastq_modal
 import asyncio
 
 def create_menu_item(label, close_on_click=True, style=None, on_click=None):
@@ -46,7 +47,10 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
             ft.SubmenuButton(
                 content=ft.Text("Amostras"),
                 controls=[
-                    create_menu_item("Adicionar FASTQ"),
+                    create_menu_item(
+                        "Adicionar FASTQ",
+                        on_click=lambda e: (print("DEBUG: Clique detectado no menu Adicionar FASTQ"), asyncio.run(show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)))[1]
+                    ),
                     create_menu_item("Adicionar via URL"),
                     create_menu_item(
                         "Adicionar via SRA",

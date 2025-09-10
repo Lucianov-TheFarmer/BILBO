@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from ..db.database import get_db
@@ -83,33 +84,60 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     # Remover o sufixo do nome do arquivo, se existir (.fastq, _1.fastq ou _2.fastq)
     sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "").replace(".fastq", "")
 
-    db_sample_stage = db.query(SampleStage).filter(
-        SampleStage.sra_code == sra_code_basename,  # Usar apenas o basename
+    # Buscar todas as amostras com este basename para detectar o tipo
+    all_samples = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code_basename,
         SampleStage.stage_id == 1,
         SampleStage.user_id == current_user.id
-    ).first()
+    ).all()
 
-    if db_sample_stage is None:
+    if not all_samples:
         raise HTTPException(status_code=404, detail="Sample not found")
 
     user_id = current_user.id
 
-    db.delete(db_sample_stage)
+    # Detectar tipo de sequenciamento baseado nos nomes dos arquivos
+    sample_names = [sample.name for sample in all_samples]
+    is_paired_end = any("_1.fastq" in name or "_2.fastq" in name for name in sample_names)
+
+    # Excluir todas as entradas do banco
+    for sample in all_samples:
+        db.delete(sample)
     db.commit()
 
-    # Verificar e excluir arquivos em subdiretórios
-    for suffix in ["_1.fastq", "_2.fastq"]:
-        file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
+    # Excluir arquivos baseado no tipo detectado
+    if is_paired_end:
+        # Paired-End: tentar excluir _1.fastq e _2.fastq
+        for suffix in ["_1.fastq", "_2.fastq"]:
+            file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
+                except Exception as e:
+                    logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
+            else:
+                logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
+    else:
+        # Single-End: tentar excluir .fastq
+        file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}.fastq"
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
                 logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
             except Exception as e:
                 logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
-                # Não levanta HTTPException aqui, apenas loga o erro
         else:
             logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
-            # Não levanta HTTPException, apenas loga o aviso
+
+    # Tentar remover o diretório se estiver vazio
+    sample_dir = f"../users/{user_id}/samples/{sra_code_basename}"
+    try:
+        if os.path.exists(sample_dir) and not os.listdir(sample_dir):
+            os.rmdir(sample_dir)
+            logger.info(f"Diretório {sample_dir} removido com sucesso.")
+    except Exception as e:
+        logger.warning(f"Não foi possível remover diretório {sample_dir}: {e}")
 
     return {"message": "Sample and associated files deleted successfully"}
 
