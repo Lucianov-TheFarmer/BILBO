@@ -12,19 +12,18 @@ from .results import show_barplots_table, show_venn_modal, show_heatmap_modal
 import asyncio
 
 def create_menu_item(label, close_on_click=True, style=None, on_click=None):
-    """Helper function to create a menu item button."""
     return ft.MenuItemButton(
         content=ft.Text(label),
         close_on_click=close_on_click,
-        style=style or ft.ButtonStyle(bgcolor={ft.ControlState.HOVERED: ft.colors.PRIMARY_CONTAINER}),
-        on_click=on_click,  # Pass the on_click handler
+        style=style or ft.ButtonStyle(bgcolor={"hovered": "primary"}),
+        on_click=on_click,
     )
 
 async def mudar_tema(page):
-    if page.theme_mode == ft.ThemeMode.LIGHT:
-        page.theme_mode = ft.ThemeMode.DARK
+    if page.theme_mode == "light":
+        page.theme_mode = "dark"
     else:
-        page.theme_mode = ft.ThemeMode.LIGHT
+        page.theme_mode = "light"
     page.update()
 
 def create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
@@ -114,13 +113,13 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                     create_menu_item(
                         "Ver resultados de DEG",
                         on_click=lambda e: asyncio.run(
-                            show_deg_results(page, token, user_id, page.controls[1].controls[0].controls[0])  # container_amostras
+                            show_deg_results(page, token, user_id, page.controls[1].controls[0].controls[0])
                         )
                     ),
                     create_menu_item(
                         "Barplots (Quant. genes Up e Down)",
                         on_click=lambda e: asyncio.run(
-                            show_barplots_table(page, token, user_id, page.controls[1].controls[0].controls[0])  # Mostra a tabela, não o modal
+                            show_barplots_table(page, token, user_id, page.controls[1].controls[0].controls[0])
                         )
                     ),
                     create_menu_item(

@@ -18,12 +18,12 @@ def create_tabela_amostras_qc(page, token):  # Updated function signature
         page.update()
 
     tabela_amostras_qc = ft.DataTable(
-        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
+        heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Identificação", weight="bold")),
+            ft.DataColumn(ft.Text("Status", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),  # Add checkbox to the header
-            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),  # Add actions column
+            ft.DataColumn(ft.Text("Ações", weight="bold")),  # Add actions column
         ],
         rows=[],
     )
@@ -37,25 +37,22 @@ async def update_quality_analysis_table(page, token, user_id):
             if response.status_code == 200:
                 samples = response.json()
                 logger.info(f"Data received from backend: {samples}")
-                tabela_amostras_qc.rows.clear()  # Limpar as linhas existentes na tabela
+                tabela_amostras_qc.rows.clear()
                 for sample in samples:
-                    # Criar um handler síncrono para chamar a função assíncrona
                     def view_sample_details_handler(e, s=sample["name"]):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC"))
-
-                    # Adicionar uma nova linha para cada amostra retornada
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
                             cells=[
-                                ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], style=ft.TextStyle(size=12))),  # Mostrar o nome ou o sra_code
-                                ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Checkbox()),  # Adicionar checkbox para seleção
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),  # Botão para visualizar detalhes
+                                ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], size=12)),
+                                ft.DataCell(ft.Text(sample["status"], size=12)),
+                                ft.DataCell(ft.Checkbox()),
+                                ft.DataCell(ft.IconButton(icon="visibility", on_click=view_sample_details_handler)),
                             ],
                         )
                     )
                 logger.info("Table updated successfully with new data.")
-                page.update()  # Atualizar a página para refletir as mudanças na tabela
+                page.update()
             else:
                 logger.error(f"Erro ao obter amostras processadas: {response.status_code} - {response.text}")
     except Exception as e:
@@ -88,7 +85,6 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
     async def confirm_delete(e):
         selected_samples = []
 
-        # Corrigir a seleção para pares de amostras
         for row in tabela_amostras_qc.rows:
             if isinstance(row.cells[2].content, ft.Checkbox) and row.cells[2].content.value:
                 sample_name = row.cells[0].content.value
@@ -122,14 +118,14 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
         title=ft.Text("Confirmar exclusão"),
         content=ft.TextField(
             hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
-            border_radius=ft.border_radius.all(4),
+            border_radius=4,
             multiline=False,
             expand=1
         ),
         actions=[
             ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_excluir_analise)
@@ -140,7 +136,6 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            # Obter amostras baixadas (stage_id=1)
             response_stage_1 = await client.get("http://bioinfo-container:8000/samples/stages/1", headers=headers)
             if response_stage_1.status_code == 200:
                 downloaded_samples = response_stage_1.json()
@@ -149,7 +144,6 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 logger.error(f"Erro ao obter amostras baixadas: {response_stage_1.status_code} - {response_stage_1.text}")
                 downloaded_samples = []
 
-            # Obter amostras já analisadas (stage_id=2)
             response_stage_2 = await client.get("http://bioinfo-container:8000/samples/stages/2", headers=headers)
             if response_stage_2.status_code == 200:
                 analyzed_samples = {sample["name"].replace(".html", ".fastq") for sample in response_stage_2.json()}
@@ -158,14 +152,12 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_2.status_code} - {response_stage_2.text}")
                 analyzed_samples = set()
 
-            # Filtrar amostras baixadas que ainda não foram analisadas
             samples = [sample for sample in downloaded_samples if sample["name"] not in analyzed_samples]
             logger.info(f"Amostras disponíveis para análise de qualidade: {samples}")
 
     except Exception as e:
         logger.error(f"An error occurred while fetching samples: {e}", exc_info=True)
 
-    # Verificar se as amostras estão sendo corretamente processadas
     if not samples:
         logger.warning("Nenhuma amostra disponível para análise de qualidade após o filtro.")
     else:
@@ -199,9 +191,8 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         except Exception as e:
             logger.error(f"An error occurred while starting quality analysis: {e}", exc_info=True)
 
-    # Criar a tabela com as amostras disponíveis para análise de qualidade
     tabela_analise_qualidade = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color="black12",
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
@@ -211,9 +202,9 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),  # Use 'name' instead of 'sra_code'
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["name"], size=12)),  # Use 'name' instead of 'sra_code'
+                    ft.DataCell(ft.Text(sample["size"], size=12)),
+                    ft.DataCell(ft.Text(sample["status"], size=12)),
                     ft.DataCell(ft.Checkbox()),
                 ],
             ) for sample in samples
@@ -224,12 +215,12 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
     if not tabela_analise_qualidade.rows:
         empty_message = ft.Column(
             controls=[
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
-                ft.Text("Nenhuma amostra disponível para análise de qualidade", style=ft.TextStyle(size=16), text_align="center"),
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
+                ft.Text("Nenhuma amostra disponível para análise de qualidade", size=16, text_align="center"),
+                ft.Divider(height=1, thickness=1, color="black38"),
             ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment="center",
+            horizontal_alignment="center",
         )
         iniciar_analise_disabled = True  # Disable the button
     else:
@@ -259,7 +250,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 )
             ),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_analise_qualidade)

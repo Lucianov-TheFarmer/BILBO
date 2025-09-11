@@ -13,11 +13,11 @@ with open("assets/src/LFMP.png", "rb") as img_file:
 
 async def show_login_interface(page, login, register, toggle_theme, username_input, password_input):
     page.controls.clear()
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.vertical_alignment = "center"
+    page.horizontal_alignment = "center"
 
-    username_input.prefix_icon = ft.icons.PERSON_ROUNDED
-    password_input.prefix_icon = ft.icons.LOCK_ROUNDED
+    username_input.prefix_icon = "person_rounded"
+    password_input.prefix_icon = "lock_rounded"
 
     login_card = ft.Card(
         elevation=20,
@@ -28,21 +28,21 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Image(src_base64=image_base64, width=100, height=100, fit=ft.ImageFit.CONTAIN),
+                            ft.Image(src_base64=image_base64, width=100, height=100, fit="contain"),
                         ],
-                        alignment=ft.MainAxisAlignment.CENTER
+                        alignment="center"
                     ),
                     ft.Text(
                         "BILBO",
                         size=24,
-                        weight=ft.FontWeight.BOLD,
-                        text_align=ft.TextAlign.CENTER
+                        weight="bold",
+                        text_align="center"
                     ),
                     ft.Text(
                         "Bioinformatics and RNA-Seq Lab Online",
                         size=14,
-                        text_align=ft.TextAlign.CENTER,
-                        color=ft.colors.ON_SURFACE_VARIANT
+                        text_align="center",
+                        color="on_surface_variant"
                     ),
                     ft.Divider(height=20),
                     username_input,
@@ -51,26 +51,26 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                     ft.ElevatedButton(
                         text="Login",
                         on_click=login,
-                        icon=ft.icons.LOGIN,
-                        bgcolor=ft.colors.PRIMARY,
-                        color=ft.colors.WHITE,
+                        icon="login",
+                        bgcolor="primary",
+                        color="white",
                         height=45,
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))
                     ),
                     ft.OutlinedButton(
                         text="Register",
                         on_click=register,
-                        icon=ft.icons.APP_REGISTRATION,
+                        icon="app_registration",
                         height=45,
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))
                     ),
                     ft.IconButton(
-                        icon=ft.icons.LIGHT_MODE,
+                        icon="light_mode",
                         on_click=toggle_theme,
                         tooltip="Alternar Tema",
                     ),
                 ],
-                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                horizontal_alignment="stretch",
                 spacing=15
             )
         )
@@ -79,10 +79,10 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
     # Logos das instituições na parte inferior
     institution_logos = ft.Row(
         controls=[
-            ft.Image(src_base64=ufla_image_base64, height=100, fit=ft.ImageFit.CONTAIN, tooltip="Universidade Federal de Lavras"),
-            ft.Image(src_base64=lfmp_image_base64, height=100, fit=ft.ImageFit.CONTAIN, tooltip="Laboratório de Fisiologia Molecular de Plantas"),
+            ft.Image(src_base64=ufla_image_base64, height=80, fit="contain", tooltip="Universidade Federal de Lavras"),
+            ft.Image(src_base64=lfmp_image_base64, height=80, fit="contain", tooltip="Laboratório de Fisiologia Molecular de Plantas"),
         ],
-        alignment=ft.MainAxisAlignment.CENTER,
+        alignment="center",
         spacing=30
     )
 
@@ -95,8 +95,8 @@ async def show_login_interface(page, login, register, toggle_theme, username_inp
                         ft.Container(height=30),
                         institution_logos
                     ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment="center",
+                    horizontal_alignment="center",
                     expand=True
                 )
             ]

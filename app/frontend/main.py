@@ -5,7 +5,7 @@ from .bilbo_interface import show_bilbo_interface
 
 async def main(page: ft.Page):
     page.title = "Bionformatics and RNA-Seq Lab Online"
-    page.theme_mode = ft.ThemeMode.LIGHT
+    page.theme_mode = "light"
 
     page.snack_bar = ft.SnackBar(content=ft.Text(""), open=False)
     page.overlay.append(page.snack_bar)
@@ -19,7 +19,7 @@ async def main(page: ft.Page):
     username = None
 
     async def toggle_theme(e):
-        page.theme_mode = ft.ThemeMode.DARK if page.theme_mode == ft.ThemeMode.LIGHT else ft.ThemeMode.LIGHT
+        page.theme_mode = "dark" if page.theme_mode == "light" else "light"
         page.update()
 
     async def logout(e):

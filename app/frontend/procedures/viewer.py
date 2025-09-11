@@ -51,7 +51,7 @@ async def display_graph(page, token, graph_type, sample_name, user_id, analysis_
         image_base64 = base64.b64encode(image_data).decode('utf-8')
 
         # Create an Image control with the extracted image data
-        image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN)
+        image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN, expand=True)
 
         # Create an InteractiveViewer with the extracted image data
         interactive_viewer = ft.InteractiveViewer(
@@ -75,12 +75,10 @@ async def display_graph(page, token, graph_type, sample_name, user_id, analysis_
 async def display_log(page, log_content):
     """Displays the log content in the viewer."""
     try:
-        # Usar regex para substituir os espaços variáveis, ajustar o formato do texto e remover espaços iniciais
-        formatted_content = re.sub(r"\s*\|\s*", ": ", log_content)  # Substituir "|       " ou "| " por ": "
-        formatted_content = re.sub(r"\t", "    ", formatted_content)  # Substituir tabulações por espaços
-        formatted_content = re.sub(r"^\s+", "", formatted_content, flags=re.MULTILINE)  # Remover espaços no início das linhas
+        formatted_content = re.sub(r"\s*\|\s*", ": ", log_content)
+        formatted_content = re.sub(r"\t", "    ", formatted_content)
+        formatted_content = re.sub(r"^\s+", "", formatted_content, flags=re.MULTILINE)
 
-        # Adicionar quebras de linha antes dos títulos do relatório
         titles = [
             "UNIQUE READS:",
             "MULTI-MAPPING READS:",
@@ -90,15 +88,13 @@ async def display_log(page, log_content):
         for title in titles:
             formatted_content = formatted_content.replace(title, f"\n{title}")
 
-        # Criar um controle de texto com fonte monoespaçada para alinhamento
         log_control = ft.Text(
             formatted_content,
             selectable=True,
-            style=ft.TextStyle(size=12, font_family="Consolas"),  # Fonte monoespaçada
-            text_align=ft.TextAlign.LEFT,  # Alinhar o texto à esquerda
+            style=ft.TextStyle(size=12, font_family="Consolas"), 
+            text_align=ft.TextAlign.LEFT,
         )
 
-        # Atualizar o container de pré-visualização mantendo o tamanho original e permitindo rolagem
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:
@@ -107,13 +103,13 @@ async def display_log(page, log_content):
                             if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
                                 container.content.controls = [
                                     ft.Container(
-                                        expand=True,  # Garantir que o container mantenha o tamanho original
+                                        expand=True,  
                                         content=ft.ListView(
                                             controls=[log_control],
                                             spacing=10,
-                                            expand=True,  # Permitir que o conteúdo ocupe todo o espaço disponível
+                                            expand=True, 
                                         ),
-                                        padding=ft.padding.all(10),  # Adicionar padding para melhor visualização
+                                        padding=ft.padding.all(10), 
                                     )
                                 ]
                                 page.update()
@@ -122,17 +118,16 @@ async def display_log(page, log_content):
         logger.error(f"Erro ao exibir o log no viewer: {e}", exc_info=True)
 
 async def display_quantification_log(page, log_content):
-    """Exibe o conteúdo do log de quantificação no viewer."""
     try:
-        # Criar um controle de texto com fonte monoespaçada para alinhamento
+        
         log_control = ft.Text(
             log_content,
             selectable=True,
-            style=ft.TextStyle(size=12, font_family="Consolas"),  # Fonte monoespaçada
-            text_align=ft.TextAlign.LEFT,  # Alinhar o texto à esquerda
+            style=ft.TextStyle(size=12, font_family="Consolas"),  
+            text_align=ft.TextAlign.LEFT, 
         )
 
-        # Atualizar o container de pré-visualização mantendo o tamanho original e permitindo rolagem
+       
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:
@@ -141,13 +136,13 @@ async def display_quantification_log(page, log_content):
                             if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
                                 container.content.controls = [
                                     ft.Container(
-                                        expand=True,  # Garantir que o container mantenha o tamanho original
+                                        expand=True, 
                                         content=ft.ListView(
                                             controls=[log_control],
                                             spacing=10,
-                                            expand=True,  # Permitir que o conteúdo ocupe todo o espaço disponível
+                                            expand=True, 
                                         ),
-                                        padding=ft.padding.all(10),  # Adicionar padding para melhor visualização
+                                        padding=ft.padding.all(10), 
                                     )
                                 ]
                                 page.update()
@@ -159,21 +154,19 @@ async def view_alignment_log(page, token, sample_name, user_id):
     """Displays the alignment log in the viewer."""
     log_path = f"../users/{user_id}/alignment/{sample_name.replace('.bam', '')}/{sample_name.replace('.bam', 'Log.final.out')}"
     try:
-        # Ler o arquivo de log diretamente do sistema de arquivos
         if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8") as log_file:
                 log_content = log_file.read()
         else:
             log_content = f"Erro: Arquivo de log não encontrado em {log_path}"
 
-        # Atualizar o viewer com o conteúdo do log
+       
         await display_log(page, log_content)
     except Exception as e:
         logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
         await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
 
 async def view_quantification_log(page, token, sample_name, user_id):
-    """Exibe o log de quantificação no viewer."""
     log_path = f"../users/{user_id}/quantification/{sample_name}"
     try:
         if os.path.exists(log_path):
