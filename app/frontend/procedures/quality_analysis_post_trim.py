@@ -18,12 +18,12 @@ def create_tabela_amostras_pos_trimmagem(page, token):
         page.update()
 
     tabela_amostras_pos_trimmagem = ft.DataTable(
-        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
+        heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Identificação", weight="bold")),
+            ft.DataColumn(ft.Text("Status", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_pos_trimmagem)),
-            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Ações", weight="bold")),
         ],
         rows=[],
     )
@@ -65,7 +65,7 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                 ),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),
+                                ft.DataCell(ft.IconButton(icon="visibility", on_click=view_sample_details_handler)),
                             ],
                         )
                     )
@@ -158,7 +158,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            # Obter amostras trimmadas (stage_id=3)
             response_stage_3 = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
             if response_stage_3.status_code == 200:
                 trimmed_samples = response_stage_3.json()
@@ -166,8 +165,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
             else:
                 logger.error(f"Erro ao obter amostras trimmadas: {response_stage_3.status_code} - {response_stage_3.text}")
                 trimmed_samples = []
-
-            # Obter amostras já analisadas pós-trimmagem (stage_id=4)
             response_stage_4 = await client.get("http://bioinfo-container:8000/samples/stages/4", headers=headers)
             if response_stage_4.status_code == 200:
                 analyzed_samples = {sample["name"].replace("_post_trim.html", "_trimmed.fastq") for sample in response_stage_4.json()}
@@ -176,7 +173,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_4.status_code} - {response_stage_4.text}")
                 analyzed_samples = set()
 
-            # Filtrar amostras trimmadas que ainda não foram analisadas pós-trimmagem
             samples = [sample for sample in trimmed_samples if sample["name"] not in analyzed_samples]
             logger.info(f"Samples available for post-trimmagem quality analysis: {samples}")
 
@@ -214,7 +210,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
             logger.error(f"An error occurred while starting post-trimmagem quality analysis: {e}", exc_info=True)
 
     tabela_analise_qualidade = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color="black12",
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
@@ -236,12 +232,12 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
     if not tabela_analise_qualidade.rows:
         empty_message = ft.Column(
             controls=[
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
                 ft.Text("Nenhuma amostra disponível para análise de qualidade pós-trimmagem", style=ft.TextStyle(size=16), text_align="center"),
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
             ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment="center",
+            horizontal_alignment="center",
         )
         iniciar_analise_disabled = True
     else:
@@ -270,7 +266,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 )
             ),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_analise_qualidade)

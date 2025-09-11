@@ -23,10 +23,8 @@ def create_tabela_amostras_trimmadas(page, token):
 
     async def toggle_select_sample(e):
         """Toggle selection of a sample and ensure PE pairs are selected together."""
-        selected_sample = e.control.data  # Recupera o nome da amostra
-        is_selected = e.control.value  # Verifica se o checkbox foi marcado
-
-        # Verifica se a amostra é PE (possui _1_trimmed.fastq e _2_trimmed.fastq)
+        selected_sample = e.control.data 
+        is_selected = e.control.value
         if selected_sample.endswith("_1_trimmed.fastq"):
             paired_sample = selected_sample.replace("_1_trimmed.fastq", "_2_trimmed.fastq")
         elif selected_sample.endswith("_2_trimmed.fastq"):
@@ -34,23 +32,21 @@ def create_tabela_amostras_trimmadas(page, token):
         else:
             paired_sample = None
 
-        # Atualiza o estado da amostra pareada
         if paired_sample:
-            for row in tabela_amostras_trimmadas.rows:  # Certifique-se de que está iterando sobre a tabela correta
+            for row in tabela_amostras_trimmadas.rows:
                 sample_name = row.cells[0].content.content.controls[0].content.value
                 if sample_name == paired_sample:
-                    row.cells[3].content.value = is_selected  # Seleciona ou desmarca a amostra pareada
+                    row.cells[3].content.value = is_selected
                     break
 
-        # Atualiza a página para refletir as mudanças
         page.update()
 
     tabela_amostras_trimmadas = ft.DataTable(
-        heading_row_color=ft.colors.with_opacity(0.75, ft.colors.PRIMARY),
+        heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Identificação", weight="bold")),
+            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
+            ft.DataColumn(ft.Text("Status", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmadas)),
         ],
         rows=[],
@@ -67,7 +63,6 @@ async def update_trimmagem_table(page, token):
                 samples = response.json()
                 tabela_amostras_trimmadas.rows.clear()
                 for sample in samples:
-                    # Corrigir o nome para exibir _trimmed.fastq
                     tabela_amostras_trimmadas.rows.append(
                         ft.DataRow(
                             cells=[
@@ -84,7 +79,7 @@ async def update_trimmagem_table(page, token):
                                                     )
                                                 )
                                             ],
-                                            scroll=ft.ScrollMode.AUTO,
+                                            scroll="auto",
                                         ),
                                         width=130
                                     )
@@ -106,10 +101,9 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
     async def confirm_delete(e):
         selected_samples = []
 
-        # Corrigir a seleção para pares de amostras
         for row in tabela_amostras_trimmadas.rows:
             if isinstance(row.cells[3].content, ft.Checkbox) and row.cells[3].content.value:
-                sample_name = row.cells[0].content.content.controls[0].content.value  # Acessa o valor do texto diretamente
+                sample_name = row.cells[0].content.content.controls[0].content.value
                 logger.info(f"Sample selected for deletion: {sample_name}")
                 if isinstance(sample_name, str):
                     selected_samples.append(sample_name)
@@ -122,7 +116,6 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
         try:
             async with httpx.AsyncClient() as client:
                 for sample_name in selected_samples:
-                    # Corrigir o nome para evitar duplicação de _trimmed
                     if sample_name.endswith("_trimmed_trimmed.fastq"):
                         sample_name = sample_name.replace("_trimmed_trimmed.fastq", "_trimmed.fastq")
                     response = await client.delete(f"http://bioinfo-container:8000/trimmagem/{sample_name}", headers=headers)
@@ -144,7 +137,7 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
         title=ft.Text("Confirmar exclusão"),
         content=ft.TextField(
             hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
-            border_radius=ft.border_radius.all(4),
+            border_radius=4,
             multiline=False,
             expand=1,
         ),
@@ -157,33 +150,30 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
                 height=40,
             ),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_excluir_trimmagem)
 
 async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amostras_local,  atualizar_tabela):
-    """Exibe o modal de trimmagem com a tabela de seleção e o formulário de parâmetros."""
-    global tabela_selecao_trimmagem  # Use a variável global para evitar problemas de escopo
+    global tabela_selecao_trimmagem 
 
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
 
-    # Certifique-se de que a tabela foi criada antes de usá-la
     if tabela_selecao_trimmagem is None:
         tabela_selecao_trimmagem = create_tabela_selecao_trimmagem(page, token)
 
-    await update_tabela_selecao_trimmagem(page, token)  # Atualiza a tabela de seleção
+    await update_tabela_selecao_trimmagem(page, token)
 
-    # Verificar se a tabela de seleção está vazia
     if not tabela_selecao_trimmagem.rows:
         empty_message = ft.Column(
             controls=[
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
                 ft.Text("Nenhuma amostra disponível para trimmagem", style=ft.TextStyle(size=16), text_align="center"),
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
             ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment="center",
+            horizontal_alignment="center",
         )
         iniciar_trimmagem_disabled = True
     else:
@@ -198,13 +188,12 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
     async def handle_adapter_change(e):
         if e.control.value == "Personalizado":
-            dlg_modal_trimmagem.open = False  # Fecha o modal principal
+            dlg_modal_trimmagem.open = False 
             page.update()
-            page.open(custom_adapter_modal)  # Abre o modal de adaptadores personalizados
+            page.open(custom_adapter_modal)
             page.update()
 
     def is_valid_fasta(content):
-        """Valida se o conteúdo está no formato FASTA."""
         lines = content.strip().split("\n")
         if not lines or not lines[0].startswith(">"):
             return False
@@ -222,8 +211,8 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
             page.update()
             return
         custom_adapter_content = custom_adapter_field.value
-        custom_adapter_modal.open = False  # Fecha o modal de adaptadores personalizados
-        page.open(dlg_modal_trimmagem)  # Reabre o modal principal
+        custom_adapter_modal.open = False
+        page.open(dlg_modal_trimmagem)
         page.update()
 
     threads_field = ft.TextField(
@@ -247,7 +236,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 "- phred64: Codificação antiga usada em alguns arquivos.",
         width=280,
     )
-    custom_adapter_content = None  # Armazena o conteúdo do adaptador personalizado
+    custom_adapter_content = None
 
     illumina_clip_fields = [
         ft.Dropdown(
@@ -306,7 +295,6 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         ),
     ]
 
-    # Definir os campos ausentes antes de usá-los no layout do formulário
     sliding_window_fields = [
         ft.TextField(
             label="Tamanho janela",
@@ -390,7 +378,6 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         width=280,
     )
 
-    # Modal para adaptadores personalizados
     custom_adapter_field = ft.TextField(
         label="Adaptadores Personalizados",
         hint_text="Insira o conteúdo dos adaptadores aqui",
@@ -409,10 +396,9 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 height=40,
             )
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
-    # Função para iniciar a trimmagem
     async def start_trimmagem(e):
         logger.info("Start trimmagem button clicked.")
 
@@ -493,9 +479,8 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
                     if response.status_code == 200:
                         logger.info("Trimmagem concluída com sucesso!")
-                        # await log_message(page, "Trimmagem concluída com sucesso!")
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Atualiza corretamente
-                        await update_trimmagem_table(page, token)  # Corrigido para evitar erro de callable
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                        await update_trimmagem_table(page, token)
                         page.update()
                         return
                     else:
@@ -523,47 +508,47 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 ],
                 spacing=27
             ),
-            ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+            ft.Divider(height=1, thickness=1, color="black38"),
             ft.Text("IlluminaClip Parameters", style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
                     ft.Column(
                         controls=[
-                            illumina_clip_fields[0],  # Arquivo adaptadores
-                            illumina_clip_fields[1],  # Seed mismatches
-                            illumina_clip_fields[2],  # Threshold palíndromo
+                            illumina_clip_fields[0],
+                            illumina_clip_fields[1],
+                            illumina_clip_fields[2],
                         ],
                         expand=1,
                     ),
                     ft.Column(
                         controls=[
-                            illumina_clip_fields[3],  # Threshold simples
-                            illumina_clip_fields[4],  # Comprimento mínimo adaptador
+                            illumina_clip_fields[3],
+                            illumina_clip_fields[4],
                             illumina_clip_fields[5],
                         ],
                         expand=1,
                     ),
                 ],
             ),
-            ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+            ft.Divider(height=1, thickness=1, color="black38"),
             ft.Text("SlidingWindow Parameters", style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
-                    sliding_window_fields[0],  # Tamanho janela
-                    sliding_window_fields[1],  # Qualidade mínima
+                    sliding_window_fields[0],  
+                    sliding_window_fields[1],  
                 ],
                 spacing=27
             ),
-            ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+            ft.Divider(height=1, thickness=1, color="black38"),
             ft.Text("MaxInfo Parameters", style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
-                    max_info_fields[0],  # Comprimento alvo
-                    max_info_fields[1],  # Strictness
+                    max_info_fields[0], 
+                    max_info_fields[1],
                 ],
                 spacing=27
             ),
-            ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+            ft.Divider(height=1, thickness=1, color="black38"),
             ft.Text("Other Parameters", style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
@@ -586,20 +571,19 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 ],
             ),
         ],
-        alignment=ft.MainAxisAlignment.CENTER,
+        alignment="center",
     )
 
-    # Create the modal dialog
     dlg_modal_trimmagem = ft.AlertDialog(
         title=ft.Text("Iniciar Trimmagem"),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
-                    empty_message if empty_message else tabela_selecao_trimmagem,  # Show message if table is empty
-                    form_layout,  # Use the updated form layout
+                    empty_message if empty_message else tabela_selecao_trimmagem, 
+                    form_layout,
                 ],
             ),
-            width=600,  # Adjust width to fit the layout
+            width=600,
         ),
         actions=[
             ft.TextButton(
@@ -608,13 +592,12 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 disabled=iniciar_trimmagem_disabled,
             ),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_trimmagem)
 
 async def processar_trimmagem(page, token, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela):
-    """Processa a trimmagem para as amostras selecionadas."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -627,9 +610,6 @@ async def processar_trimmagem(page, token, selected_samples, container_menu_dire
             )
             if response.status_code == 200:
                 logger.info("Trimmagem concluída com sucesso!")
-                # await log_message(page, "Trimmagem concluída com sucesso!")
-
-                # Atualizar tabelas após o processamento
                 await update_trimmagem_table(page, token)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                 page.update()
@@ -641,7 +621,6 @@ async def processar_trimmagem(page, token, selected_samples, container_menu_dire
         await log_message(page, f"Erro ao processar trimmagem: {e}")
 
 async def make_request(method, url, headers=None, json=None, params=None):
-    """Helper function to make HTTP requests."""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.request(method, url, headers=headers, json=json, params=params)
@@ -655,43 +634,37 @@ async def make_request(method, url, headers=None, json=None, params=None):
         raise
 
 async def show_trimmagem_table(page, token, tabela_amostras_local):
-    """Exibe a tabela de trimmagem no container_amostras."""
     await update_trimmagem_table(page, token)
-    tabela_amostras_local.rows = tabela_amostras_trimmadas.rows  # Atualiza as linhas da tabela local
+    tabela_amostras_local.rows = tabela_amostras_trimmadas.rows 
     page.update()
 
 def create_tabela_selecao_trimmagem(page, token):
-    """Cria a tabela para seleção de amostras para trimmagem."""
     global tabela_selecao_trimmagem
 
     async def toggle_select_all_selecao(e):
-        """Seleciona ou desmarca todas as amostras na tabela de seleção."""
         for row in tabela_selecao_trimmagem.rows:
             row.cells[3].content.value = e.control.value
         page.update()
 
     tabela_selecao_trimmagem = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color="black12",
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_selecao)),  # Checkbox no cabeçalho
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_selecao)),
         ],
         rows=[],
     )
     return tabela_selecao_trimmagem
 
 async def update_tabela_selecao_trimmagem(page, token):
-    """Atualiza a tabela de seleção com amostras disponíveis para trimmagem."""
-    global tabela_selecao_trimmagem  # Use a variável global para acessar a tabela
+    global tabela_selecao_trimmagem
 
     async def toggle_select_sample(e):
-        """Seleciona ou desmarca uma amostra e garante que pares PE sejam selecionados juntos."""
-        selected_sample = e.control.data  # Recupera o código SRA da amostra
+        selected_sample = e.control.data
         is_selected = e.control.value
 
-        # Verifica se a amostra é PE (possui _1.fastq e _2.fastq)
         if selected_sample.endswith("_1.fastq"):
             paired_sample = selected_sample.replace("_1.fastq", "_2.fastq")
         elif selected_sample.endswith("_2.fastq"):
@@ -699,25 +672,21 @@ async def update_tabela_selecao_trimmagem(page, token):
         else:
             paired_sample = None
 
-        # Atualiza o estado da amostra pareada
         if paired_sample:
             for row in tabela_selecao_trimmagem.rows:
                 sample_name = row.cells[0].content.value
                 if sample_name == paired_sample:
-                    row.cells[3].content.value = is_selected  # Seleciona ou desmarca a amostra pareada
+                    row.cells[3].content.value = is_selected 
                     break
 
-        # Atualiza a página para refletir as mudanças
         page.update()
 
-    # Certifique-se de que a tabela foi criada antes de usá-la
     if tabela_selecao_trimmagem is None:
         tabela_selecao_trimmagem = create_tabela_selecao_trimmagem(page, token)
 
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            # Obter amostras baixadas (stage_id=1)
             response_stage_1 = await client.get("http://bioinfo-container:8000/samples/stages/1", headers=headers)
             if response_stage_1.status_code == 200:
                 downloaded_samples = response_stage_1.json()
@@ -725,7 +694,6 @@ async def update_tabela_selecao_trimmagem(page, token):
                 logger.error(f"Erro ao obter amostras baixadas: {response_stage_1.status_code} - {response_stage_1.text}")
                 downloaded_samples = []
 
-            # Obter amostras já trimmadas (stage_id=3)
             response_stage_3 = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
             if response_stage_3.status_code == 200:
                 trimmed_samples = {sample["sra_code"] for sample in response_stage_3.json()}
@@ -733,10 +701,8 @@ async def update_tabela_selecao_trimmagem(page, token):
                 logger.error(f"Erro ao obter amostras trimmadas: {response_stage_3.status_code} - {response_stage_3.text}")
                 trimmed_samples = set()
 
-            # Filtrar amostras baixadas que ainda não foram trimmadas
             samples = [sample for sample in downloaded_samples if sample["sra_code"] not in trimmed_samples]
 
-            # Atualizar a tabela de seleção
             tabela_selecao_trimmagem.rows.clear()
             for sample in samples:
                 tabela_selecao_trimmagem.rows.append(
