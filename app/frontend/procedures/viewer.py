@@ -67,10 +67,10 @@ async def display_graph(page, token, graph_type, sample_name, user_id, analysis_
         return interactive_viewer
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
-        return ft.Text(f"Error: File not found - {e}", color=ft.colors.RED)
+        return ft.Text(f"Error: File not found - {e}", color="red")
     except Exception as e:
         logger.error(f"Error extracting or displaying graph: {e}", exc_info=True)
-        return ft.Text(f"Error: {e}", color=ft.colors.RED)
+        return ft.Text(f"Error: {e}", color="red")
 
 async def display_log(page, log_content):
     """Displays the log content in the viewer."""

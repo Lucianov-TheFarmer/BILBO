@@ -2,14 +2,14 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from .utils import log_message  # Import the functions
-from .viewer import create_dropdown_menu, display_graph  # Updated import
+from .utils import log_message
+from .viewer import create_dropdown_menu, display_graph
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def create_tabela_amostras_qc(page, token):  # Updated function signature
+def create_tabela_amostras_qc(page, token):
     global tabela_amostras_qc
     
     async def toggle_select_all_qc(e):
@@ -22,8 +22,8 @@ def create_tabela_amostras_qc(page, token):  # Updated function signature
         columns=[
             ft.DataColumn(ft.Text("Identificação", weight="bold")),
             ft.DataColumn(ft.Text("Status", weight="bold")),
-            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),  # Add checkbox to the header
-            ft.DataColumn(ft.Text("Ações", weight="bold")),  # Add actions column
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),
+            ft.DataColumn(ft.Text("Ações", weight="bold")),
         ],
         rows=[],
     )
@@ -41,13 +41,22 @@ async def update_quality_analysis_table(page, token, user_id):
                 for sample in samples:
                     def view_sample_details_handler(e, s=sample["name"]):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC"))
+                    
+                    async def download_handler(e, s=sample["name"]):
+                        download_url = f"http://localhost:8000/download/qualidade1/{s}?token={token}"
+                        page.launch_url(download_url)
+                        await log_message(page, f"Download iniciado para {s}")
+
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], size=12)),
                                 ft.DataCell(ft.Text(sample["status"], size=12)),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.IconButton(icon="visibility", on_click=view_sample_details_handler)),
+                                ft.DataCell(ft.Row([
+                                    ft.IconButton(icon="visibility", on_click=view_sample_details_handler),
+                                    ft.IconButton(icon="download", on_click=download_handler),
+                                ])),
                             ],
                         )
                     )
@@ -59,11 +68,9 @@ async def update_quality_analysis_table(page, token, user_id):
         logger.error(f"An error occurred while updating the quality analysis table: {e}", exc_info=True)
 
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
-    # Display the dropdown menu and the initial graph
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
 
-    # Find the container_pre_visualizacao and update its content
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
@@ -163,28 +170,26 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
     else:
         logger.info(f"Número de amostras disponíveis para análise de qualidade: {len(samples)}")
 
-    # Function to select or deselect all samples
     async def toggle_select_all(e):
         for row in tabela_analise_qualidade.rows:
             row.cells[3].content.value = e.control.value
         page.update()
 
-    # Function to start quality analysis
     async def start_quality_analysis(e):
         selected_samples = [row.cells[0].content.value for row in tabela_analise_qualidade.rows if row.cells[3].content.value]
         if not selected_samples:
             logger.error("Nenhuma amostra selecionada.")
             return
         await log_message(page, f"Iniciando análise de qualidade para {selected_samples}")
-        dlg_modal_analise_qualidade.open = False  # Close the modal
-        page.update()  # Update the page to reflect the modal closure
+        dlg_modal_analise_qualidade.open = False
+        page.update()
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:  # Increase the timeout to 60 seconds
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
                 if response.status_code == 200:
                     logger.info(f"Análise de qualidade iniciada para {selected_samples} com sucesso!")
                     await update_quality_analysis_table(page, token, user_id)
-                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)  # Update the container_menu_direita
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                     page.update()
                 else:
                     logger.error(f"Erro ao iniciar análise de qualidade para {selected_samples}: {response.status_code} - {response.text}")
@@ -197,12 +202,12 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),  # Add on_change event
+            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
         ],
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(sample["name"], size=12)),  # Use 'name' instead of 'sra_code'
+                    ft.DataCell(ft.Text(sample["name"], size=12)),
                     ft.DataCell(ft.Text(sample["size"], size=12)),
                     ft.DataCell(ft.Text(sample["status"], size=12)),
                     ft.DataCell(ft.Checkbox()),
@@ -211,7 +216,6 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         ],
     )
 
-    # Check if the table is empty
     if not tabela_analise_qualidade.rows:
         empty_message = ft.Column(
             controls=[
@@ -222,19 +226,18 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
             alignment="center",
             horizontal_alignment="center",
         )
-        iniciar_analise_disabled = True  # Disable the button
+        iniciar_analise_disabled = True
     else:
         empty_message = None
-        iniciar_analise_disabled = False  # Enable the button
+        iniciar_analise_disabled = False
 
-    # Create the modal dialog
     dlg_modal_analise_qualidade = ft.AlertDialog(
         title=ft.Text("Análise de Qualidade"),
         content=ft.Container(
             content=ft.ListView(
                 spacing=10,
                 controls=[
-                    empty_message if empty_message else tabela_analise_qualidade,  # Show message if table is empty
+                    empty_message if empty_message else tabela_analise_qualidade,
                 ]
             ),
             width=520,
@@ -246,7 +249,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=200,
                     height=40,
-                    on_click=start_quality_analysis if not iniciar_analise_disabled else None,  # Disable click if no samples
+                    on_click=start_quality_analysis if not iniciar_analise_disabled else None,
                 )
             ),
         ],

@@ -41,6 +41,11 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                 for sample in samples:
                     def view_sample_details_handler(e, s=sample["name"]):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim"))
+                    
+                    async def download_handler(e, s=sample["name"]):
+                        download_url = f"http://localhost:8000/download/qualidade2/{s}?token={token}"
+                        page.launch_url(download_url)
+                        await log_message(page, f"Download iniciado para {s}")
 
                     tabela_amostras_pos_trimmagem.rows.append(
                         ft.DataRow(
@@ -65,7 +70,10 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                 ),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.IconButton(icon="visibility", on_click=view_sample_details_handler)),
+                                ft.DataCell(ft.Row([
+                                    ft.IconButton(icon="visibility", on_click=view_sample_details_handler),
+                                    ft.IconButton(icon="download", on_click=download_handler),
+                                ])),
                             ],
                         )
                     )
@@ -78,11 +86,9 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
         logger.error(f"An error occurred while updating the post-trimmagem quality analysis table: {e}", exc_info=True)
 
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
-    # Display the dropdown menu and the initial graph
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
 
-    # Find the container_pre_visualizacao and update its content
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
@@ -104,12 +110,11 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
     async def confirm_delete(e):
         selected_samples = []
 
-        # Correctly access the text inside the Container
         for row in tabela_amostras_pos_trimmagem.rows:
             if isinstance(row.cells[2].content, ft.Checkbox) and row.cells[2].content.value:
-                container = row.cells[0].content  # This is the Container
+                container = row.cells[0].content
                 if isinstance(container, ft.Container) and isinstance(container.content, ft.Row):
-                    text_widget = container.content.controls[0].content  # Access the Text widget inside the Row
+                    text_widget = container.content.controls[0].content
                     if isinstance(text_widget, ft.Text):
                         selected_samples.append(text_widget.value)
 
@@ -140,14 +145,14 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
         title=ft.Text("Confirmar exclusão"),
         content=ft.TextField(
             hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
-            border_radius=ft.border_radius.all(4),
+            border_radius=4,
             multiline=False,
             expand=1
         ),
         actions=[
             ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_excluir_analise)
@@ -220,9 +225,9 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["name"], size=12)),
+                    ft.DataCell(ft.Text(sample["size"], size=12)),
+                    ft.DataCell(ft.Text(sample["status"], size=12)),
                     ft.DataCell(ft.Checkbox()),
                 ],
             ) for sample in samples

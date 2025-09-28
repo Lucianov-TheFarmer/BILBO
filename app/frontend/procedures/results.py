@@ -43,7 +43,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     )
     btn = ft.ElevatedButton(
         "Gerar novo barplot",
-        icon=ft.icons.ADD,
+        icon="add",
         on_click=lambda e: asyncio.run(show_barplots_modal(page, token, user_id, container_amostras)),
     )
     container_amostras.content.controls = [table, btn]

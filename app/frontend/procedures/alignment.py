@@ -445,7 +445,7 @@ async def show_genomes_modal(page, token, user_id):
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
             ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Ações"), text_align="center"),
+            ft.DataColumn(ft.Text("Ações")),
         ],
         rows=[],
     )

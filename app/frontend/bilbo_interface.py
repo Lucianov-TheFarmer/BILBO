@@ -4,12 +4,11 @@ from functools import partial
 from .procedures.menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
-from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, show_trimmagem_table, delete_trimmed_samples
+from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_trimmadas, update_trimmagem_table, delete_trimmed_samples
 from .procedures.quality_analysis_post_trim import show_quality_analysis_post_trim_modal, create_tabela_amostras_pos_trimmagem, update_tabela_amostras_pos_trimmagem, delete_quality_analysis_post_trim_results
 from .procedures.alignment import show_alignment_modal, show_genomes_modal, create_tabela_alinhamento, update_tabela_alinhamento, excluir_alinhamento
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
 from .procedures.utils import log_message
-# 1. Importando o dicionário de cores e os componentes atualizados
 from .components.general_components import create_table, create_button
 import websockets
 import httpx
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
-
 # Disable FastAPI access logs
 uvicorn_access_logger = logging.getLogger("uvicorn.access")
 uvicorn_access_logger.setLevel(logging.WARNING)
@@ -32,6 +30,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     print("Entering show_bilbo_interface")
     page.controls.clear()
 
+    # Definição da tabela principal que será usada para diferentes estágios
     tabela_amostras_local = create_table(
         columns=[
             ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
@@ -42,37 +41,37 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         ],
         rows=[],
     )
+    
+    # Criação das tabelas específicas para cada estágio
     tabela_amostras_qc = create_tabela_amostras_qc(page, token)
     tabela_amostras_trimmadas = create_tabela_amostras_trimmadas(page, token)
     tabela_amostras_pos_trimmagem = create_tabela_amostras_pos_trimmagem(page, token)
     tabela_alinhamento = create_tabela_alinhamento(page, token)
     tabela_quantificacao = create_tabela_quantificacao(page, token)
 
-    async def toggle_buttons(controls, tabela):
-        # Atualiza o container mantendo o mesmo padrão de layout com scroll horizontal
-        container_amostras.content.controls = [
-            # Container com scroll horizontal para a tabela
-            ft.Container(
-                expand=True,
-                content=ft.Row(
-                    expand=True,
-                    scroll=ft.ScrollMode.AUTO,  # Scroll horizontal
-                    controls=[
-                        ft.Container(
-                            content=tabela,
-                            width=650,  # Largura mínima para acomodar todas as colunas
-                        )
-                    ]
-                )
-            ),
-            # Botões em container separado (sem scroll horizontal)
-            ft.Column(
-                spacing=10,
-                controls=controls
-            )
-        ]
+    # --- Container principal para a área de amostras ---
+    # Usando ListView para um layout simples de cima para baixo
+    container_amostras = ft.Container(
+        expand=2,
+        bgcolor="surface",
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
+        padding=ft.padding.all(12),
+        margin=ft.margin.only(0, 5, 0, 0),
+        content=ft.ListView(
+            expand=True,
+            spacing=15,
+            controls=[] # Os controles serão preenchidos dinamicamente
+        )
+    )
+
+    # Função para alternar a tabela e os botões exibidos no container
+    async def toggle_buttons(tabela, controls):
+        # O content do container é um ListView, então podemos simplesmente redefinir seus controles
+        container_amostras.content.controls = [tabela] + controls
         page.update()
 
+    # --- Handlers para os botões ---
     async def adicionar_amostra_handler(e):
         await adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local)
 
@@ -122,68 +121,67 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await log_message(page, "Nenhuma amostra selecionada para exclusão.")
             return
         await excluir_quantificacao(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
-
+    
+    # --- Lógica para atualizar a interface com base no estágio selecionado ---
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
         if stage_id == 1:
-            await toggle_buttons([
-                create_button("Adicionar amostra via SRA", adicionar_amostra_handler, color="primary"),
-                create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color="red"),
-                create_button("Baixar amostras pendentes", baixar_amostras_handler, color="green"),
-            ], tabela_amostras_local)
+            await toggle_buttons(
+                tabela=tabela_amostras_local,
+                controls=[
+                    create_button("Adicionar amostra via SRA", adicionar_amostra_handler, expand=True),
+                    create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color="red", expand=True),
+                    create_button("Baixar amostras pendentes", baixar_amostras_handler, color="green", expand=True),
+                ]
+            )
         elif stage_id == 2:
-            await toggle_buttons([
-                analisar_qualidade_button,
-                excluir_qualidade_button,
-            ], tabela_amostras_qc)
+            await toggle_buttons(
+                tabela=tabela_amostras_qc,
+                controls=[
+                    create_button("Analisar qualidade", show_quality_analysis_modal_handler, color="green", expand=True),
+                    create_button("Excluir resultados de qualidade", excluir_qualidade_handler, color="red", expand=True),
+                ]
+            )
         elif stage_id == 3:
-            await show_trimmagem_table(page, token, tabela_amostras_local)
-            await toggle_buttons([
-                iniciar_trimmagem_button,
-                excluir_trimmagem_button,
-            ], tabela_amostras_local)
+            await update_trimmagem_table(page, token)
+            await toggle_buttons(
+                tabela=tabela_amostras_trimmadas,
+                controls=[
+                    create_button("Iniciar trimmagem", show_trimmagem_modal_handler, expand=True),
+                    create_button("Excluir amostras trimmadas", excluir_amostras_trimmadas_handler, color="red", expand=True),
+                ]
+            )
         elif stage_id == 4:
             await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
-            await toggle_buttons([
-                create_button("Analisar qualidade (pós trimmagem)", show_quality_analysis_post_trim_modal_handler, color="green"),
-                create_button("Excluir resultados de qualidade", excluir_qualidade_post_trim_handler, color="red"),
-            ], tabela_amostras_pos_trimmagem)
+            await toggle_buttons(
+                tabela=tabela_amostras_pos_trimmagem,
+                controls=[
+                    create_button("Analisar qualidade (pós trimmagem)", show_quality_analysis_post_trim_modal_handler, color="green", expand=True),
+                    create_button("Excluir resultados de qualidade", excluir_qualidade_post_trim_handler, color="red", expand=True),
+                ]
+            )
         elif stage_id == 5:
             await update_tabela_alinhamento(page, token, user_id)
-            await toggle_buttons([
-                create_button("Iniciar alinhamento", iniciar_alinhamento_handler, color="primary"),
-                create_button("Excluir alinhamento", excluir_alinhamento_handler, color="red"),
-                create_button("Ver genomas de referência", ver_genomas_referencia_handler, color="orange"),
-            ], tabela_alinhamento)
+            await toggle_buttons(
+                tabela=tabela_alinhamento,
+                controls=[
+                    create_button("Iniciar alinhamento", iniciar_alinhamento_handler, expand=True),
+                    create_button("Excluir alinhamento", excluir_alinhamento_handler, color="red", expand=True),
+                    create_button("Ver genomas de referência", ver_genomas_referencia_handler, color="orange", expand=True),
+                ]
+            )
         elif stage_id == 6:
             await update_tabela_quantificacao(page, token, user_id)
-            await toggle_buttons([
-                create_button("Iniciar quantificação", iniciar_quantificacao_handler, color="green"),
-                create_button("Excluir quantificação", excluir_quantificacao_handler, color="red"),
-            ], tabela_quantificacao)
-
-    analisar_qualidade_button = create_button(
-        label="Analisar qualidade",
-        on_click=show_quality_analysis_modal_handler,
-        color="green",
-    )
-    excluir_qualidade_button = create_button(
-        label="Excluir resultados de qualidade",
-        on_click=excluir_qualidade_handler,
-        color="red",
-    )
-    iniciar_trimmagem_button = create_button(
-        label="Iniciar trimmagem",
-        on_click=show_trimmagem_modal_handler,
-        color="primary",
-    )
-    excluir_trimmagem_button = create_button(
-        label="Excluir amostras trimmadas",
-        on_click=excluir_amostras_trimmadas_handler,
-        color="red",
-    )
-
+            await toggle_buttons(
+                tabela=tabela_quantificacao,
+                controls=[
+                    create_button("Iniciar quantificação", iniciar_quantificacao_handler, color="green", expand=True),
+                    create_button("Excluir quantificação", excluir_quantificacao_handler, color="red", expand=True),
+                ]
+            )
+    
+    # --- O restante da sua interface (menus, etc.) ---
     container_menu_direita = ft.Container(
         expand=2,
         bgcolor="surface",
@@ -289,46 +287,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     )
 
     menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
-    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-
-    container_amostras = ft.Container(
-        expand=2,
-        bgcolor="surface",
-        border_radius=ft.border_radius.all(12),
-        shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
-        padding=ft.padding.all(12),
-        margin=ft.margin.only(0, 5, 0, 0),
-        content=ft.Column(
-            expand=True,
-            spacing=15,
-            controls=[
-                # Container com scroll horizontal para a tabela
-                ft.Container(
-                    expand=True,
-                    content=ft.Row(
-                        expand=True,
-                        scroll=ft.ScrollMode.AUTO,  # Scroll horizontal
-                        controls=[
-                            ft.Container(
-                                content=tabela_amostras_local,
-                                width=650,  # Largura mínima para acomodar todas as colunas
-                            )
-                        ]
-                    )
-                ),
-                # Botões em container separado (sem scroll horizontal)
-                ft.Column(
-                    spacing=10,
-                    controls=[
-                        create_button("Adicionar amostra via SRA", adicionar_amostra_handler),
-                        create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color=ft.colors.RED),
-                        create_button("Baixar amostras pendentes", baixar_amostras_handler, color=ft.colors.GREEN),
-                    ]
-                )
-            ]
-        )
-    )
-
+    
     container_terminal = ft.Container(
         expand=1,
         bgcolor="surface",
@@ -423,7 +382,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
     )
-    page.update()
+    
+    # Exibir o estado inicial (Estágio 1)
+    await atualizar_tabela_por_estagio_handler(None, 1)
+    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     async def connect_websocket():
         async with websockets.connect("ws://bioinfo-container:8000/ws") as websocket:

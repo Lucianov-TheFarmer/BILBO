@@ -44,7 +44,6 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
                     for sample in samples:
                         logger.info(f"Amostra {sample['sra_code']} adicionada com sucesso!")
                 elif response.status_code == 400:
-                    # Mensagem de erro para SRA inválido
                     try:
                         detail = response.json().get("detail", "")
                     except Exception:
@@ -158,23 +157,18 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     response = await make_request("GET", "http://bioinfo-container:8000/samples/", headers=headers)
     samples = response.json()
 
-    # Function to select or deselect all samples
     async def toggle_select_all(e):
         for row in tabela_amostras_local.rows:
             row.cells[3].content.value = e.control.value
         page.update()
 
     tabela_amostras_local.rows.clear()
-    tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))  # Add on_change event
+    tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))
     for sample in samples:
         
-        # Função para download do arquivo da amostra
         async def download_sample_file(e, sample_name=sample["name"]):
             try:
-                # Usar localhost para download direto no navegador (bioinfo-container não é acessível do navegador)
-                download_url = f"http://localhost:8000/samples/download/{sample_name}?token={token}"
-                
-                # Usar o método correto do Flet para abrir URL
+                download_url = f"http://localhost:8000/download/obtencao/{sample_name}?token={token}"
                 page.launch_url(download_url)
                 await log_message(page, f"Download iniciado para {sample_name}")
                 
@@ -190,7 +184,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                     ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
                     ft.DataCell(ft.IconButton(
-                        icon=ft.icons.DOWNLOAD,
+                        icon="download",
                         tooltip="Baixar arquivo da amostra",
                         on_click=download_sample_file
                     )),
@@ -198,15 +192,13 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
             )
         )
 
-    # Update stage counts
     stage_counts = {}
-    for stage_id in range(1, 7):  # Inclui todos os estágios, incluindo trimmagem (stage_id=3)
+    for stage_id in range(1, 7):
         response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
         stage_counts[stage_id] = len(response.json())
 
-    # Update the stage counts in the UI
     for i, row in enumerate(container_menu_direita.content.controls[0].rows):
-        row.cells[1].content.content.value = str(stage_counts.get(i + 1, 0))  # Atualiza a contagem para cada estágio
+        row.cells[1].content.content.value = str(stage_counts.get(i + 1, 0))
 
     page.update()
 
@@ -219,13 +211,9 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
             tabela_amostras_local.rows.clear()
             for sample in samples:
                 
-                # Função para download do arquivo da amostra
                 async def download_sample_file(e, sample_name=sample["name"]):
                     try:
-                        # Usar localhost para download direto no navegador (bioinfo-container não é acessível do navegador)
-                        download_url = f"http://localhost:8000/samples/download/{sample_name}?token={token}"
-                        
-                        # Usar o método correto do Flet para abrir URL
+                        download_url = f"http://localhost:8000/download/obtencao/{sample_name}?token={token}"
                         page.launch_url(download_url)
                         await log_message(page, f"Download iniciado para {sample_name}")
                         
@@ -241,7 +229,7 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                             ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Checkbox()),
                             ft.DataCell(ft.IconButton(
-                                icon=ft.icons.DOWNLOAD,
+                                icon="download",
                                 tooltip="Baixar arquivo da amostra",
                                 on_click=download_sample_file
                             )),
@@ -249,9 +237,8 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                     )
                 )
             page.update()
-            # Update the quality analysis table if the stage is "Análise de qualidade"
             if stage_id == 2:
-                await update_quality_analysis_table(page, token, user_id)  # Pass user_id as argument
+                await update_quality_analysis_table(page, token, user_id)
         else:
             logger.error(f"Erro ao atualizar tabela por estágio: {response.status_code} - {response.text}")
 
@@ -274,7 +261,6 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
-                        # Use uma nova conexão WebSocket para cada download
                         async with websockets.connect("ws://bioinfo-container:8000/ws") as ws:
                             while True:
                                 message = await ws.recv()
@@ -298,14 +284,14 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
     page.update()
 
-async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direita):  # Adicione container_menu_direita como argumento
+async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direita):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post("http://bioinfo-container:8000/samples/calculate_size", params={"sra_code": sra_code}, headers=headers)
             if response.status_code == 200:
                 logger.info("Tamanho das amostras atualizado com sucesso!")
-                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras)  # Atualize a tabela após calcular o tamanho
+                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras)
             else:
                 logger.error(f"Erro ao atualizar tamanho das amostras: {response.status_code} - {response.text}")
                 await log_message(page, f"Erro ao atualizar tamanho das amostras: {response.status_code} - {response.text}")

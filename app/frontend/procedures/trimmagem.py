@@ -18,7 +18,7 @@ def create_tabela_amostras_trimmadas(page, token):
 
     async def toggle_select_all_trimmadas(e):
         for row in tabela_amostras_trimmadas.rows:
-            row.cells[2].content.value = e.control.value
+            row.cells[3].content.value = e.control.value
         page.update()
 
     async def toggle_select_sample(e):
@@ -632,11 +632,6 @@ async def make_request(method, url, headers=None, json=None, params=None):
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         raise
-
-async def show_trimmagem_table(page, token, tabela_amostras_local):
-    await update_trimmagem_table(page, token)
-    tabela_amostras_local.rows = tabela_amostras_trimmadas.rows 
-    page.update()
 
 def create_tabela_selecao_trimmagem(page, token):
     global tabela_selecao_trimmagem

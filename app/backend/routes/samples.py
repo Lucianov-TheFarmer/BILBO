@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from ..db.database import get_db
-from ..db.models import SampleStage, User, Stage  # Remova 'Sample'
-from ..utils import get_current_user, manager  # Atualizado
+from ..db.models import SampleStage, User, Stage
+from ..utils import get_current_user, manager
 from pydantic import BaseModel
 import subprocess
 import asyncio
@@ -12,6 +12,8 @@ import sys
 import threading
 import os
 import logging
+from jose import jwt, JWTError
+from ..utils import SECRET_KEY, ALGORITHM
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,18 +39,15 @@ def update_sample_status(db: Session, sra_code: str, status: str):
 def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     created_samples = []
     for sra_code in request.sra_codes:
-        # Validação básica do código SRA (exemplo: SRR, ERR, DRR seguido de números)
         if not isinstance(sra_code, str) or not sra_code or not sra_code.upper().startswith(("SRR", "ERR", "DRR")) or not sra_code[3:].isdigit():
             raise HTTPException(status_code=400, detail=f"Código SRA inválido: {sra_code}")
 
-        # Check if the sample already exists
         existing_sample_stage = db.query(SampleStage).filter(
             SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
         ).first()
         if existing_sample_stage:
-            continue  # Skip existing samples
+            continue
 
-        # Create a new sample stage for stage_id 1
         db_sample_stage = SampleStage(
             stage_id=1,
             name=f"{sra_code}",
@@ -81,10 +80,8 @@ def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), cu
 
 @router.delete("/samples/{sra_code}")
 def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Remover o sufixo do nome do arquivo, se existir (.fastq, _1.fastq ou _2.fastq)
     sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "").replace(".fastq", "")
 
-    # Buscar todas as amostras com este basename para detectar o tipo
     all_samples = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code_basename,
         SampleStage.stage_id == 1,
@@ -96,18 +93,14 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
 
     user_id = current_user.id
 
-    # Detectar tipo de sequenciamento baseado nos nomes dos arquivos
     sample_names = [sample.name for sample in all_samples]
     is_paired_end = any("_1.fastq" in name or "_2.fastq" in name for name in sample_names)
 
-    # Excluir todas as entradas do banco
     for sample in all_samples:
         db.delete(sample)
     db.commit()
 
-    # Excluir arquivos baseado no tipo detectado
     if is_paired_end:
-        # Paired-End: tentar excluir _1.fastq e _2.fastq
         for suffix in ["_1.fastq", "_2.fastq"]:
             file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
             if os.path.exists(file_path):
@@ -119,7 +112,6 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
             else:
                 logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
     else:
-        # Single-End: tentar excluir .fastq
         file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}.fastq"
         if os.path.exists(file_path):
             try:
@@ -130,7 +122,6 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
         else:
             logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
 
-    # Tentar remover o diretório se estiver vazio
     sample_dir = f"../users/{user_id}/samples/{sra_code_basename}"
     try:
         if os.path.exists(sample_dir) and not os.listdir(sample_dir):
@@ -195,12 +186,10 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
 async def update_sample_status_endpoint(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
     db_sample_stage = update_sample_status(db, sra_code, status)
 
-    # Update the name if the status is "Completed"
     if status == "Completed":
         db_sample_stage.name = f"{sra_code}.fastq"
         db.commit()
 
-    # await manager.broadcast(f"Download da amostra {sra_code} {status.lower()}.")
     return {"message": f"Sample {sra_code} status updated to {status}"}
 
 @router.post("/samples/calculate_size")
@@ -235,7 +224,6 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
     size_1, size_2 = sizes
 
-    # Extrair o basename do sra_code
     sra_code_basename = sra_code.split("_")[0]
     logger.info(f"Atualizando registros para {sra_code_basename}_1.fastq e {sra_code_basename}_2.fastq")
 
@@ -261,7 +249,6 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
     db.commit()
 
     logger.info(f"Tamanhos das amostras {sra_code_basename} atualizados com sucesso.")
-    # await manager.broadcast(f"Tamanho das amostras {sra_code_basename} atualizado.")
     return {"message": "Sample sizes updated successfully"}
 
 @router.get("/samples/pending_count")
@@ -327,17 +314,9 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
         })
     return samples
 
-@router.get("/samples/download/{sample_name}")
-def download_sample_file(sample_name: str, token: str = None, db: Session = Depends(get_db)):
-    """Download a sample file with token authentication."""
-    from fastapi.responses import FileResponse
-    from jose import jwt, JWTError
-    from ..utils import SECRET_KEY, ALGORITHM
-    import os
-    
-    # Autenticação via token na query string (para downloads diretos)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token required")
+@router.get("/download/{stage_name}/{file_name}")
+def download_file(stage_name: str, file_name: str, token: str = Query(...), db: Session = Depends(get_db)):
+    """Download a file from any stage with token authentication."""
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -347,39 +326,35 @@ def download_sample_file(sample_name: str, token: str = None, db: Session = Depe
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     
-    # Obter usuário pelo username
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
     
     user_id = user.id
+
+    # Get sra_code from the database
+    sample_stage = db.query(SampleStage).filter(SampleStage.name == file_name, SampleStage.user_id == user_id).first()
+    if not sample_stage:
+        raise HTTPException(status_code=404, detail="Sample not found in database")
     
-    # Verificar se a amostra existe no banco de dados e pertence ao usuário
-    db_sample_stage = db.query(SampleStage).filter(
-        SampleStage.name == sample_name,
-        SampleStage.stage_id == 1,
-        SampleStage.user_id == user_id
-    ).first()
-    
-    if not db_sample_stage:
-        raise HTTPException(status_code=404, detail="Sample not found or access denied")
-    
-    # Determinar o caminho do arquivo
-    sra_code = db_sample_stage.sra_code
-    file_path = f"../users/{user_id}/samples/{sra_code}/{sample_name}"
-    
-    # Verificar se o arquivo existe
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found on server")
-    
-    # Verificar se o arquivo não está vazio
-    if os.path.getsize(file_path) == 0:
-        raise HTTPException(status_code=422, detail="File is empty")
-    
-    # Retornar o arquivo para download
+    sra_code = sample_stage.sra_code
+
+    path_map = {
+        "obtencao": f"../users/{user_id}/samples/{sra_code}/{file_name}",
+        "qualidade1": f"../users/{user_id}/QC/{file_name.replace('.html', '.fastq')}/{file_name.replace('.html', '_fastqc.zip')}",
+        "trimagem": f"../users/{user_id}/trimmed/{file_name}",
+        "qualidade2": f"../users/{user_id}/QC_PostTrim/{file_name.replace('_post_trim.html', '_trimmed.fastq')}/{file_name.replace('_post_trim.html', '_trimmed_fastqc.zip')}",
+        "alinhamento": f"../users/{user_id}/alignment/{sra_code}/{file_name}",
+        "quantificacao": f"../users/{user_id}/quantification/{file_name}",
+    }
+
+    file_path = path_map.get(stage_name)
+
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
     return FileResponse(
         path=file_path,
-        filename=sample_name,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={sample_name}"}
+        filename=os.path.basename(file_path),
+        media_type="application/octet-stream"
     )
