@@ -142,7 +142,7 @@ async def run_deg_analysis(page, token, user_id):
                 controls=[
                     ft.Container(height=5),
                     genome_dropdown,
-                    ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                    ft.Divider(height=1, thickness=1, color="black38"),
                     ft.Row(
                         controls=[
                             ft.DataTable(
@@ -216,7 +216,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                                             expand=True,
                                             content=ft.Text(
                                                 "Nenhum dado disponível nesta aba.",
-                                                color=ft.colors.RED,
+                                                color="red",
                                                 size=16,
                                                 weight=ft.FontWeight.BOLD,
                                                 text_align=ft.TextAlign.CENTER,
@@ -360,11 +360,11 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
 
         # Header da coluna logFC com botão de ordenação e ícone dinâmico, tudo em um container
         def logfc_header():
-            icon = ft.icons.UNFOLD_MORE
+            icon = "unfold_more"
             if sort_state["logFC"] == 1:
-                icon = ft.icons.ARROW_UPWARD
+                icon = "arrow_upward"
             elif sort_state["logFC"] == -1:
-                icon = ft.icons.ARROW_DOWNWARD
+                icon = "arrow_downward"
             return ft.Container(
                 content=ft.Row(
                     spacing=2,
@@ -378,7 +378,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                             visual_density=ft.VisualDensity.COMPACT,
                             style=ft.ButtonStyle(
                                 padding=0,
-                                bgcolor=ft.colors.TRANSPARENT,
+                                bgcolor="transparent",
                                 shape=ft.RoundedRectangleBorder(radius=4),
                             ),
                         ),
@@ -447,14 +447,14 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
             divider_thickness=1,
             show_checkbox_column=False,
             expand=True,
-            heading_row_color=ft.colors.BLACK12,
+            heading_row_color="black12",
         )
 
         notfound_text = ft.Text(
             "Nenhum gene encontrado.",
             ref=notfound_ref,
             visible=False,
-            color=ft.colors.RED,
+            color="red",
             size=16,
             weight=ft.FontWeight.BOLD,
             text_align=ft.TextAlign.CENTER,
@@ -598,7 +598,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
                             ),
                             ft.DataColumn(ft.Text(""))
                         ],
-                        heading_row_color=ft.Colors.BLACK12,
+                        heading_row_color="black12",
                         rows=[
                             ft.DataRow(
                                 cells=[
@@ -614,15 +614,15 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                             content=ft.Row(
                                                 controls=[
                                                     ft.IconButton(
-                                                        icon=ft.icons.TABLE_CHART,
-                                                        icon_color=ft.colors.GREEN,
+                                                        icon="table_chart",
+                                                        icon_color="green",
                                                         tooltip="Abrir planilha",
                                                         on_click=lambda e, s=sheet: asyncio.run(
                                                             show_sheet_as_table(page, token, user_id, s)
                                                         )
                                                     ),
                                                     ft.IconButton(
-                                                        icon=ft.icons.VISIBILITY,
+                                                        icon="visibility",
                                                         tooltip="Visualizar",
                                                         # Corrigido: passa o nome da aba (sheet) para show_deg_dropdown
                                                         on_click=lambda e, s=sheet: asyncio.run(

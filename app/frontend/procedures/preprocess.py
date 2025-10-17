@@ -195,10 +195,10 @@ async def display_exploratory_graph(page, user_id, selected_title):
             filename = fname
             break
     if not filename:
-        return ft.Text("Figura não encontrada.", color=ft.colors.RED)
+        return ft.Text(f"Figura não encontrada: {filename}", color="red")
     img_path = get_preprocess_image_path(user_id, filename)
     if not os.path.exists(img_path):
-        return ft.Text(f"Figura não encontrada: {filename}", color=ft.colors.RED)
+        return ft.Text(f"Figura não encontrada: {filename}", color="red")
     try:
         with open(img_path, "rb") as f:
             img_data = f.read()
@@ -219,4 +219,4 @@ async def display_exploratory_graph(page, user_id, selected_title):
         )
         return interactive_viewer
     except Exception as e:
-        return ft.Text(f"Erro ao carregar imagem: {e}", color=ft.colors.RED)
+        return ft.Text(f"Erro ao carregar imagem: {e}", color="red")

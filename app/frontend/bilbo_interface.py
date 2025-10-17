@@ -360,7 +360,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             expand=34,
             controls=[
                 ft.Column(
-                    expand=3,
+                    expand=2,
                     controls=[
                         container_menu_direita
                     ]
@@ -372,7 +372,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     ],
                 ),
                 ft.Column(
-                    expand=3,
+                    expand=4,
                     controls=[
                         container_amostras,
                         container_terminal
