@@ -266,11 +266,9 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                                 overflow=ft.TextOverflow.CLIP,
                             )
                         ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,  # Alinha verticalmente ao centro
                         scroll=ft.ScrollMode.ALWAYS,  # scroll horizontal individual
                         expand=True,
                     ),
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     alignment=ft.alignment.center_left,
                 )
 
@@ -531,10 +529,10 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
                                         filename = fname.format(sheet=sheet_name)
                                         break
                                 if not filename:
-                                    return ft.Text("Figura não encontrada.", color=ft.colors.RED)
+                                    return ft.Text("Figura não encontrada.", color="red")
                                 img_path = os.path.join(deg_dir, filename)
                                 if not os.path.exists(img_path):
-                                    return ft.Text(f"Figura não encontrada: {filename}", color=ft.colors.RED)
+                                    return ft.Text(f"Figura não encontrada: {filename}", color="red")
                                 try:
                                     with open(img_path, "rb") as f:
                                         img_data = f.read()
@@ -550,7 +548,7 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
                                     )
                                     return interactive_viewer
                                 except Exception as e:
-                                    return ft.Text(f"Erro ao carregar imagem: {e}", color=ft.colors.RED)
+                                    return ft.Text(f"Erro ao carregar imagem: {e}", color="red")
 
                             async def on_dropdown_change(e):
                                 selected_title = e.control.value

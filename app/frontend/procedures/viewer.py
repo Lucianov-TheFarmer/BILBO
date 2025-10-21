@@ -227,3 +227,183 @@ def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
             ]
         )
     )
+
+async def view_barplot_image(page, token, user_id, filename):
+    """Displays the barplot image in the container_pre_visualizacao."""
+    try:
+        # Constrói o caminho local do arquivo (mesmo padrão usado em deg.py)
+        import os
+        deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+        file_path = os.path.join(deg_dir, filename)
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Arquivo não encontrado: {filename}")
+        
+        # Lê a imagem diretamente do arquivo (mesmo padrão usado em deg.py)
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+        
+        # Converte para base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Cria o controle de imagem
+        image_control = ft.Image(
+            src_base64=image_base64,
+            fit=ft.ImageFit.CONTAIN,
+            expand=True
+        )
+        
+        # Cria o viewer interativo
+        interactive_viewer = ft.InteractiveViewer(
+            min_scale=0.5,
+            max_scale=15,
+            boundary_margin=ft.margin.all(10),
+            content=image_control,
+            constrained=True
+        )
+        
+        # Extrai título limpo do nome do arquivo
+        display_title = filename.replace('BARPLOT.MULTIPLO - ', '').replace('.png', '')
+        
+        # Encontra e atualiza o container_pre_visualizacao (mesmo padrão usado em deg.py e preprocess.py)
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                # Atualiza o container com a imagem
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.Column(
+                                            controls=[
+                                                ft.Container(height=10),
+                                                interactive_viewer
+                                            ],
+                                            alignment=ft.MainAxisAlignment.CENTER,
+                                            spacing=0,
+                                        )
+                                    )
+                                ]
+                                page.update()
+                                return
+        
+        # Se não encontrou o container, loga erro
+        logger.error("container_pre_visualizacao não encontrado")
+        
+    except Exception as e:
+        logger.error(f"Erro ao exibir barplot: {e}", exc_info=True)
+        # Mostra erro no container_pre_visualizacao
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.Text(
+                                            f"Erro ao carregar imagem: {e}",
+                                            color="red",
+                                            size=16,
+                                            weight=ft.FontWeight.BOLD,
+                                            text_align=ft.TextAlign.CENTER,
+                                        ),
+                                        alignment=ft.alignment.center,
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return
+
+async def view_venn_image(page, token, user_id, filename):
+    """Displays the Venn diagram image in the container_pre_visualizacao."""
+    try:
+        # Constrói o caminho local do arquivo (mesmo padrão usado em deg.py)
+        import os
+        deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+        file_path = os.path.join(deg_dir, filename)
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Arquivo não encontrado: {filename}")
+        
+        # Lê a imagem diretamente do arquivo (mesmo padrão usado em deg.py)
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+        
+        # Converte para base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Cria o controle de imagem
+        image_control = ft.Image(
+            src_base64=image_base64,
+            fit=ft.ImageFit.CONTAIN,
+            expand=True
+        )
+        
+        # Cria o viewer interativo
+        interactive_viewer = ft.InteractiveViewer(
+            min_scale=0.5,
+            max_scale=15,
+            boundary_margin=ft.margin.all(10),
+            content=image_control,
+            constrained=True
+        )
+        
+        # Extrai título limpo do nome do arquivo
+        display_title = filename.replace('VENN.DIAGRAM - ', '').replace('.png', '')
+        
+        # Encontra e atualiza o container_pre_visualizacao (mesmo padrão usado em deg.py e preprocess.py)
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                # Atualiza o container com a imagem
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.Column(
+                                            controls=[
+                                                ft.Container(height=10),
+                                                interactive_viewer
+                                            ],
+                                            alignment=ft.MainAxisAlignment.CENTER,
+                                            spacing=0,
+                                        )
+                                    )
+                                ]
+                                page.update()
+                                return
+        
+        # Se não encontrou o container, loga erro
+        logger.error("container_pre_visualizacao não encontrado")
+        
+    except Exception as e:
+        logger.error(f"Erro ao exibir diagrama de Venn: {e}", exc_info=True)
+        # Mostra erro no container_pre_visualizacao
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.Text(
+                                            f"Erro ao carregar diagrama de Venn: {e}",
+                                            color="red",
+                                            size=16,
+                                            weight=ft.FontWeight.BOLD,
+                                            text_align=ft.TextAlign.CENTER,
+                                        ),
+                                        alignment=ft.alignment.center,
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return

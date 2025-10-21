@@ -30,7 +30,7 @@ CONFIG = {
         'test_hosts': ['8.8.8.8', '1.1.1.1'],
         'test_port': 80,
         'excluded_ip_patterns': [r'^127\.', r'^169\.254\.', r'^0\.0\.0\.0$'],
-        'timeout': 10
+        'timeout': 20
     },
     'ip_patterns': {
         'windows': [

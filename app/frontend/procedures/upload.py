@@ -20,12 +20,12 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     
     arquivo_selecionado_text = ft.Text(
         "Nenhum arquivo selecionado",
-        color=ft.colors.GREY_600
+        color="grey_600"
     )
     
     tipo_sequenciamento_text = ft.Text(
         "Tipo: Não detectado",
-        color=ft.colors.GREY_600,
+        color="grey_600",
         weight=ft.FontWeight.BOLD
     )
     

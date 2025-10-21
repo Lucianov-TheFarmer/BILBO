@@ -30,14 +30,82 @@ async def create_barplot_file(token, user_id, title, contrasts):
         response.raise_for_status()
         return response.json()
 
+async def fetch_venn_files(token, user_id):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "http://localhost:8000/results/venn_files",
+            params={"user_id": user_id},
+            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+        )
+        response.raise_for_status()
+        return response.json().get("files", [])
+
+async def create_venn_file(token, user_id, title, contrasts):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/results/create_venn_file",
+            json={"user_id": user_id, "title": title, "contrasts": contrasts},
+            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def delete_venn_file(token, user_id, filename):
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(
+            "http://localhost:8000/results/delete_venn_file",
+            params={"user_id": user_id, "filename": filename},
+            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def delete_barplot_file(token, user_id, filename):
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(
+            "http://localhost:8000/results/delete_barplot_file",
+            params={"user_id": user_id, "filename": filename},
+            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+        )
+        response.raise_for_status()
+        return response.json()
+
 async def show_barplots_table(page, token, user_id, container_amostras):
+    from .viewer import view_barplot_image
+    
     files = await fetch_barplot_files(token, user_id)
+    
+    async def delete_barplot_handler(filename):
+        try:
+            await delete_barplot_file(token, user_id, filename)
+            # Recarrega a tabela após exclusão
+            await show_barplots_table(page, token, user_id, container_amostras)
+        except Exception as e:
+            # Mostra erro (poderia usar um snackbar ou toast aqui)
+            print(f"Erro ao excluir barplot: {e}")
+    
     table = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("Barplots salvos")),
+            ft.DataColumn(ft.Text("Ações")),
         ],
         rows=[
-            ft.DataRow([ft.DataCell(ft.Text(f))]) for f in files
+            ft.DataRow([
+                ft.DataCell(ft.Text(f)),
+                ft.DataCell(ft.Row([
+                    ft.IconButton(
+                        icon="visibility",
+                        tooltip="Ver barplot",
+                        on_click=lambda e, filename=f: asyncio.run(view_barplot_image(page, token, user_id, filename))
+                    ),
+                    ft.IconButton(
+                        icon="delete",
+                        icon_color="red",
+                        tooltip="Excluir barplot",
+                        on_click=lambda e, filename=f: asyncio.run(delete_barplot_handler(filename))
+                    )
+                ], spacing=5))
+            ]) for f in files
         ],
         expand=True,
     )
@@ -49,12 +117,59 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     container_amostras.content.controls = [table, btn]
     page.update()
 
+async def show_venn_table(page, token, user_id, container_amostras):
+    from .viewer import view_venn_image
+    
+    files = await fetch_venn_files(token, user_id)
+    
+    async def delete_venn_handler(filename):
+        try:
+            await delete_venn_file(token, user_id, filename)
+            # Recarrega a tabela após exclusão
+            await show_venn_table(page, token, user_id, container_amostras)
+        except Exception as e:
+            # Mostra erro (poderia usar um snackbar ou toast aqui)
+            print(f"Erro ao excluir diagrama de Venn: {e}")
+    
+    table = ft.DataTable(
+        columns=[
+            ft.DataColumn(ft.Text("Diagramas de Venn salvos")),
+            ft.DataColumn(ft.Text("Ações")),
+        ],
+        rows=[
+            ft.DataRow([
+                ft.DataCell(ft.Text(f)),
+                ft.DataCell(ft.Row([
+                    ft.IconButton(
+                        icon="visibility",
+                        tooltip="Ver diagrama de Venn",
+                        on_click=lambda e, filename=f: asyncio.run(view_venn_image(page, token, user_id, filename))
+                    ),
+                    ft.IconButton(
+                        icon="delete",
+                        icon_color="red",
+                        tooltip="Excluir diagrama de Venn",
+                        on_click=lambda e, filename=f: asyncio.run(delete_venn_handler(filename))
+                    )
+                ], spacing=5))
+            ]) for f in files
+        ],
+        expand=True,
+    )
+    btn = ft.ElevatedButton(
+        "Gerar novo diagrama de Venn",
+        icon="add",
+        on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id, container_amostras)),
+    )
+    container_amostras.content.controls = [table, btn]
+    page.update()
+
 async def show_deg_modal(page, token, user_id, title, max_select=None, show_select_all=False, on_confirm=None):
     sheets = await fetch_deg_sheets(token, user_id)
     selected = set()
     checkboxes = []
     title_field = ft.TextField(label="Título do Barplot", width=350)
-    divider = ft.Divider(height=1, thickness=1, color=ft.colors.BLACK)
+    divider = ft.Divider(height=1, thickness=1, color="black")
 
     def on_select_all_change(e):
         checked = e.control.value
@@ -144,7 +259,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
 async def show_barplots_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color=ft.colors.RED)
+            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
             page.update()
             return
         await create_barplot_file(token, user_id, title, contrasts)
@@ -162,8 +277,30 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
         on_confirm=on_confirm,
     )
 
-async def show_venn_modal(page, token, user_id):
-    await show_deg_modal(page, token, user_id, "Diagrama de Venn (Max: 4)", max_select=4, show_select_all=False)
+async def show_venn_modal(page, token, user_id, container_amostras):
+    async def on_confirm(title, contrasts, dlg_modal):
+        if not title.strip():
+            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
+            page.update()
+            return
+        if len(contrasts) < 2 or len(contrasts) > 4:
+            dlg_modal.title = ft.Text("Selecione entre 2 e 4 contrastes!", color="red")
+            page.update()
+            return
+        await create_venn_file(token, user_id, title, contrasts)
+        dlg_modal.open = False
+        page.update()
+        await show_venn_table(page, token, user_id, container_amostras)
+
+    await show_deg_modal(
+        page,
+        token,
+        user_id,
+        "Diagrama de Venn (2-4 contrastes)",
+        max_select=4,
+        show_select_all=False,
+        on_confirm=on_confirm,
+    )
 
 async def show_heatmap_modal(page, token, user_id):
     await show_deg_modal(page, token, user_id, "Heatmap", max_select=None, show_select_all=True)

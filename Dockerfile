@@ -42,7 +42,7 @@ SHELL ["conda", "run", "-n", "bioinfo", "/bin/bash", "-c"]
 # Instale FastAPI e Uvicorn
 RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.28.2 sqlalchemy==2.0.39 \
     psycopg2-binary==2.9.10 python-jose==3.4.0 passlib==1.7.4 python-multipart==0.0.20 \
-    requests==2.32.3 websockets==15.0.1
+    requests==2.32.3 websockets==15.0.1 venny4py
 
 RUN apt-get -y install tmux htop
 

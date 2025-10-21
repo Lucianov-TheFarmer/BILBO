@@ -82,8 +82,8 @@ async def show_contrasts_modal(page, token, user_id):
         dropdown.on_change = on_dropdown_change
         logger.info(f"Dropdown created for side {side}.")
         remove_button = ft.IconButton(
-            icon=ft.icons.REMOVE_CIRCLE_OUTLINE,
-            icon_color=ft.colors.RED,
+            icon="remove_circle_outline",
+            icon_color="red",
             tooltip="Remover repetição",
             on_click=lambda e: remove_repetition(repetition_container, dropdown, remove_button),
         )
@@ -194,14 +194,14 @@ async def show_contrasts_modal(page, token, user_id):
                                 controls=[
                                     left_field,
                                     ft.Icon(
-                                        name=ft.icons.REMOVE,
+                                        name="remove",
                                         size=24,
-                                        color=ft.colors.BLACK38,
+                                        color="black38",
                                     ),
                                     right_field,
                                     ft.IconButton(
-                                        icon=ft.icons.DELETE,
-                                        icon_color=ft.colors.RED,
+                                        icon="delete",
+                                        icon_color="red",
                                         tooltip="Excluir contraste",
                                         on_click=lambda e, row_ref=None, cid=contrast["id"]: remove_contrast_handler(new_row, contrast_id=cid),
                                     ),
@@ -221,7 +221,7 @@ async def show_contrasts_modal(page, token, user_id):
                         spacing=10,
                     )
                     contrast_rows.controls.append(new_row)
-                    contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38))
+                    contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color="black38"))
                 page.update()
             run_async(after_delete())
 
@@ -263,7 +263,7 @@ async def show_contrasts_modal(page, token, user_id):
                     on_click=lambda e: clear_repetitions(new_row, "left"),
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=10),
-                        color=ft.colors.RED,
+                        color="red",
                     ),
                 ),
             ],
@@ -300,7 +300,7 @@ async def show_contrasts_modal(page, token, user_id):
                     on_click=lambda e: clear_repetitions(new_row, "right"),
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=10),
-                        color=ft.colors.RED,
+                        color="red",
                     ),
                 ),
             ],
@@ -322,14 +322,14 @@ async def show_contrasts_modal(page, token, user_id):
             controls=[
                 left_field,
                 ft.Icon(
-                    name=ft.icons.REMOVE,  # Non-interactive icon
+                    name="remove",  # Non-interactive icon
                     size=24,
-                    color=ft.colors.BLACK38,
+                    color="black38",
                 ),
                 right_field,
                 ft.IconButton(
-                    icon=ft.icons.DELETE,
-                    icon_color=ft.colors.RED,  # Make the trash icon red
+                    icon="delete",
+                    icon_color="red",  # Make the trash icon red
                     tooltip="Excluir contraste",
                     on_click=lambda e: remove_contrast_handler(new_row),
                 ),
@@ -370,7 +370,7 @@ async def show_contrasts_modal(page, token, user_id):
             spacing=10,
         )
         contrast_rows.controls.append(new_row)
-        contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38))
+        contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color="black38"))
         logger.info("New contrast row added.")
         page.update()
 
@@ -434,14 +434,14 @@ async def show_contrasts_modal(page, token, user_id):
                         controls=[
                             left_field,
                             ft.Icon(
-                                name=ft.icons.REMOVE,
+                                name="remove",
                                 size=24,
-                                color=ft.colors.BLACK38,
+                                color="black38",
                             ),
                             right_field,
                             ft.IconButton(
-                                icon=ft.icons.DELETE,
-                                icon_color=ft.colors.RED,
+                                icon="delete",
+                                icon_color="red",
                                 tooltip="Excluir contraste",
                                 on_click=lambda e, row_ref=None, cid=contrast["id"]: remove_contrast_handler(new_row, contrast_id=cid),
                             ),
@@ -461,7 +461,7 @@ async def show_contrasts_modal(page, token, user_id):
                 spacing=10,
             )
             contrast_rows.controls.append(new_row)
-            contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38))
+            contrast_rows.controls.append(ft.Divider(height=1, thickness=1, color="black38"))
 
     def close_modal_handler(e):
         """Handles the close button click."""

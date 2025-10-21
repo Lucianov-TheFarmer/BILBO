@@ -8,7 +8,7 @@ from .quantification import show_quantification_modal
 from .contrasts import show_contrasts_modal
 from .preprocess import show_preprocess_modal, show_exploratory_dropdown
 from .deg import run_deg_analysis, show_deg_results
-from .results import show_barplots_table, show_venn_modal, show_heatmap_modal
+from .results import show_barplots_table, show_venn_table, show_heatmap_modal
 from .upload import show_upload_fastq_modal
 import asyncio
 
@@ -128,7 +128,9 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                     ),
                     create_menu_item(
                         "Diagrama de Venn",
-                        on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id))
+                        on_click=lambda e: asyncio.run(
+                            show_venn_table(page, token, user_id, page.controls[1].controls[0].controls[0])
+                        )
                     ),
                     create_menu_item(
                         "Heatmaps",
