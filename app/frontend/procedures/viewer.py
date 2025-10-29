@@ -407,3 +407,88 @@ async def view_venn_image(page, token, user_id, filename):
                                 ]
                                 page.update()
                                 return
+
+async def view_heatmap_image(page, token, filename, user_id):
+    """
+    Exibe um heatmap na área de pré-visualização
+    """
+    try:
+        # Constrói o caminho para o arquivo de heatmap
+        image_path = f"../users/{user_id}/DEG/{filename}"
+        
+        # Verifica se o arquivo existe
+        if not os.path.exists(image_path):
+            logger.error(f"Arquivo de heatmap não encontrado: {image_path}")
+            return
+        
+        # Lê o arquivo de imagem
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+        
+        # Codifica em base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        data_url = f"data:image/png;base64,{image_base64}"
+        
+        # Procura o container de pré-visualização
+        container_pre_visualizacao = None
+        for control in page.controls:
+            if hasattr(control, 'controls'):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container_pre_visualizacao = container
+                                break
+        
+        if container_pre_visualizacao:
+            # Atualiza o conteúdo com o heatmap
+            container_pre_visualizacao.content.controls = [
+                ft.Container(
+                    content=ft.InteractiveViewer(
+                        content=ft.Image(
+                            src=data_url,
+                            fit=ft.ImageFit.CONTAIN,
+                            border_radius=8,
+                        ),
+                        min_scale=0.1,
+                        max_scale=10.0,
+                        # interaction_flags removed for compatibility with current flet versions
+                        constrained=True,
+                        boundary_margin=ft.margin.all(10),
+                    ),
+                    expand=True,
+                    alignment=ft.alignment.center,
+                    padding=ft.padding.all(10),
+                    border_radius=8,
+                )
+            ]
+            page.update()
+            logger.info(f"Heatmap exibido com sucesso: {filename}")
+        else:
+            logger.error("Container de pré-visualização não encontrado")
+            
+    except Exception as e:
+        logger.error(f"Erro ao exibir heatmap: {e}")
+        # Exibe mensagem de erro no container de pré-visualização
+        for control in page.controls:
+            if hasattr(control, 'controls'):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.Text(
+                                            f"Erro ao carregar heatmap: {e}",
+                                            color="red",
+                                            size=16,
+                                            weight=ft.FontWeight.BOLD,
+                                            text_align=ft.TextAlign.CENTER,
+                                        ),
+                                        alignment=ft.alignment.center,
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return

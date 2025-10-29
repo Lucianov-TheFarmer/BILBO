@@ -165,6 +165,57 @@ if (length(all_contrasts) > 0) {
 saveWorkbook(wb, file.path(deg_dir, "DEG.xlsx"), overwrite=TRUE)
 logmsg("Arquivo DEG.xlsx salvo com sucesso.")
 
+# Agora criar uma segunda planilha com TODOS os genes (DEG_full.xlsx)
+logmsg("Criando DEG_full.xlsx com todos os genes")
+wb_full <- createWorkbook()
+used_sheet_names_full <- character(0)
+
+if (length(all_contrasts) > 0) {
+  for (contrast_str in all_contrasts) {
+    # Parse group names
+    left_right <- strsplit(contrast_str, "\\*")[[1]]
+    group1 <- sub("\\(.*", "", left_right[1])
+    group2 <- sub("\\(.*", "", left_right[2])
+    group1 <- trimws(group1)
+    group2 <- trimws(group2)
+    logmsg(sprintf("Processando contraste FULL: %s vs %s", group1, group2))
+    contrast_vector <- rep(0, length(contrasts))
+    contrast_vector[which(contrasts == group1)] <- 1
+    contrast_vector[which(contrasts == group2)] <- -1
+    lrt <- glmLRT(fit, contrast=contrast_vector)
+    tt <- topTags(lrt, n=NULL)
+    # SEM FILTRO - todos os genes
+    all_genes <- tt$table
+    sheet_name <- make_sheet_name(paste0(group1, "_vs_", group2), used_sheet_names_full)
+    used_sheet_names_full <- c(used_sheet_names_full, sheet_name)
+    addWorksheet(wb_full, sheet_name)
+    writeData(wb_full, sheet_name, all_genes, rowNames=TRUE)
+    logmsg(sprintf("Contraste FULL %s: %d genes totais", sheet_name, nrow(all_genes)))
+  }
+} else {
+  for (pair in contrast_pairs) {
+    group1 <- pair[1]
+    group2 <- pair[2]
+    logmsg(sprintf("Processando contraste FULL: %s vs %s", group1, group2))
+    contrast_vector <- rep(0, length(contrasts))
+    contrast_vector[which(contrasts == group1)] <- 1
+    contrast_vector[which(contrasts == group2)] <- -1
+    lrt <- glmLRT(fit, contrast=contrast_vector)
+    tt <- topTags(lrt, n=NULL)
+    # SEM FILTRO - todos os genes
+    all_genes <- tt$table
+    sheet_name <- make_sheet_name(paste0(group1, "_vs_", group2), used_sheet_names_full)
+    used_sheet_names_full <- c(used_sheet_names_full, sheet_name)
+    addWorksheet(wb_full, sheet_name)
+    writeData(wb_full, sheet_name, all_genes, rowNames=TRUE)
+    logmsg(sprintf("Contraste FULL %s: %d genes totais", sheet_name, nrow(all_genes)))
+  }
+}
+
+# Salvar o arquivo DEG_full.xlsx no diretório DEG
+saveWorkbook(wb_full, file.path(deg_dir, "DEG_full.xlsx"), overwrite=TRUE)
+logmsg("Arquivo DEG_full.xlsx salvo com sucesso.")
+
 # Fechar o arquivo de log e restaurar saída padrão
 sink(type = "output")
 sink(type = "message")

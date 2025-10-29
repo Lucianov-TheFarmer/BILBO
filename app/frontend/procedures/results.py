@@ -302,5 +302,188 @@ async def show_venn_modal(page, token, user_id, container_amostras):
         on_confirm=on_confirm,
     )
 
-async def show_heatmap_modal(page, token, user_id):
-    await show_deg_modal(page, token, user_id, "Heatmap", max_select=None, show_select_all=True)
+async def show_heatmap_modal(page, token, user_id, container_amostras):
+    async def on_confirm(title, selected_contrasts, dlg_modal):
+        """Callback executado quando o usuário confirma a criação do heatmap"""
+        try:
+            # Fecha o modal primeiro
+            dlg_modal.open = False
+            page.update()
+            
+            # Chama a API para criar o heatmap
+            data = {
+                "title": title,
+                "selected_contrasts": selected_contrasts,
+                "user_id": user_id,
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "http://localhost:8000/results/create_heatmap_file",
+                    json=data,
+                    headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                    timeout=120.0,
+                )
+
+            if response.status_code == 200:
+                result = response.json()
+                # aguarda um curto período para garantir que o arquivo esteja disponível
+                try:
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                # Atualiza a tabela se estivermos na tela de heatmaps
+                await show_heatmaps_table(page, token, user_id, container_amostras)
+            else:
+                try:
+                    error_msg = response.json().get("detail", "Erro desconhecido")
+                except Exception:
+                    error_msg = "Erro desconhecido"
+                print(f"[frontend] Erro ao criar heatmap: {error_msg}")
+        except Exception as e:
+            # erro ao conectar com o servidor
+            pass
+    
+    await show_deg_modal(
+        page, 
+        token, 
+        user_id, 
+        "Heatmap", 
+        max_select=None, 
+        show_select_all=True,
+        on_confirm=on_confirm,
+    )
+
+async def show_heatmaps_table(page, token, user_id, container_amostras):
+    """Exibe a tabela com os heatmaps criados"""
+    try:
+        # Busca os arquivos de heatmap
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "http://localhost:8000/results/heatmap_files",
+                params={"user_id": user_id},
+                headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                timeout=30.0,
+            )
+        
+        if response.status_code != 200:
+            print(f"[frontend] Falha ao buscar heatmaps: status={response.status_code} body={response.text}")
+            return
+        
+        files = response.json().get("files", [])
+        
+        # Função para visualizar heatmap
+        async def view_heatmap(filename):
+            from .viewer import view_heatmap_image
+            await view_heatmap_image(page, token, filename, user_id)
+        
+        # Função para excluir heatmap (sem diálogo) - segue o padrão usado para barplot/venn
+        async def delete_heatmap_request(filename):
+            try:
+                print(f"[frontend] Enviando DELETE /results/delete_heatmap_file user_id={user_id} filename={filename}")
+                async with httpx.AsyncClient() as client:
+                    response = await client.delete(
+                        "http://localhost:8000/results/delete_heatmap_file",
+                        params={"user_id": user_id, "filename": filename},
+                        headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                        timeout=30.0,
+                    )
+
+                try:
+                    resp_text = response.text
+                except Exception:
+                    resp_text = "<no body>"
+                print(f"[frontend] DELETE response status={response.status_code} body={resp_text}")
+
+                if response.status_code == 200:
+                    await show_heatmaps_table(page, token, user_id, container_amostras)
+                else:
+                    try:
+                        error_msg = response.json().get("detail", resp_text)
+                    except Exception:
+                        error_msg = resp_text
+                    print(f"[frontend] Erro ao excluir: {error_msg}")
+            except Exception as ex:
+                print(f"[frontend] Erro ao conectar: {ex}")
+        
+        # Cria as linhas da tabela
+        rows = []
+        for filename in files:
+            # Remove o prefixo "HEATMAP - " e a extensão ".png" para exibição
+            display_name = filename
+            if filename.startswith("HEATMAP - "):
+                display_name = filename[10:]
+            if display_name.endswith(".png"):
+                display_name = display_name[:-4]
+            
+            # Botões de ação
+            view_button = ft.IconButton(
+                icon="visibility",
+                tooltip="Visualizar",
+                on_click=lambda e, fname=filename: asyncio.run(view_heatmap(fname))
+            )
+            
+            # Helper sync handler to ensure the click event runs immediately and we can show debug feedback
+            def on_delete_click(e, fname=filename):
+                try:
+                    # immediate feedback so we know the handler ran
+                    print(f"[frontend] on_delete_click invoked for {fname}")
+                except Exception as _:
+                    pass
+                # Run the async delete coroutine
+                asyncio.run(delete_heatmap_request(fname))
+
+            delete_button = ft.IconButton(
+                icon="delete",
+                tooltip="Excluir",
+                on_click=on_delete_click
+            )
+            
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(display_name)),
+                    ft.DataCell(
+                        ft.Row([view_button, delete_button], tight=True)
+                    ),
+                ]
+            )
+            rows.append(row)
+        
+        # Cria a tabela
+        if rows:
+            table = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Nome do Heatmap", weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+                ],
+                rows=rows,
+                # border=ft.border.all(1, ft.colors.OUTLINE),
+                border_radius=10,
+                # vertical_lines=ft.border.BorderSide(1, ft.colors.OUTLINE),
+                # horizontal_lines=ft.border.BorderSide(1, ft.colors.OUTLINE),
+            )
+        else:
+            table = ft.Container(
+                content=ft.Text(
+                    "Nenhum heatmap encontrado. Clique em 'Novo Heatmap' para criar um.",
+                    text_align=ft.TextAlign.CENTER,
+                    size=16,
+                ),
+                alignment=ft.alignment.center,
+                padding=ft.padding.all(20),
+            )
+        
+        # Botão para criar novo heatmap
+        btn = ft.ElevatedButton(
+            "Gerar novo heatmap",
+            icon="add",
+            on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id, container_amostras)),
+        )
+        
+        # Atualiza o container seguindo o padrão das outras funções
+        container_amostras.content.controls = [table, btn]
+        page.update()        
+
+    except Exception as e:
+        # Falha ao carregar heatmaps
+        print(f"[frontend] Erro ao carregar heatmaps: {e}")
