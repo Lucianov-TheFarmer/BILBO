@@ -50,7 +50,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     tabela_quantificacao = create_tabela_quantificacao(page, token)
 
     # --- Container principal para a área de amostras ---
-    # Usando ListView para um layout simples de cima para baixo
+
     container_amostras = ft.Container(
         expand=2,
         bgcolor="surface",
@@ -61,14 +61,18 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         content=ft.ListView(
             expand=True,
             spacing=15,
-            controls=[] # Os controles serão preenchidos dinamicamente
+            controls=[]
         )
     )
 
     # Função para alternar a tabela e os botões exibidos no container
     async def toggle_buttons(tabela, controls):
-        # O content do container é um ListView, então podemos simplesmente redefinir seus controles
-        container_amostras.content.controls = [tabela] + controls
+        tabela_com_scroll = ft.Row(
+            controls=[tabela],     
+            scroll=ft.ScrollMode.ALWAYS,
+            expand=True
+        )
+        container_amostras.content.controls = [tabela_com_scroll] + controls
         page.update()
 
     # --- Handlers para os botões ---
@@ -366,13 +370,13 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     ]
                 ),
                 ft.Column(
-                    expand=5,
+                    expand=4,
                     controls=[
                         container_pre_visualizacao,
                     ],
                 ),
                 ft.Column(
-                    expand=4,
+                    expand=2,
                     controls=[
                         container_amostras,
                         container_terminal
