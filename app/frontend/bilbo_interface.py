@@ -41,7 +41,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         ],
         rows=[],
     )
-    
+
     # Criação das tabelas específicas para cada estágio
     tabela_amostras_qc = create_tabela_amostras_qc(page, token)
     tabela_amostras_trimmadas = create_tabela_amostras_trimmadas(page, token)
@@ -68,7 +68,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     # Função para alternar a tabela e os botões exibidos no container
     async def toggle_buttons(tabela, controls):
         tabela_com_scroll = ft.Row(
-            controls=[tabela],     
+            controls=[tabela],
             scroll=ft.ScrollMode.ALWAYS,
             expand=True
         )
@@ -125,7 +125,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await log_message(page, "Nenhuma amostra selecionada para exclusão.")
             return
         await excluir_quantificacao(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
-    
+
     # --- Lógica para atualizar a interface com base no estágio selecionado ---
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
@@ -184,10 +184,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     create_button("Excluir quantificação", excluir_quantificacao_handler, color="red", expand=True),
                 ]
             )
-    
+
     # --- O restante da sua interface (menus, etc.) ---
     container_menu_direita = ft.Container(
-        expand=2,
+        expand=1 ,
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
@@ -290,10 +290,92 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         )
     )
 
+    chat_log = ft.ListView(
+        expand=True,
+        spacing=10,
+        controls=[ft.Text("Bem-vindo! Como posso ajuda-lo?")]
+    )
+
+    async def enviar_mensagem_chat(e: ft.ControlEvent):
+        page = e.page
+        texto_usuario = e.control.value
+        if not texto_usuario:
+            return
+
+        chat_log.controls.append(ft.Text(f"Você: {texto_usuario}", italic=True, weight=ft.FontWeight.BOLD))
+        e.control.value = ""
+
+        thinking_text = ft.Text("Assistente: pensando...", selectable=True)
+        chat_log.controls.append(thinking_text)
+
+        page.update()
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "ngrok-skip-browser-warning": "true"
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+
+                response = await client.post(
+                    "http://localhost:8000/chat",
+                    json={"message": texto_usuario, "model": "deepseek-r1:8b"},
+                    headers=headers
+                )
+
+            if response.status_code == 200:
+                data = response.json()
+                full_reply = data.get("content", "Erro: Resposta vazia do backend.")
+
+                thinking_text.value = f"Assistente: {full_reply}"
+            else:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", response.text)
+                    thinking_text.value = f"Assistente: Erro do Backend ({response.status_code}): {error_msg}"
+                except Exception:
+                     thinking_text.value = f"Assistente: Erro ({response.status_code}): {response.text}"
+                thinking_text.color = "red"
+
+        except httpx.RequestError as ex:
+            thinking_text.value = f"Assistente: Erro de conexão com o backend. {ex}"
+            thinking_text.color = "red"
+        except Exception as ex:
+            thinking_text.value = f"Assistente: Um erro inesperado ocorreu. {ex}"
+            thinking_text.color = "red"
+
+        page.update()
+
+    chat_input = ft.TextField(
+        label="Pergunte ao assistente...",
+        expand=True,
+        border_radius=ft.border_radius.all(20),
+        border_color="outline",
+        on_submit=enviar_mensagem_chat
+    )
+
+    container_chatbot = ft.Container(
+        expand=2,
+        bgcolor="surface",
+        border_radius=ft.border_radius.all(12),
+        shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
+        padding=ft.padding.all(12),
+        margin=ft.margin.only(0, 5, 0, 0),
+        content=ft.Column(
+            expand=True,
+            controls=[
+                ft.Text("BILBO, o assistente", style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.BOLD),
+                chat_log,
+                ft.Row(controls=[chat_input])
+            ]
+        )
+    )
+
     menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
-    
+
     container_terminal = ft.Container(
-        expand=1,
+        expand=2,
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
@@ -308,7 +390,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     page.container_terminal = container_terminal
 
     container_pre_visualizacao = ft.Container(
-        expand=2,
+        expand=1,
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
@@ -366,7 +448,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ft.Column(
                     expand=2,
                     controls=[
-                        container_menu_direita
+                        container_menu_direita,
+                        container_chatbot
                     ]
                 ),
                 ft.Column(
@@ -386,8 +469,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
     )
-    
-    # Exibir o estado inicial (Estágio 1)
+
     await atualizar_tabela_por_estagio_handler(None, 1)
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 

@@ -7,19 +7,25 @@ services:
       - ./users:/users/
     ports:
       - "8000:8000"
-      
+
     tty: true
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - main-net
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/bioinfo
-      - PYTHONPATH=/app  
+      - PYTHONPATH=/app
+      - OLLAMA_HOST=http://ollama:11434
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
       interval: 3s
       timeout: 2s
       retries: 10
+    depends_on:
+      db:
+        condition: service_started
+      ollama:
+        condition: service_started
 
   ssh-server:
     image: lscr.io/linuxserver/openssh-server:latest
@@ -41,6 +47,19 @@ services:
     depends_on:
       bioinfo:
         condition: service_healthy
+
+  ollama:
+    build:
+      context: .
+      dockerfile: ollama.Dockerfile
+    #image: ollama/ollama
+    container_name: ollama-container
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - main-net
 
   db:
     image: postgres:13
@@ -81,3 +100,4 @@ volumes:
   postgres_data:
   users:
   ssh_config:
+  ollama_data:
