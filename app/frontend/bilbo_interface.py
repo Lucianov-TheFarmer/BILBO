@@ -391,6 +391,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
     container_pre_visualizacao = ft.Container(
         expand=1,
+        key="container_preview",
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),

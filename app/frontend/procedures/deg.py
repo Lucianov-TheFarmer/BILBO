@@ -206,11 +206,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                     for column in control.controls:
                         if isinstance(column, ft.Column):
                             for container in column.controls:
-                                if (
-                                    isinstance(container, ft.Container)
-                                    and container.expand == 2
-                                    and isinstance(container.content, ft.Column)
-                                ):
+                                if isinstance(container, ft.Container) and container.key == "container_preview":
                                     container.content.controls = [
                                         ft.Container(
                                             expand=True,
@@ -464,11 +460,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                 for column in control.controls:
                     if isinstance(column, ft.Column):
                         for container in column.controls:
-                            if (
-                                isinstance(container, ft.Container)
-                                and container.expand == 2
-                                and isinstance(container.content, ft.Column)
-                            ):
+                            if isinstance(container, ft.Container) and container.key == "container_preview":
                                 print("[LOG] Atualizando container_pre_visualizacao com tabela Excel")
                                 container.content.controls = [
                                     ft.Column(

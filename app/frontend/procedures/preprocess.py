@@ -144,8 +144,7 @@ async def show_exploratory_dropdown(page, user_id):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
-                            # Cria o dropdown e armazena referência para atualização
+                        if isinstance(container, ft.Container) and container.key == "container_preview":
                             dropdown = ft.Dropdown(
                                 options=[ft.dropdown.Option(title, data=filename) for title, filename in EXPLORATORY_GRAPHS],
                                 width=350,

@@ -41,7 +41,7 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                 for sample in samples:
                     def view_sample_details_handler(e, s=sample["name"]):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim"))
-                    
+
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8000/download/qualidade2/{s}?token={token}"
                         page.launch_url(download_url)
@@ -56,9 +56,9 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                             controls=[
                                                 ft.Container(
                                                     content=ft.Text(
-                                                        sample["name"], 
-                                                        style=ft.TextStyle(size=12), 
-                                                        max_lines=1, 
+                                                        sample["name"],
+                                                        style=ft.TextStyle(size=12),
+                                                        max_lines=1,
                                                         overflow="ellipsis"
                                                     )
                                                 )
@@ -94,7 +94,7 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                        if isinstance(container, ft.Container) and container.key == "container_preview":
                             container.content.controls = [
                                 ft.Container(
                                     expand=True,
