@@ -56,7 +56,7 @@ app.include_router(upload.router, tags=["upload"])
 
 class ChatRequest(BaseModel):
     message: str
-    model: str = 'qwen3:0.6b'
+    model: str = 'gwen3:0.6b'
 
 
 SYSTEM_PROMPT = """
