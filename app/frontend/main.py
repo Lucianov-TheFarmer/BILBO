@@ -2,6 +2,7 @@ import httpx
 import flet as ft
 from .components.login import show_login_interface
 from .bilbo_interface import show_bilbo_interface
+from frontend.procedures.translations import t
 
 async def main(page: ft.Page):
     page.title = "Bionformatics and RNA-Seq Lab Online"
@@ -9,6 +10,11 @@ async def main(page: ft.Page):
 
     page.snack_bar = ft.SnackBar(content=ft.Text(""), open=False)
     page.overlay.append(page.snack_bar)
+
+    if not page.session.get("lang"):
+        page.session.set("lang", "pt")
+
+    page.title = t("login_title", page.session.get("lang"))
 
     async def show_snackbar(message):
         page.snack_bar.content = ft.Text(message)
@@ -60,7 +66,7 @@ async def main(page: ft.Page):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post("http://bioinfo-container:8000/register/", params={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
-            
+
             if response.status_code == 200:
                 await show_snackbar("Registration successful! Please log in.")
             else:

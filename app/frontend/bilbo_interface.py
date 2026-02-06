@@ -1,6 +1,7 @@
 import asyncio
 import flet as ft
 from functools import partial
+from frontend.procedures.translations import t  # Importação das traduções
 from .procedures.menu_operations import create_menubar, mudar_tema
 from .procedures.sample_operations import adicionar_amostra, excluir_amostras_selecionadas, atualizar_tabela, atualizar_tabela_por_estagio, baixar_amostras
 from .procedures.quality_analysis import show_quality_analysis_modal, create_tabela_amostras_qc, update_quality_analysis_table, delete_quality_analysis_results
@@ -14,42 +15,48 @@ import websockets
 import httpx
 import logging
 
-# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Disable httpx logs
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
-# Disable FastAPI access logs
 uvicorn_access_logger = logging.getLogger("uvicorn.access")
 uvicorn_access_logger.setLevel(logging.WARNING)
 
 async def show_bilbo_interface(page, logout, username, token, user_id):
     print("Entering show_bilbo_interface")
+
+    lang = page.session.get("lang") or "pt"
+
+    async def change_language(new_lang):
+        page.session.set("lang", new_lang)
+        page.controls.clear()
+        await show_bilbo_interface(page, logout, username, token, user_id)
+        await page.update_async()
+
+    async def set_pt(e): await change_language("pt")
+    async def set_en(e): await change_language("en")
+    async def set_es(e): await change_language("es")
+
     page.controls.clear()
 
-    # Definição da tabela principal que será usada para diferentes estágios
     tabela_amostras_local = create_table(
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Tamanho", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("ID / Name", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Size", weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Status",  weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text(" ")),
-            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text(t("menu_results", lang), weight=ft.FontWeight.BOLD)),
         ],
         rows=[],
     )
 
-    # Criação das tabelas específicas para cada estágio
     tabela_amostras_qc = create_tabela_amostras_qc(page, token)
     tabela_amostras_trimmadas = create_tabela_amostras_trimmadas(page, token)
     tabela_amostras_pos_trimmagem = create_tabela_amostras_pos_trimmagem(page, token)
     tabela_alinhamento = create_tabela_alinhamento(page, token)
     tabela_quantificacao = create_tabela_quantificacao(page, token)
-
-    # --- Container principal para a área de amostras ---
 
     container_amostras = ft.Container(
         expand=2,
@@ -65,7 +72,6 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         )
     )
 
-    # Função para alternar a tabela e os botões exibidos no container
     async def toggle_buttons(tabela, controls):
         tabela_com_scroll = ft.Row(
             controls=[tabela],
@@ -75,7 +81,6 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         container_amostras.content.controls = [tabela_com_scroll] + controls
         page.update()
 
-    # --- Handlers para os botões ---
     async def adicionar_amostra_handler(e):
         await adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local)
 
@@ -109,7 +114,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     async def excluir_alinhamento_handler(e):
         selected_samples = [row.cells[0].content.value for row in tabela_alinhamento.rows if row.cells[4].content.value]
         if not selected_samples:
-            await log_message(page, "Nenhuma amostra selecionada para exclusão.")
+            await log_message(page, t("no_data", lang))
             return
         await excluir_alinhamento(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
@@ -122,29 +127,29 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     async def excluir_quantificacao_handler(e):
         selected_samples = [row.cells[0].content.value for row in tabela_quantificacao.rows if row.cells[4].content.value]
         if not selected_samples:
-            await log_message(page, "Nenhuma amostra selecionada para exclusão.")
+            await log_message(page, t("no_data", lang))
             return
         await excluir_quantificacao(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
-    # --- Lógica para atualizar a interface com base no estágio selecionado ---
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
+
         if stage_id == 1:
             await toggle_buttons(
                 tabela=tabela_amostras_local,
                 controls=[
-                    create_button("Adicionar amostra via SRA", adicionar_amostra_handler, expand=True),
-                    create_button("Excluir amostras selecionadas", excluir_amostras_selecionadas_handler, color="red", expand=True),
-                    create_button("Baixar amostras pendentes", baixar_amostras_handler, color="green", expand=True),
+                    create_button(t("menu_add_sra", lang), adicionar_amostra_handler, expand=True),
+                    create_button(t("btn_delete", lang), excluir_amostras_selecionadas_handler, color="red", expand=True),
+                    create_button("Baixar Amostras", baixar_amostras_handler, color="green", expand=True), # Chave faltando, mantido texto fixo ou crie "btn_download"
                 ]
             )
         elif stage_id == 2:
             await toggle_buttons(
                 tabela=tabela_amostras_qc,
                 controls=[
-                    create_button("Analisar qualidade", show_quality_analysis_modal_handler, color="green", expand=True),
-                    create_button("Excluir resultados de qualidade", excluir_qualidade_handler, color="red", expand=True),
+                    create_button(t("menu_check_quality", lang), show_quality_analysis_modal_handler, color="green", expand=True),
+                    create_button(t("btn_delete", lang), excluir_qualidade_handler, color="red", expand=True),
                 ]
             )
         elif stage_id == 3:
@@ -152,8 +157,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await toggle_buttons(
                 tabela=tabela_amostras_trimmadas,
                 controls=[
-                    create_button("Iniciar trimmagem", show_trimmagem_modal_handler, expand=True),
-                    create_button("Excluir amostras trimmadas", excluir_amostras_trimmadas_handler, color="red", expand=True),
+                    create_button(t("menu_trimming", lang), show_trimmagem_modal_handler, expand=True),
+                    create_button(t("btn_delete", lang), excluir_amostras_trimmadas_handler, color="red", expand=True),
                 ]
             )
         elif stage_id == 4:
@@ -161,8 +166,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await toggle_buttons(
                 tabela=tabela_amostras_pos_trimmagem,
                 controls=[
-                    create_button("Analisar qualidade (pós trimmagem)", show_quality_analysis_post_trim_modal_handler, color="green", expand=True),
-                    create_button("Excluir resultados de qualidade", excluir_qualidade_post_trim_handler, color="red", expand=True),
+                    create_button(t("menu_check_quality_post_trim", lang), show_quality_analysis_post_trim_modal_handler, color="green", expand=True),
+                    create_button(t("btn_delete", lang), excluir_qualidade_post_trim_handler, color="red", expand=True),
                 ]
             )
         elif stage_id == 5:
@@ -170,9 +175,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await toggle_buttons(
                 tabela=tabela_alinhamento,
                 controls=[
-                    create_button("Iniciar alinhamento", iniciar_alinhamento_handler, expand=True),
-                    create_button("Excluir alinhamento", excluir_alinhamento_handler, color="red", expand=True),
-                    create_button("Ver genomas de referência", ver_genomas_referencia_handler, color="orange", expand=True),
+                    create_button(t("menu_align_genome", lang), iniciar_alinhamento_handler, expand=True),
+                    create_button(t("btn_delete", lang), excluir_alinhamento_handler, color="red", expand=True),
+                    create_button(t("menu_add_genome", lang), ver_genomas_referencia_handler, color="orange", expand=True),
                 ]
             )
         elif stage_id == 6:
@@ -180,12 +185,11 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await toggle_buttons(
                 tabela=tabela_quantificacao,
                 controls=[
-                    create_button("Iniciar quantificação", iniciar_quantificacao_handler, color="green", expand=True),
-                    create_button("Excluir quantificação", excluir_quantificacao_handler, color="red", expand=True),
+                    create_button(t("menu_quantify_reads", lang), iniciar_quantificacao_handler, color="green", expand=True),
+                    create_button(t("btn_delete", lang), excluir_quantificacao_handler, color="red", expand=True),
                 ]
             )
 
-    # --- O restante da sua interface (menus, etc.) ---
     container_menu_direita = ft.Container(
         expand=1 ,
         bgcolor="surface",
@@ -202,14 +206,14 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     data_row_color="surface",
                     border=ft.border.all(0.5,"#000000"),
                     columns=[
-                        ft.DataColumn(ft.Text("Procedimento", weight=ft.FontWeight.BOLD)),
-                        ft.DataColumn(ft.Text("Quantidade", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
+                        ft.DataColumn(ft.Text("Stage", weight=ft.FontWeight.BOLD)),
+                        ft.DataColumn(ft.Text("Qty", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
                     ],
                     rows=[
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Obtenção de amostras"),
+                                    content=ft.Text(t("menu_samples", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=1)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -222,7 +226,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Análise de qualidade"),
+                                    content=ft.Text(t("menu_quality", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=2)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -235,7 +239,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Trimmagem"),
+                                    content=ft.Text(t("menu_trimming", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=3)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -248,7 +252,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Análise de qualidade (pós trimmagem)"),
+                                    content=ft.Text(t("menu_check_quality_post_trim", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=4)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -261,7 +265,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Alinhamento"),
+                                    content=ft.Text(t("menu_alignment", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=5)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -274,7 +278,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Quantificação"),
+                                    content=ft.Text(t("menu_quantification", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=6)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -293,7 +297,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     chat_log = ft.ListView(
         expand=True,
         spacing=10,
-        controls=[ft.Text("Bem-vindo! Como posso ajuda-lo?")]
+        controls=[ft.Text("Hello! How can I help you?" if lang=="en" else "Olá! Como posso ajudar?")]
     )
 
     async def enviar_mensagem_chat(e: ft.ControlEvent):
@@ -302,10 +306,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         if not texto_usuario:
             return
 
-        chat_log.controls.append(ft.Text(f"Você: {texto_usuario}", italic=True, weight=ft.FontWeight.BOLD))
+        chat_log.controls.append(ft.Text(f"User: {texto_usuario}", italic=True, weight=ft.FontWeight.BOLD))
         e.control.value = ""
 
-        thinking_text = ft.Text("Assistente: pensando...", selectable=True)
+        thinking_text = ft.Text("BILBO: Thinking..." if lang=="en" else "BILBO: Pensando...", selectable=True)
         chat_log.controls.append(thinking_text)
 
         page.update()
@@ -315,40 +319,37 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 "Authorization": f"Bearer {token}",
                 "ngrok-skip-browser-warning": "true"
             }
-
             async with httpx.AsyncClient(timeout=60.0) as client:
-
                 response = await client.post(
                     "http://localhost:8000/chat",
-                    json={"message": texto_usuario, "model": "deepseek-r1:8b"},
+                    json={"message": texto_usuario, "model": "qwen3:0.6b"},
                     headers=headers
                 )
 
             if response.status_code == 200:
                 data = response.json()
-                full_reply = data.get("content", "Erro: Resposta vazia do backend.")
-
-                thinking_text.value = f"Assistente: {full_reply}"
+                full_reply = data.get("content", "Error: Empty response.")
+                thinking_text.value = f"BILBO: {full_reply}"
             else:
                 try:
                     error_data = response.json()
                     error_msg = error_data.get("error", response.text)
-                    thinking_text.value = f"Assistente: Erro do Backend ({response.status_code}): {error_msg}"
+                    thinking_text.value = f"BILBO: Backend Error ({response.status_code}): {error_msg}"
                 except Exception:
-                     thinking_text.value = f"Assistente: Erro ({response.status_code}): {response.text}"
+                     thinking_text.value = f"BILBO: Error ({response.status_code}): {response.text}"
                 thinking_text.color = "red"
 
         except httpx.RequestError as ex:
-            thinking_text.value = f"Assistente: Erro de conexão com o backend. {ex}"
+            thinking_text.value = f"BILBO: Connection error. {ex}"
             thinking_text.color = "red"
         except Exception as ex:
-            thinking_text.value = f"Assistente: Um erro inesperado ocorreu. {ex}"
+            thinking_text.value = f"BILBO: Unexpected error. {ex}"
             thinking_text.color = "red"
 
         page.update()
 
     chat_input = ft.TextField(
-        label="Pergunte ao assistente...",
+        label=t("menu_about", lang) + " (Ask...)",
         expand=True,
         border_radius=ft.border_radius.all(20),
         border_color="outline",
@@ -365,7 +366,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         content=ft.Column(
             expand=True,
             controls=[
-                ft.Text("BILBO, o assistente", style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.BOLD),
+                ft.Text("BILBO AI Assistant", style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.BOLD),
                 chat_log,
                 ft.Row(controls=[chat_input])
             ]
@@ -402,9 +403,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             alignment=ft.MainAxisAlignment.CENTER,
             controls=[
-                ft.Container(
-                    expand=True
-                )
+                ft.Container(expand=True)
             ]
         )
     )
@@ -423,20 +422,28 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ft.Container(
                     expand=1,
                 ),
+
                 ft.Container(
                     alignment=ft.alignment.center_right,
                     margin=ft.Margin(0, -7, -7, -7),
-                    expand=6,
+                    expand=10,
                     content=ft.Row(
+                        alignment=ft.MainAxisAlignment.END,
                         controls=[
-                            ft.Text(f"Logged in as: {username}"),
+                            ft.Text(f"{username}"),
+                            ft.TextButton("PT", on_click=set_pt, style=ft.ButtonStyle(padding=5, color="primary" if lang=="pt" else "secondary")),
+                            ft.TextButton("EN", on_click=set_en, style=ft.ButtonStyle(padding=5, color="primary" if lang=="en" else "secondary")),
+                            ft.TextButton("ES", on_click=set_es, style=ft.ButtonStyle(padding=5, color="primary" if lang=="es" else "secondary")),
+
                             ft.IconButton(
                                 icon="light_mode",
-                                on_click=toggle_theme_handler
+                                on_click=toggle_theme_handler,
+                                tooltip=t("toggle_theme", lang)
                             ),
                             ft.IconButton(
                                 icon="logout",
-                                on_click=logout
+                                on_click=logout,
+                                tooltip=t("menu_logout", lang)
                             )
                         ]
                     )
