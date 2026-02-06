@@ -89,55 +89,105 @@ def fetch_uniprot_info(query):
     except Exception as ex:
         return {}
 
-def annotate_deg_with_uniprot(deg_xlsx_path):
-    xls = pd.ExcelFile(deg_xlsx_path)
-    sheet_names = xls.sheet_names
-    for sheet in sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet)
-        # Use Note GFF, depois Product GFF, depois Name GFF
-        query_col = None
-        if "Note GFF" in df.columns and df["Note GFF"].notna().any():
-            query_col = "Note GFF"
-        elif "Product GFF" in df.columns and df["Product GFF"].notna().any():
-            query_col = "Product GFF"
-        # elif "Name GFF" in df.columns and df["Name GFF"].notna().any():
-        #     query_col = "Name GFF"
-        else:
-            # Garante que as colunas Uniprot existam mesmo se não houver query_col
+def annotate_deg_with_uniprot(deg_xlsx_path, write_path=None):
+    """
+    Annotate all sheets in the workbook using UniProt and write the updated workbook in a single operation.
+
+    Parameters:
+    - deg_xlsx_path: path to original DEG.xlsx
+    - write_path: optional path to write updated workbook. If None, overwrites deg_xlsx_path.
+    """
+    try:
+        sheets = pd.read_excel(deg_xlsx_path, sheet_name=None)
+    except Exception as e:
+        print(f"[WARN] Could not open Excel file '{deg_xlsx_path}': {e}")
+        return
+
+    updated = {}
+    # cache results across the entire workbook to avoid duplicate UniProt queries
+    uniprot_cache = {}
+
+    try:
+        for sheet, df in sheets.items():
+            # Ensure df is a DataFrame
+            if df is None or df.shape[0] == 0:
+                updated[sheet] = df
+                continue
+
+            # Determine query column: prefer Note/Product/Name GFF if they contain any non-empty values.
+            query_col = None
+            def col_has_value(c):
+                # treat empty strings as missing by stripping and replacing with NA
+                return (c in df.columns) and (df[c].astype(str).str.strip().replace('', pd.NA).notna().any())
+
+            if col_has_value("Note GFF"):
+                query_col = "Note GFF"
+            elif col_has_value("Product GFF"):
+                query_col = "Product GFF"
+            elif col_has_value("Name GFF"):
+                query_col = "Name GFF"
+            else:
+                # fallback to the first column (commonly the gene ID column like 'Unnamed: 0')
+                first_col = df.columns[0]
+                print(f"[INFO] No GFF columns with values found in sheet '{sheet}', falling back to first column '{first_col}' for queries.")
+                query_col = first_col
+
+            # Prepare target columns
             for col in [
                 "Uniprot organism", "Uniprot gene names",
                 "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
             ]:
                 if col not in df.columns:
                     df[col] = ""
-            # Salva a aba sobrescrevendo (adiciona colunas vazias)
-            with pd.ExcelWriter(deg_xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                df.to_excel(writer, sheet_name=sheet, index=False)
-            continue  # Nenhuma coluna disponível para consulta
+                df[col] = df[col].astype("object")
 
-        # Garante que as colunas Uniprot existam e sejam do tipo objeto
-        for col in [
-            "Uniprot organism", "Uniprot gene names",
-            "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
-        ]:
-            if col not in df.columns:
-                df[col] = ""
-            df[col] = df[col].astype("object")
+            count = 0
+            for idx, row in df.iterrows():
+                query_value = str(row[query_col]).strip()
+                if not query_value or query_value == "nan":
+                    continue
+                # reuse cached result when available
+                if query_value in uniprot_cache:
+                    info = uniprot_cache[query_value]
+                else:
+                    if count < 5:
+                        print(f"\n[DEBUG] Querying Uniprot for: '{query_value}'")
+                    info = fetch_uniprot_info(query_value)
+                    uniprot_cache[query_value] = info
+                    if count < 5:
+                        print(f"[DEBUG] Result: {info}")
+                    # be polite with UniProt; small delay
+                    time.sleep(0.2)
+                for col in info:
+                    df.at[idx, col] = str(info[col]) if info[col] is not None else ""
+                count += 1
 
-        for idx, row in df.iterrows():
-            query_value = str(row[query_col]).strip()
-            if not query_value or query_value == "nan":
-                continue
-            info = fetch_uniprot_info(query_value)
-            for col in [
-                "Uniprot organism", "Uniprot gene names",
-                "Uniprot CC", "Uniprot MF", "Uniprot BP", "Uniprot Function"
-            ]:
-                df.at[idx, col] = str(info.get(col, "")) if info else ""
+            updated[sheet] = df
+            # Progress indicator for long runs
+            print(f"[INFO] Finished UniProt annotation for sheet: {sheet}")
+    except KeyboardInterrupt:
+        print("[WARN] UniProt annotation interrupted by user (KeyboardInterrupt). Writing partial results...")
+    except Exception as e:
+        print(f"[WARN] Error during UniProt annotation: {e}. Writing partial results...")
 
-        # Salva a aba sobrescrevendo
-        with pd.ExcelWriter(deg_xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-            df.to_excel(writer, sheet_name=sheet, index=False)
+    # Write all sheets at once to avoid multiple append writes
+    out_path = write_path if write_path is not None else deg_xlsx_path
+    if not updated:
+        print(f"[WARN] Nothing was updated; skipping write to '{out_path}'")
+        return
+    try:
+        with pd.ExcelWriter(out_path, engine="openpyxl", mode="w") as writer:
+            # write each original sheet, replacing with updated version when available
+            for sheet, original_df in sheets.items():
+                df_to_write = updated.get(sheet, original_df)
+                if df_to_write is None:
+                    import pandas as _pd
+                    _pd.DataFrame().to_excel(writer, sheet_name=sheet, index=False)
+                else:
+                    df_to_write.to_excel(writer, sheet_name=sheet, index=False)
+    except Exception as e:
+        print(f"[WARN] Failed to write updated workbook to '{out_path}': {e}")
+        return
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import pandas as pd
 
 def parse_gff_attributes(attr_str):
@@ -9,6 +10,25 @@ def parse_gff_attributes(attr_str):
             key, val = item.split("=", 1)
             attrs[key] = val
     return attrs
+
+
+def normalize_id(x):
+    """Normalize gene/transcript IDs for robust matching.
+
+    Steps:
+    - convert to string and strip
+    - remove common leading prefixes like 'gene-', 'rna-', 'cds-', 'id-'
+    - remove non-alphanumeric characters (underscores, dashes, colons, etc.)
+    - uppercase for consistent comparison
+    """
+    if x is None:
+        return ""
+    s = str(x).strip()
+    # remove common leading prefixes (e.g. gene-, rna-, cds-, id-)
+    s = re.sub(r'^[A-Za-z]+[-_:]', '', s)
+    # remove any non-alphanumeric characters
+    s = re.sub(r'[^A-Za-z0-9]', '', s)
+    return s.upper()
 
 def load_gff_info(gff_path):
     gff_info = {}
@@ -27,20 +47,21 @@ def load_gff_info(gff_path):
                 product = attrs.get("Product")
                 note = attrs.get("Note")
                 if gene_id:
-                    gff_info[gene_id] = {
-                        "Name": name,
-                        "Product": product,
-                        "Note": note
-                    }
+                    # store using normalized ID for robust matching
+                    norm = normalize_id(gene_id)
+                    # prefer first occurrence if duplicates
+                    if norm not in gff_info:
+                        gff_info[norm] = {
+                            "Name": name,
+                            "Product": product,
+                            "Note": note
+                        }
     return gff_info
 
 def find_gff_for_gene(gene_id, gff_info):
-    if gene_id in gff_info:
-        return gff_info[gene_id]
-    for key in gff_info:
-        if gene_id.startswith(key) or key.startswith(gene_id):
-            return gff_info[key]
-    return {}
+    # Always normalize the incoming gene_id and lookup directly
+    norm = normalize_id(gene_id)
+    return gff_info.get(norm, {})
 
 def annotate_deg_xlsx(deg_xlsx_path, gff_path):
     gff_info = load_gff_info(gff_path)
@@ -67,7 +88,11 @@ def annotate_deg_xlsx(deg_xlsx_path, gff_path):
             df["Product GFF"] = product_gff
         elif any(note_gff):
             df["Note GFF"] = note_gff
+
+        # Save processed dataframe for this sheet
         dfs[sheet] = df
+        # Progress indicator for long runs
+        print(f"[INFO] Finished GFF annotation for sheet: {sheet}")
     with pd.ExcelWriter(deg_xlsx_path, engine="openpyxl", mode="w") as writer:
         for sheet, df in dfs.items():
             df.to_excel(writer, sheet_name=sheet, index=False)

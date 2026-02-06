@@ -6,18 +6,20 @@ WORKDIR /app
 
 # Atualize e configure o ambiente base
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    wget \
-    vim \
-    git \ 
-    jq \
-    unzip
+    build-essential=12.12 \
+    curl=8.14.1-2+deb13u2 \
+    wget=1.25.0-2 \
+    vim=2:9.1.1230-2 \
+    git=1:2.47.3-0+deb13u1 \
+    jq=1.7.1-6+deb13u1 \
+    unzip=6.0-29 \
+    tmux=3.5a-3 \
+    htop=3.4.1-5
 
 # Instalar dependências necessárias para o Flet
 RUN apt-get install -y \
     libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-xlib-2.0-0 \
     libglib2.0-0 \
     gstreamer1.0-plugins-base \
     gstreamer1.0-tools \
@@ -40,17 +42,15 @@ RUN conda env create -f /app/config/environment.yml
 SHELL ["conda", "run", "-n", "bioinfo", "/bin/bash", "-c"]
 
 # Instale FastAPI e Uvicorn
-RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.27.0 sqlalchemy==2.0.39 \
+RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.28.2 sqlalchemy==2.0.39 \
     psycopg2-binary==2.9.10 python-jose==3.4.0 passlib==1.7.4 python-multipart==0.0.20 \
-    requests==2.32.3 websockets==15.0.1
-
-RUN apt-get -y install tmux htop
-
-RUN pip3 install RSeQC==5.0.4 openpyxl==3.1.3 pandas==2.2.3
+    requests==2.32.3 websockets==15.0.1 venny4py==1.0.3 seaborn==0.13.2 ollama==0.6.1 unidecode=1.4.0 adjustText=1.3.0 umap-learn==0.5.11 \ 
+    RSeQC==5.0.4 openpyxl==3.1.3 pandas==2.2.3
 
 # Instalação dos pacotes R: BiocManager, edgeR, ggplot2, pheatmap e gplots (após o ambiente conda estar pronto)
 RUN Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
     Rscript -e "BiocManager::install('edgeR', ask=FALSE, update=FALSE)" && \
+    Rscript -e "BiocManager::install('ComplexHeatmap', ask=FALSE, update=FALSE)" && \
     Rscript -e "install.packages('ggplot2', repos='https://cloud.r-project.org')" && \
     Rscript -e "install.packages('pheatmap', repos='https://cloud.r-project.org')" && \
     Rscript -e "install.packages('gplots', repos='https://cloud.r-project.org')"

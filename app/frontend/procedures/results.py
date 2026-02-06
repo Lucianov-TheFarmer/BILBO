@@ -30,20 +30,6 @@ async def create_barplot_file(token, user_id, title, contrasts):
         response.raise_for_status()
         return response.json()
 
-async def delete_barplot_file(token, user_id, filename):
-    async with httpx.AsyncClient() as client:
-        response = await client.delete(
-            "http://localhost:8000/results/delete_barplot_file",
-            json={"user_id": user_id, "filename": filename},
-            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
-        )
-        response.raise_for_status()
-        return response.json()
-
-async def view_barplot_file(token, user_id, filename):
-    # Para arquivos .png, retornamos apenas o caminho para visualização
-    return {"filename": filename}
-
 async def fetch_venn_files(token, user_id):
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -64,188 +50,116 @@ async def create_venn_file(token, user_id, title, contrasts):
         response.raise_for_status()
         return response.json()
 
-async def fetch_heatmap_files(token, user_id):
+async def delete_venn_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "http://localhost:8000/results/heatmap_files",
-            params={"user_id": user_id},
+        response = await client.delete(
+            "http://localhost:8000/results/delete_venn_file",
+            params={"user_id": user_id, "filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
-        return response.json().get("files", [])
+        return response.json()
 
-async def create_heatmap_file(token, user_id, title, contrasts):
+async def delete_barplot_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "http://localhost:8000/results/create_heatmap_file",
-            json={"user_id": user_id, "title": title, "contrasts": contrasts},
+        response = await client.delete(
+            "http://localhost:8000/results/delete_barplot_file",
+            params={"user_id": user_id, "filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
         return response.json()
 
 async def show_barplots_table(page, token, user_id, container_amostras):
+    from .viewer import view_barplot_image
+    
     files = await fetch_barplot_files(token, user_id)
     
-    async def on_view_click(filename):
+    async def delete_barplot_handler(filename):
         try:
-            # Visualizar imagem do barplot
-            deg_dir = f"../users/{user_id}/DEG"
-            img_path = f"{deg_dir}/{filename}"
-            
-            # Carregar e mostrar a imagem
-            import os
-            abs_img_path = os.path.abspath(os.path.join(os.path.dirname(__file__), img_path))
-            
-            if os.path.exists(abs_img_path):
-                import base64
-                try:
-                    with open(abs_img_path, "rb") as f:
-                        img_data = f.read()
-                    img_base64 = base64.b64encode(img_data).decode("utf-8")
-                    
-                    image_control = ft.Image(src_base64=img_base64)
-                    interactive_viewer = ft.InteractiveViewer(
-                        min_scale=0.5,
-                        max_scale=15,
-                        boundary_margin=ft.margin.all(10),
-                        content=image_control,
-                        constrained=True
-                    )
-                    
-                    dlg_modal = ft.AlertDialog(
-                        title=ft.Text(f"Visualizar: {filename}"),
-                        content=ft.Container(
-                            content=interactive_viewer,
-                            height=600,
-                            width=800,
-                        ),
-                        actions=[
-                            ft.TextButton(
-                                "Fechar",
-                                on_click=lambda e: (setattr(dlg_modal, 'open', False), page.update()),
-                            ),
-                        ],
-                        actions_alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                    page.open(dlg_modal)
-                except Exception as e:
-                    error_dlg = ft.AlertDialog(
-                        title=ft.Text("Erro"),
-                        content=ft.Text(f"Erro ao carregar imagem: {e}"),
-                        actions=[ft.TextButton("OK", on_click=lambda e: (setattr(error_dlg, 'open', False), page.update()))],
-                    )
-                    page.open(error_dlg)
-            else:
-                error_dlg = ft.AlertDialog(
-                    title=ft.Text("Erro"),
-                    content=ft.Text(f"Imagem não encontrada: {filename}"),
-                    actions=[ft.TextButton("OK", on_click=lambda e: (setattr(error_dlg, 'open', False), page.update()))],
-                )
-                page.open(error_dlg)
+            await delete_barplot_file(token, user_id, filename)
+            # Recarrega a tabela após exclusão
+            await show_barplots_table(page, token, user_id, container_amostras)
         except Exception as e:
-            print(f"Erro ao visualizar arquivo: {e}")
-
-    async def on_delete_click(filename):
-        async def confirm_delete(e):
-            try:
-                await delete_barplot_file(token, user_id, filename)
-                confirm_dlg.open = False
-                page.update()
-                await show_barplots_table(page, token, user_id, container_amostras)
-            except Exception as error:
-                print(f"Erro ao deletar arquivo: {error}")
-
-        confirm_dlg = ft.AlertDialog(
-            title=ft.Text("Confirmar exclusão"),
-            content=ft.Text(f"Deseja realmente excluir o arquivo '{filename}'?"),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda e: (setattr(confirm_dlg, 'open', False), page.update())),
-                ft.TextButton("Excluir", on_click=lambda e: asyncio.run(confirm_delete(e))),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        page.open(confirm_dlg)
-
-    rows = []
-    for filename in files:
-        rows.append(
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(filename, width=270)),
-                    ft.DataCell(
-                        ft.Row(
-                            controls=[
-                                ft.IconButton(
-                                    icon=ft.icons.VISIBILITY,
-                                    tooltip="Visualizar",
-                                    on_click=lambda e, f=filename: asyncio.run(on_view_click(f)),
-                                ),
-                                ft.IconButton(
-                                    icon=ft.icons.DELETE,
-                                    tooltip="Excluir",
-                                    icon_color=ft.colors.RED,
-                                    on_click=lambda e, f=filename: asyncio.run(on_delete_click(f)),
-                                ),
-                            ],
-                            spacing=5,
-                        )
-                    ),
-                ]
-            )
-        )
-
+            # Mostra erro (poderia usar um snackbar ou toast aqui)
+            print(f"Erro ao excluir barplot: {e}")
+    
     table = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("Barplots salvos", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("")),
+            ft.DataColumn(ft.Text("Barplots salvos")),
+            ft.DataColumn(ft.Text("Ações")),
         ],
-        rows=rows,
-        heading_row_color=ft.Colors.BLACK12,
+        rows=[
+            ft.DataRow([
+                ft.DataCell(ft.Text(f)),
+                ft.DataCell(ft.Row([
+                    ft.IconButton(
+                        icon="visibility",
+                        tooltip="Ver barplot",
+                        on_click=lambda e, filename=f: asyncio.run(view_barplot_image(page, token, user_id, filename))
+                    ),
+                    ft.IconButton(
+                        icon="delete",
+                        icon_color="red",
+                        tooltip="Excluir barplot",
+                        on_click=lambda e, filename=f: asyncio.run(delete_barplot_handler(filename))
+                    )
+                ], spacing=5))
+            ]) for f in files
+        ],
         expand=True,
     )
     btn = ft.ElevatedButton(
         "Gerar novo barplot",
-        icon=ft.icons.ADD,
+        icon="add",
         on_click=lambda e: asyncio.run(show_barplots_modal(page, token, user_id, container_amostras)),
     )
     container_amostras.content.controls = [table, btn]
     page.update()
 
 async def show_venn_table(page, token, user_id, container_amostras):
+    from .viewer import view_venn_image
+    
     files = await fetch_venn_files(token, user_id)
+    
+    async def delete_venn_handler(filename):
+        try:
+            await delete_venn_file(token, user_id, filename)
+            # Recarrega a tabela após exclusão
+            await show_venn_table(page, token, user_id, container_amostras)
+        except Exception as e:
+            # Mostra erro (poderia usar um snackbar ou toast aqui)
+            print(f"Erro ao excluir diagrama de Venn: {e}")
+    
     table = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("Diagramas de Venn salvos")),
+            ft.DataColumn(ft.Text("Ações")),
         ],
         rows=[
-            ft.DataRow([ft.DataCell(ft.Text(f))]) for f in files
+            ft.DataRow([
+                ft.DataCell(ft.Text(f)),
+                ft.DataCell(ft.Row([
+                    ft.IconButton(
+                        icon="visibility",
+                        tooltip="Ver diagrama de Venn",
+                        on_click=lambda e, filename=f: asyncio.run(view_venn_image(page, token, user_id, filename))
+                    ),
+                    ft.IconButton(
+                        icon="delete",
+                        icon_color="red",
+                        tooltip="Excluir diagrama de Venn",
+                        on_click=lambda e, filename=f: asyncio.run(delete_venn_handler(filename))
+                    )
+                ], spacing=5))
+            ]) for f in files
         ],
         expand=True,
     )
     btn = ft.ElevatedButton(
         "Gerar novo diagrama de Venn",
-        icon=ft.icons.ADD,
+        icon="add",
         on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id, container_amostras)),
-    )
-    container_amostras.content.controls = [table, btn]
-    page.update()
-
-async def show_heatmap_table(page, token, user_id, container_amostras):
-    files = await fetch_heatmap_files(token, user_id)
-    table = ft.DataTable(
-        columns=[
-            ft.DataColumn(ft.Text("Heatmaps salvos")),
-        ],
-        rows=[
-            ft.DataRow([ft.DataCell(ft.Text(f))]) for f in files
-        ],
-        expand=True,
-    )
-    btn = ft.ElevatedButton(
-        "Gerar novo heatmap",
-        icon=ft.icons.ADD,
-        on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id, container_amostras)),
     )
     container_amostras.content.controls = [table, btn]
     page.update()
@@ -255,7 +169,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
     selected = set()
     checkboxes = []
     title_field = ft.TextField(label="Título do Barplot", width=350)
-    divider = ft.Divider(height=1, thickness=1, color=ft.colors.BLACK)
+    divider = ft.Divider(height=1, thickness=1, color="black")
 
     def on_select_all_change(e):
         checked = e.control.value
@@ -345,7 +259,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
 async def show_barplots_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color=ft.colors.RED)
+            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
             page.update()
             return
         await create_barplot_file(token, user_id, title, contrasts)
@@ -364,182 +278,212 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
     )
 
 async def show_venn_modal(page, token, user_id, container_amostras):
-    sheets = await fetch_deg_sheets(token, user_id)
-    selected = set()
-    checkboxes = []
-    title_field = ft.TextField(label="Título do Diagrama de Venn", width=350)
-    divider = ft.Divider(height=1, thickness=1, color=ft.colors.BLACK)
-
-    def on_checkbox_change(e, sheet):
-        if e.control.value:
-            if len(selected) >= 4:  # Max 4 para Venn
-                e.control.value = False
-                page.update()
-                return
-            selected.add(sheet)
-        else:
-            selected.discard(sheet)
-        page.update()
-
-    data_rows = []
-    for sheet in sheets:
-        cb = ft.Checkbox(
-            value=False,
-            on_change=lambda e, s=sheet: on_checkbox_change(e, s),
-            data=sheet
-        )
-        checkboxes.append(cb)
-        data_rows.append(
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(sheet)),
-                    ft.DataCell(cb),
-                ]
-            )
-        )
-
-    columns = [
-        ft.DataColumn(ft.Text("Aba")),
-        ft.DataColumn(ft.Text("Selecionar")),
-    ]
-
-    async def on_confirm(e):
-        if not title_field.value.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color=ft.colors.RED)
+    async def on_confirm(title, contrasts, dlg_modal):
+        if not title.strip():
+            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
             page.update()
             return
-        await create_venn_file(token, user_id, title_field.value, list(selected))
+        if len(contrasts) < 2 or len(contrasts) > 4:
+            dlg_modal.title = ft.Text("Selecione entre 2 e 4 contrastes!", color="red")
+            page.update()
+            return
+        await create_venn_file(token, user_id, title, contrasts)
         dlg_modal.open = False
         page.update()
         await show_venn_table(page, token, user_id, container_amostras)
 
-    dlg_modal = ft.AlertDialog(
-        title=ft.Text("Diagrama de Venn (Max: 4)"),
-        content=ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Container(height=5),
-                    title_field,
-                    divider,
-                    ft.DataTable(
-                        columns=columns,
-                        rows=data_rows,
-                        heading_row_height=40,
-                        column_spacing=20,
-                        expand=True,
-                    )
-                ],
-                scroll=ft.ScrollMode.AUTO,
-                expand=True,
-            ),
-            height=400,
-        ),
-        actions=[
-            ft.TextButton(
-                "Confirmar",
-                on_click=lambda e: asyncio.run(on_confirm(e)),
-                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-                width=200,
-                height=40,
-            ),
-        ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+    await show_deg_modal(
+        page,
+        token,
+        user_id,
+        "Diagrama de Venn (2-4 contrastes)",
+        max_select=4,
+        show_select_all=False,
+        on_confirm=on_confirm,
     )
-
-    page.open(dlg_modal)
 
 async def show_heatmap_modal(page, token, user_id, container_amostras):
-    sheets = await fetch_deg_sheets(token, user_id)
-    selected = set()
-    checkboxes = []
-    title_field = ft.TextField(label="Título do Heatmap", width=350)
-    divider = ft.Divider(height=1, thickness=1, color=ft.colors.BLACK)
-
-    def on_select_all_change(e):
-        checked = e.control.value
-        for cb in checkboxes:
-            cb.value = checked
-            if checked:
-                selected.add(cb.data)
-            else:
-                selected.discard(cb.data)
-        page.update()
-
-    def on_checkbox_change(e, sheet):
-        if e.control.value:
-            selected.add(sheet)
-        else:
-            selected.discard(sheet)
-        if select_all_checkbox is not None:
-            all_checked = len(selected) == len(checkboxes) and len(checkboxes) > 0
-            select_all_checkbox.value = all_checked
-        page.update()
-
-    select_all_checkbox = ft.Checkbox(value=False, on_change=on_select_all_change)
-
-    data_rows = []
-    for sheet in sheets:
-        cb = ft.Checkbox(
-            value=False,
-            on_change=lambda e, s=sheet: on_checkbox_change(e, s),
-            data=sheet
-        )
-        checkboxes.append(cb)
-        data_rows.append(
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(sheet)),
-                    ft.DataCell(cb),
-                ]
-            )
-        )
-
-    columns = [
-        ft.DataColumn(ft.Text("Aba")),
-        ft.DataColumn(select_all_checkbox),
-    ]
-
-    async def on_confirm(e):
-        if not title_field.value.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color=ft.colors.RED)
+    async def on_confirm(title, selected_contrasts, dlg_modal):
+        """Callback executado quando o usuário confirma a criação do heatmap"""
+        try:
+            # Fecha o modal primeiro
+            dlg_modal.open = False
             page.update()
-            return
-        await create_heatmap_file(token, user_id, title_field.value, list(selected))
-        dlg_modal.open = False
-        page.update()
-        await show_heatmap_table(page, token, user_id, container_amostras)
+            
+            # Chama a API para criar o heatmap
+            data = {
+                "title": title,
+                "selected_contrasts": selected_contrasts,
+                "user_id": user_id,
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "http://localhost:8000/results/create_heatmap_file",
+                    json=data,
+                    headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                    timeout=120.0,
+                )
 
-    dlg_modal = ft.AlertDialog(
-        title=ft.Text("Heatmap"),
-        content=ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Container(height=5),
-                    title_field,
-                    divider,
-                    ft.DataTable(
-                        columns=columns,
-                        rows=data_rows,
-                        heading_row_height=40,
-                        column_spacing=20,
-                        expand=True,
-                    )
-                ],
-                scroll=ft.ScrollMode.AUTO,
-                expand=True,
-            ),
-            height=400,
-        ),
-        actions=[
-            ft.TextButton(
-                "Confirmar",
-                on_click=lambda e: asyncio.run(on_confirm(e)),
-                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-                width=200,
-                height=40,
-            ),
-        ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+            if response.status_code == 200:
+                result = response.json()
+                # aguarda um curto período para garantir que o arquivo esteja disponível
+                try:
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                # Atualiza a tabela se estivermos na tela de heatmaps
+                await show_heatmaps_table(page, token, user_id, container_amostras)
+            else:
+                try:
+                    error_msg = response.json().get("detail", "Erro desconhecido")
+                except Exception:
+                    error_msg = "Erro desconhecido"
+                print(f"[frontend] Erro ao criar heatmap: {error_msg}")
+        except Exception as e:
+            # erro ao conectar com o servidor
+            pass
+    
+    await show_deg_modal(
+        page, 
+        token, 
+        user_id, 
+        "Heatmap", 
+        max_select=None, 
+        show_select_all=True,
+        on_confirm=on_confirm,
     )
 
-    page.open(dlg_modal)
+async def show_heatmaps_table(page, token, user_id, container_amostras):
+    """Exibe a tabela com os heatmaps criados"""
+    try:
+        # Busca os arquivos de heatmap
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "http://localhost:8000/results/heatmap_files",
+                params={"user_id": user_id},
+                headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                timeout=30.0,
+            )
+        
+        if response.status_code != 200:
+            print(f"[frontend] Falha ao buscar heatmaps: status={response.status_code} body={response.text}")
+            return
+        
+        files = response.json().get("files", [])
+        
+        # Função para visualizar heatmap
+        async def view_heatmap(filename):
+            from .viewer import view_heatmap_image
+            await view_heatmap_image(page, token, filename, user_id)
+        
+        # Função para excluir heatmap (sem diálogo) - segue o padrão usado para barplot/venn
+        async def delete_heatmap_request(filename):
+            try:
+                print(f"[frontend] Enviando DELETE /results/delete_heatmap_file user_id={user_id} filename={filename}")
+                async with httpx.AsyncClient() as client:
+                    response = await client.delete(
+                        "http://localhost:8000/results/delete_heatmap_file",
+                        params={"user_id": user_id, "filename": filename},
+                        headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                        timeout=30.0,
+                    )
+
+                try:
+                    resp_text = response.text
+                except Exception:
+                    resp_text = "<no body>"
+                print(f"[frontend] DELETE response status={response.status_code} body={resp_text}")
+
+                if response.status_code == 200:
+                    await show_heatmaps_table(page, token, user_id, container_amostras)
+                else:
+                    try:
+                        error_msg = response.json().get("detail", resp_text)
+                    except Exception:
+                        error_msg = resp_text
+                    print(f"[frontend] Erro ao excluir: {error_msg}")
+            except Exception as ex:
+                print(f"[frontend] Erro ao conectar: {ex}")
+        
+        # Cria as linhas da tabela
+        rows = []
+        for filename in files:
+            # Remove o prefixo "HEATMAP - " e a extensão ".png" para exibição
+            display_name = filename
+            if filename.startswith("HEATMAP - "):
+                display_name = filename[10:]
+            if display_name.endswith(".png"):
+                display_name = display_name[:-4]
+            
+            # Botões de ação
+            view_button = ft.IconButton(
+                icon="visibility",
+                tooltip="Visualizar",
+                on_click=lambda e, fname=filename: asyncio.run(view_heatmap(fname))
+            )
+            
+            # Helper sync handler to ensure the click event runs immediately and we can show debug feedback
+            def on_delete_click(e, fname=filename):
+                try:
+                    # immediate feedback so we know the handler ran
+                    print(f"[frontend] on_delete_click invoked for {fname}")
+                except Exception as _:
+                    pass
+                # Run the async delete coroutine
+                asyncio.run(delete_heatmap_request(fname))
+
+            delete_button = ft.IconButton(
+                icon="delete",
+                tooltip="Excluir",
+                on_click=on_delete_click
+            )
+            
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(display_name)),
+                    ft.DataCell(
+                        ft.Row([view_button, delete_button], tight=True)
+                    ),
+                ]
+            )
+            rows.append(row)
+        
+        # Cria a tabela
+        if rows:
+            table = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Nome do Heatmap", weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+                ],
+                rows=rows,
+                # border=ft.border.all(1, ft.colors.OUTLINE),
+                border_radius=10,
+                # vertical_lines=ft.border.BorderSide(1, ft.colors.OUTLINE),
+                # horizontal_lines=ft.border.BorderSide(1, ft.colors.OUTLINE),
+            )
+        else:
+            table = ft.Container(
+                content=ft.Text(
+                    "Nenhum heatmap encontrado. Clique em 'Novo Heatmap' para criar um.",
+                    text_align=ft.TextAlign.CENTER,
+                    size=16,
+                ),
+                alignment=ft.alignment.center,
+                padding=ft.padding.all(20),
+            )
+        
+        # Botão para criar novo heatmap
+        btn = ft.ElevatedButton(
+            "Gerar novo heatmap",
+            icon="add",
+            on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id, container_amostras)),
+        )
+        
+        # Atualiza o container seguindo o padrão das outras funções
+        container_amostras.content.controls = [table, btn]
+        page.update()        
+
+    except Exception as e:
+        # Falha ao carregar heatmaps
+        print(f"[frontend] Erro ao carregar heatmaps: {e}")

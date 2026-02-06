@@ -7,32 +7,65 @@ services:
       - ./users:/users/
     ports:
       - "8000:8000"
+
     tty: true
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - main-net
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/bioinfo
-      - PYTHONPATH=/app  
+      - PYTHONPATH=/app
+      - OLLAMA_HOST=http://ollama:11434
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
       interval: 3s
       timeout: 2s
       retries: 10
-
-  ngrok:
-    image: ngrok/ngrok:latest
-    ports:
-      - "4040:4040"
-    environment:
-      - NGROK_AUTHTOKEN=2gHexvsy0HCeqqhDSmzy1c4nzlv_3aD5WkWJnYQXcgsEZKMmD
-    command: http bioinfo-container:8000
-    container_name: ngrok-container
     depends_on:
-      bioinfo:
+      db:
+        condition: service_started
+      ollama:
         condition: service_healthy
+
+  ssh-server:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: ssh-container
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SUDO_ACCESS=false
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=bilbo123
+      - USER_NAME=bilbo
+    ports:
+      - "2222:2222"
+    volumes:
+      - ssh_config:/config
     networks:
       - main-net
+    # depends_on:
+    #   bioinfo:
+    #     condition: service_healthy
+
+  ollama:
+    build:
+      context: .
+      dockerfile: ollama.Dockerfile
+    #image: ollama/ollama
+    container_name: ollama-container
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - main-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
 
   db:
     image: postgres:13
@@ -62,6 +95,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - main-net
 
 networks:
   main-net:
@@ -70,3 +105,5 @@ networks:
 volumes:
   postgres_data:
   users:
+  ssh_config:
+  ollama_data:

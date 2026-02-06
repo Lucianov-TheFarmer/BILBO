@@ -18,12 +18,12 @@ def create_tabela_amostras_pos_trimmagem(page, token):
         page.update()
 
     tabela_amostras_pos_trimmagem = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text("Identificação", weight="bold")),
+            ft.DataColumn(ft.Text("Status", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_pos_trimmagem)),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text("Ações", weight="bold")),
         ],
         rows=[],
     )
@@ -42,6 +42,11 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                     def view_sample_details_handler(e, s=sample["name"]):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim"))
 
+                    async def download_handler(e, s=sample["name"]):
+                        download_url = f"http://localhost:8000/download/qualidade2/{s}?token={token}"
+                        page.launch_url(download_url)
+                        await log_message(page, f"Download iniciado para {s}")
+
                     tabela_amostras_pos_trimmagem.rows.append(
                         ft.DataRow(
                             cells=[
@@ -51,9 +56,9 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                             controls=[
                                                 ft.Container(
                                                     content=ft.Text(
-                                                        sample["name"], 
-                                                        style=ft.TextStyle(size=12), 
-                                                        max_lines=1, 
+                                                        sample["name"],
+                                                        style=ft.TextStyle(size=12),
+                                                        max_lines=1,
                                                         overflow="ellipsis"
                                                     )
                                                 )
@@ -65,7 +70,10 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                 ),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.IconButton(icon=ft.icons.VISIBILITY, on_click=view_sample_details_handler)),
+                                ft.DataCell(ft.Row([
+                                    ft.IconButton(icon="visibility", on_click=view_sample_details_handler),
+                                    ft.IconButton(icon="download", on_click=download_handler),
+                                ])),
                             ],
                         )
                     )
@@ -78,17 +86,15 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
         logger.error(f"An error occurred while updating the post-trimmagem quality analysis table: {e}", exc_info=True)
 
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
-    # Display the dropdown menu and the initial graph
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
 
-    # Find the container_pre_visualizacao and update its content
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                        if isinstance(container, ft.Container) and container.key == "container_preview":
                             container.content.controls = [
                                 ft.Container(
                                     expand=True,
@@ -104,12 +110,11 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
     async def confirm_delete(e):
         selected_samples = []
 
-        # Correctly access the text inside the Container
         for row in tabela_amostras_pos_trimmagem.rows:
             if isinstance(row.cells[2].content, ft.Checkbox) and row.cells[2].content.value:
-                container = row.cells[0].content  # This is the Container
+                container = row.cells[0].content
                 if isinstance(container, ft.Container) and isinstance(container.content, ft.Row):
-                    text_widget = container.content.controls[0].content  # Access the Text widget inside the Row
+                    text_widget = container.content.controls[0].content
                     if isinstance(text_widget, ft.Text):
                         selected_samples.append(text_widget.value)
 
@@ -140,14 +145,14 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
         title=ft.Text("Confirmar exclusão"),
         content=ft.TextField(
             hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
-            border_radius=ft.border_radius.all(4),
+            border_radius=4,
             multiline=False,
             expand=1
         ),
         actions=[
             ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_excluir_analise)
@@ -158,7 +163,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            # Obter amostras trimmadas (stage_id=3)
             response_stage_3 = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
             if response_stage_3.status_code == 200:
                 trimmed_samples = response_stage_3.json()
@@ -166,8 +170,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
             else:
                 logger.error(f"Erro ao obter amostras trimmadas: {response_stage_3.status_code} - {response_stage_3.text}")
                 trimmed_samples = []
-
-            # Obter amostras já analisadas pós-trimmagem (stage_id=4)
             response_stage_4 = await client.get("http://bioinfo-container:8000/samples/stages/4", headers=headers)
             if response_stage_4.status_code == 200:
                 analyzed_samples = {sample["name"].replace("_post_trim.html", "_trimmed.fastq") for sample in response_stage_4.json()}
@@ -176,7 +178,6 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_4.status_code} - {response_stage_4.text}")
                 analyzed_samples = set()
 
-            # Filtrar amostras trimmadas que ainda não foram analisadas pós-trimmagem
             samples = [sample for sample in trimmed_samples if sample["name"] not in analyzed_samples]
             logger.info(f"Samples available for post-trimmagem quality analysis: {samples}")
 
@@ -214,7 +215,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
             logger.error(f"An error occurred while starting post-trimmagem quality analysis: {e}", exc_info=True)
 
     tabela_analise_qualidade = ft.DataTable(
-        heading_row_color=ft.colors.BLACK12,
+        heading_row_color="black12",
         columns=[
             ft.DataColumn(ft.Text("Identificação")),
             ft.DataColumn(ft.Text("Tamanho")),
@@ -224,9 +225,9 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(sample["name"], size=12)),
+                    ft.DataCell(ft.Text(sample["size"], size=12)),
+                    ft.DataCell(ft.Text(sample["status"], size=12)),
                     ft.DataCell(ft.Checkbox()),
                 ],
             ) for sample in samples
@@ -236,12 +237,12 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
     if not tabela_analise_qualidade.rows:
         empty_message = ft.Column(
             controls=[
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
                 ft.Text("Nenhuma amostra disponível para análise de qualidade pós-trimmagem", style=ft.TextStyle(size=16), text_align="center"),
-                ft.Divider(height=1, thickness=1, color=ft.colors.BLACK38),
+                ft.Divider(height=1, thickness=1, color="black38"),
             ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment="center",
+            horizontal_alignment="center",
         )
         iniciar_analise_disabled = True
     else:
@@ -270,7 +271,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 )
             ),
         ],
-        actions_alignment=ft.MainAxisAlignment.CENTER,
+        actions_alignment="center",
     )
 
     page.open(dlg_modal_analise_qualidade)

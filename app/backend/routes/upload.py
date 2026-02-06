@@ -1,0 +1,166 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from ..db.database import get_db
+from ..db.models import SampleStage, User
+from ..utils import get_current_user, manager
+from pydantic import BaseModel
+import os
+import base64
+import logging
+import asyncio
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Models
+class DebugPrint(BaseModel):
+    filename: str
+    first_line: str
+
+class FileUpload(BaseModel):
+    filename: str
+    content: str  # conteúdo do arquivo em base64
+    user_id: int
+
+def calculate_file_size(file_path: str) -> str:
+    """Calculate file size and return in appropriate units"""
+    try:
+        size_bytes = os.path.getsize(file_path)
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024**2:
+            return f"{size_bytes/1024:.1f} KB"
+        elif size_bytes < 1024**3:
+            return f"{size_bytes/(1024**2):.1f} MB"
+        else:
+            return f"{size_bytes/(1024**3):.1f} GB"
+    except Exception as e:
+        logger.error(f"Erro ao calcular tamanho do arquivo {file_path}: {e}")
+        return "Unknown"
+
+def extract_basename_from_filename(filename: str) -> str:
+    """Extract basename from FASTQ filename"""
+    # Remove .fastq, .fq extensions
+    name = filename.replace('.fastq.gz', '').replace('.fq.gz', '').replace('.fastq', '').replace('.fq', '')
+    
+    # Remove common paired-end suffixes
+    suffixes = ['_1', '_2', '_R1', '_R2']
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    
+    return name
+
+def detect_sequencing_type(filename: str) -> str:
+    """Detect if file is from single-end or paired-end sequencing"""
+    if any(suffix in filename for suffix in ['_1.', '_2.', '_R1.', '_R2.']):
+        return "Paired-End"
+    return "Single-End"
+
+@router.post("/upload/fastq")
+async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
+    """Endpoint para salvar arquivos FASTQ e adicionar ao banco de dados"""
+    try:
+        # Determinar basename e tipo de sequenciamento
+        filename = data.filename
+        basename = extract_basename_from_filename(filename)
+        sequencing_type = detect_sequencing_type(filename)
+        
+        # Criar diretório
+        user_dir = f"../users/{data.user_id}/samples/{basename}"
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Salvar arquivo
+        file_path = os.path.join(user_dir, filename)
+        
+        # Decodificar conteúdo base64
+        file_content = base64.b64decode(data.content)
+        
+        with open(file_path, 'wb') as f:
+            f.write(file_content)
+        
+        # Calcular tamanho do arquivo
+        file_size = calculate_file_size(file_path)
+        
+        # Verificar se já existe entrada no banco para este basename e usuário
+        existing_sample = db.query(SampleStage).filter(
+            SampleStage.sra_code == basename,
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == data.user_id
+        ).first()
+        
+        if not existing_sample:
+            # Criar nova entrada no banco de dados para stage 1 (samples)
+            new_sample = SampleStage(
+                stage_id=1,
+                name=filename,
+                sra_code=basename,
+                size=file_size,
+                status="Completed",
+                user_id=data.user_id,
+            )
+            db.add(new_sample)
+            db.commit()
+            db.refresh(new_sample)
+            
+            logger.info(f"Nova amostra criada no banco: {basename} - {filename}")
+        else:
+            # Atualizar entrada existente se necessário
+            existing_sample.status = "Completed"
+            existing_sample.size = file_size
+            db.commit()
+            
+            logger.info(f"Amostra existente atualizada: {basename} - {filename}")
+        
+        # Enviar mensagem para o terminal
+        terminal_message = f"Upload da amostra {filename} concluído"
+        await manager.broadcast(terminal_message)
+        
+        print("=" * 60)
+        print(f"ARQUIVO SALVO: {file_path}")
+        print(f"Tamanho: {file_size}")
+        print(f"Basename: {basename}")
+        print(f"Tipo: {sequencing_type}")
+        print(f"Adicionado ao banco de dados!")
+        print("=" * 60)
+        
+        return {
+            "status": "saved", 
+            "path": file_path,
+            "basename": basename,
+            "size": file_size,
+            "sequencing_type": sequencing_type,
+            "database_updated": True
+        }
+        
+    except Exception as e:
+        print(f"ERRO ao salvar arquivo: {e}")
+        logger.error(f"Erro ao salvar arquivo: {e}")
+        await manager.broadcast(f"❌ Erro no upload: {filename} - {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@router.post("/upload/finalize")
+async def finalize_upload_batch(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Finalizar lote de upload e enviar mensagem consolidada"""
+    try:
+        # Contar amostras do usuário
+        total_samples = db.query(SampleStage).filter(
+            SampleStage.user_id == current_user.id,
+            SampleStage.stage_id == 1
+        ).count()
+        
+        # Enviar mensagem de finalização
+        final_message = f"Upload finalizado! Total de amostras: {total_samples}"
+        await manager.broadcast(final_message)
+        
+        return {
+            "status": "finalized",
+            "total_samples": total_samples,
+            "message": "Upload batch completed successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao finalizar lote de upload: {e}")
+        await manager.broadcast(f"❌ Erro ao finalizar upload: {str(e)}")
+        return {"status": "error", "message": str(e)}

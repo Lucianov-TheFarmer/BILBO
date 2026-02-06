@@ -4,6 +4,7 @@ from ..db.database import get_db
 from ..db.models import User, SampleStage
 from ..utils import get_current_user, manager
 import subprocess
+import threading
 import logging
 import os
 import openpyxl
@@ -115,18 +116,48 @@ async def run_deg(
         if os.path.exists(annotate_uniprot_script):
             await manager.broadcast("Iniciando anotação com Uniprot")
             try:
+                # Run the annotate script and stream its stdout/stderr to the app logger in real-time.
                 process = subprocess.Popen(
                     ["python", annotate_uniprot_script, deg_xlsx],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    bufsize=1,
                 )
-                stdout, stderr = process.communicate()
-                logger.info(f"Saída do annotate_deg_with_uniprot.py:\n{stdout}")
-                if stderr:
-                    logger.error(f"Erros do annotate_deg_with_uniprot.py:\n{stderr}")
-                if process.returncode != 0:
-                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {stderr}")
+
+                # Readers for streaming output
+                stderr_lines = []
+
+                def _stream_reader(pipe, log_fn, collect=None):
+                    try:
+                        for line in iter(pipe.readline, ''):
+                            line = line.rstrip('\n')
+                            if line:
+                                log_fn(line)
+                                if collect is not None:
+                                    collect.append(line)
+                    finally:
+                        try:
+                            pipe.close()
+                        except Exception:
+                            pass
+
+                t_out = threading.Thread(target=_stream_reader, args=(process.stdout, logger.info))
+                t_err = threading.Thread(target=_stream_reader, args=(process.stderr, logger.error, stderr_lines))
+                t_out.start()
+                t_err.start()
+
+                # wait for process to finish
+                return_code = process.wait()
+                # ensure threads finished reading
+                t_out.join()
+                t_err.join()
+
+                if return_code != 0:
+                    err_text = '\n'.join(stderr_lines[-50:]) if stderr_lines else 'No stderr captured.'
+                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py (rc={return_code}): {err_text}")
+                else:
+                    logger.info("annotate_deg_with_uniprot.py finished successfully.")
             except Exception as e:
                 logger.error(f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
                 raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
