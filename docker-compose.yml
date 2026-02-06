@@ -25,7 +25,7 @@ services:
       db:
         condition: service_started
       ollama:
-        condition: service_started
+        condition: service_healthy
 
   ssh-server:
     image: lscr.io/linuxserver/openssh-server:latest
@@ -44,9 +44,9 @@ services:
       - ssh_config:/config
     networks:
       - main-net
-    depends_on:
-      bioinfo:
-        condition: service_healthy
+    # depends_on:
+    #   bioinfo:
+    #     condition: service_healthy
 
   ollama:
     build:
@@ -60,6 +60,12 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - main-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
 
   db:
     image: postgres:13

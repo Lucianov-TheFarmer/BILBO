@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 CONFIG = {
-    'build': False,
+    'build': True,
     'ssh': {
         'port': 2222,
         'user': 'bilbo',

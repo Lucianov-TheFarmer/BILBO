@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 # Instalar dependências necessárias para o Flet
 RUN apt-get install -y \
     libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-xlib-2.0-0 \
     libglib2.0-0 \
     gstreamer1.0-plugins-base \
     gstreamer1.0-tools \

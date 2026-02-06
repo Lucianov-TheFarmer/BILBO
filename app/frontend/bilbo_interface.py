@@ -320,7 +320,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
                 response = await client.post(
                     "http://localhost:8000/chat",
-                    json={"message": texto_usuario, "model": "deepseek-r1:8b"},
+                    json={"message": texto_usuario, "model": "qwen3:0.6b"},
                     headers=headers
                 )
 

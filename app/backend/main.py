@@ -56,7 +56,7 @@ app.include_router(upload.router, tags=["upload"])
 
 class ChatRequest(BaseModel):
     message: str
-    model: str = 'deepseek-r1:8b'
+    model: str = 'gwen3:0.6b'
 
 
 SYSTEM_PROMPT = """
