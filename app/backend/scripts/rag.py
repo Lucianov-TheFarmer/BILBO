@@ -10,7 +10,7 @@ DIRETORIO_ARTIGOS = "./artigos"
 CAMINHO_BANCO_VETORIAL = "./chroma_db_arctic"
 NOME_COLECAO = "banco_literatura_bio"
 
-MODELO_LLM = "qwen3:14b"
+MODELO_LLM = "qwen3:0.6b"
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
 
 class FuncaoEmbedding(EmbeddingFunction):

@@ -17,7 +17,11 @@ RUN apt-get update && apt-get install -y \
 # Instalar dependências necessárias para o Flet
 RUN apt-get install -y \
     libgtk-3-0 \
+<<<<<<< HEAD
     libgdk-pixbuf-xlib-2.0-0 \
+=======
+    #libgdk-pixbuf-xlib-2.0-0 \
+>>>>>>> 27ba8b27e8c3f35446f35e4e950237c819c9521a
     libglib2.0-0 \
     gstreamer1.0-plugins-base \
     gstreamer1.0-tools \
@@ -42,7 +46,7 @@ SHELL ["conda", "run", "-n", "bioinfo", "/bin/bash", "-c"]
 # Instale FastAPI e Uvicorn
 RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.28.2 sqlalchemy==2.0.39 \
     psycopg2-binary==2.9.10 python-jose==3.4.0 passlib==1.7.4 python-multipart==0.0.20 \
-    requests==2.32.3 websockets==15.0.1 venny4py seaborn ollama
+    requests==2.32.3 websockets==15.0.1 venny4py seaborn ollama unidecode adjustText umap-learn \
 
 RUN apt-get -y install tmux htop
 
