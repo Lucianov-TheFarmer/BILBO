@@ -2,6 +2,7 @@ import sys
 import pandas as pd
 import requests
 import time
+import threading
 
 def is_plant(lineage, organism=None):
     # Se lineage está vazio, tenta usar o nome do organismo como fallback
@@ -38,16 +39,12 @@ def fetch_uniprot_info(query):
     )
     try:
         resp = requests.get(url, timeout=10)
-        print(f"URL: {url} | Status: {resp.status_code}")  # Print URL and status for debug
         if resp.status_code == 400:
-            print(f"[ERROR] Bad request for query: {query}\nResponse text: {resp.text[:200]}")
             return {}
         if resp.status_code != 200 or not resp.text.strip():
-            print(f"Response text: {resp.text[:200]}")  # Print first 200 chars of response
             return {}
         lines = resp.text.strip().split("\n")
         if len(lines) < 2:
-            print(f"No results for query: {query}")
             return {}
         header = lines[0].split("\t")
         # Parse all results and prioritize plants
@@ -56,7 +53,6 @@ def fetch_uniprot_info(query):
             data = dict(zip(header, line.split("\t")))
             organism = data.get('Organism', '')
             lineage = data.get('Lineage', '')
-            print(f"[DEBUG] Candidate organism: {organism} | Lineage: {lineage}")
             has_function = bool(data.get("Function [CC]", "").strip())
             has_ontology = (
                 bool(data.get("Gene Ontology (cellular component)", "").strip()) or
@@ -64,16 +60,13 @@ def fetch_uniprot_info(query):
                 bool(data.get("Gene Ontology (biological process)", "").strip())
             )
             if (is_plant(lineage, organism) and (has_function or has_ontology)):
-                print("[DEBUG] Selected this as best_data (plant with function/ontology)")
                 best_data = data
                 break
-        # Se não achou planta, pega o primeiro com função/ontologia
         if not best_data:
             for line in lines[1:]:
                 data = dict(zip(header, line.split("\t")))
                 organism = data.get('Organism', '')
                 lineage = data.get('Lineage', '')
-                print(f"[DEBUG] (Fallback) Candidate organism: {organism} | Lineage: {lineage}")
                 has_function = bool(data.get("Function [CC]", "").strip())
                 has_ontology = (
                     bool(data.get("Gene Ontology (cellular component)", "").strip()) or
@@ -81,12 +74,9 @@ def fetch_uniprot_info(query):
                     bool(data.get("Gene Ontology (biological process)", "").strip())
                 )
                 if has_function or has_ontology:
-                    print("[DEBUG] (Fallback) Selected this as best_data (any with function/ontology)")
                     best_data = data
                     break
-        # Se não achou nada, retorna a primeira linha
         if not best_data:
-            print("[DEBUG] No plant or function/ontology found, using first result.")
             best_data = dict(zip(header, lines[1].split("\t")))
         return {
             "Uniprot organism": best_data.get("Organism", ""),
@@ -97,7 +87,6 @@ def fetch_uniprot_info(query):
             "Uniprot Function": best_data.get("Function [CC]", ""),
         }
     except Exception as ex:
-        print(f"Exception for query '{query}': {ex}")
         return {}
 
 def annotate_deg_with_uniprot(deg_xlsx_path, write_path=None):

@@ -496,7 +496,7 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
         ("Barplot", "BARPLOT.ISOLADO - {sheet}.png"),
         ("MA plot", "MA.ISOLADO - {sheet}.png"),
         ("Volcano plot", "VOLCANO.ISOLADO - {sheet}.png"),
-        ("Frequência de termos ontológicos", "ONTO_FREQ.ISOLADO - {sheet}.png"),
+        ("Frequência de termos ontológicos", "ONTO_FREQ.ISOLADO - {sheet}.png")
     ]
 
     # Remove qualquer dropdown ou gráfico anterior do container_pre_visualizacao
