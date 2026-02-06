@@ -4,4 +4,4 @@ RUN sh -c "ollama serve & \
         echo 'A aguardar pelo servidor Ollama...'; \
         sleep 1; \
     done; \
-    ollama pull deepseek-r1:8b"
+    ollama pull qwen3:0.6b"
