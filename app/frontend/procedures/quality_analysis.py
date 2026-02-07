@@ -70,13 +70,13 @@ async def update_quality_analysis_table(page, token, user_id):
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
-
+    # Find the preview container by key (container_preview) and update it
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                        if isinstance(container, ft.Container) and getattr(container, 'key', None) == "container_preview":
                             container.content.controls = [
                                 ft.Container(
                                     expand=True,

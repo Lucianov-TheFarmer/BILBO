@@ -24,9 +24,9 @@ fi
 
 # Prefer timeout if available to avoid indefinite hangs
 if command -v timeout >/dev/null 2>&1; then
-    RUN_CMD=(timeout 30m fastqc -o "$output_dir" "$input_file" -t 4)
+    RUN_CMD=(timeout 30m fastqc -o "$output_dir" "$input_file")
 else
-    RUN_CMD=(fastqc -o "$output_dir" "$input_file" -t 4)
+    RUN_CMD=(fastqc -o "$output_dir" "$input_file")
 fi
 
 "${RUN_CMD[@]}" > "$log_file" 2>&1 || true

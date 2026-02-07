@@ -26,16 +26,20 @@ graph_type_to_image = {
 }
 
 async def display_graph(page, token, graph_type, sample_name, user_id, analysis_type):
-    # Extract the sample code from the sample name
+    # Extract the sample code from the sample name (e.g. 'SRR11196539_1.fastq' -> 'SRR11196539_1')
     sample_code = sample_name.split('.')[0]
+    # Derive the base SRA code without _1/_2 suffix (folder name used in QC)
+    sra_base = re.sub(r'(_[12])$', '', sample_code)
 
     # Define the path to the zip file and the image inside it based on analysis_type
     if analysis_type == "QC":
-        zip_path = f"../users/{user_id}/QC/{sample_code}.fastq/{sample_code}_fastqc.zip"
+        # fastqc output is stored under ../users/<user>/QC/<sra_base>/<sample_code>_fastqc.zip
+        zip_path = f"../users/{user_id}/QC/{sra_base}/{sample_code}_fastqc.zip"
         image_path = f"{sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     elif analysis_type == "QC_PostTrim":
         trimmed_sample_code = sample_code.replace("_post_trim", "_trimmed")
-        zip_path = f"../users/{user_id}/QC_PostTrim/{trimmed_sample_code}.fastq/{trimmed_sample_code}_fastqc.zip"
+        sra_base_trimmed = re.sub(r'(_[12])$', '', trimmed_sample_code)
+        zip_path = f"../users/{user_id}/QC_PostTrim/{sra_base_trimmed}/{trimmed_sample_code}_fastqc.zip"
         image_path = f"{trimmed_sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     else:
         logger.error(f"Unsupported analysis type: {analysis_type}")
