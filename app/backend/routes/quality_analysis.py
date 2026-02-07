@@ -44,21 +44,28 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
             user_id=user_id,  # Associar ao usuário atual
         )
         db.add(new_sample_stage)
-
-        # Executar o script de análise de qualidade
-        command = f"bash /app/backend/scripts/quality_analysis.sh {name} {user_id}"
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
-        if process.returncode != 0:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error starting quality analysis for {name}: {stderr}")
-
-        # Atualizar o status para "Completed" após a execução bem-sucedida
-        new_sample_stage.status = "Completed"
         db.commit()
 
-        # Enviar mensagem de conclusão via WebSocket
+        # Executar o script de análise de qualidade em background (não bloquear a rota)
+        command = f"bash /app/backend/scripts/quality_analysis.sh {name} {user_id}"
         try:
-            asyncio.run(manager.broadcast(f"Análise de qualidade concluída para {name}"))
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+            logger.info(f"Launched quality analysis (PID={process.pid}) for {name}")
+        except Exception as e:
+            logger.error(f"Failed to launch quality analysis for {name}: {e}")
+            new_sample_stage.status = "Failed"
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error launching quality analysis for {name}: {e}")
+
+        # Optionally notify frontend that analysis started
+        try:
+            asyncio.run(manager.broadcast(f"Análise de qualidade iniciada para {name}"))
         except Exception as e:
             logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
 
@@ -84,6 +91,12 @@ async def update_quality_analysis_status(
             updated = True
     if not updated:
         raise HTTPException(status_code=404, detail="Sample not found")
+    # Notify frontend via WebSocket about the status change
+    try:
+        await manager.broadcast(f"Quality analysis {sra_code} status: {status}")
+    except Exception as e:
+        logger.warning(f"Failed to broadcast quality analysis status: {e}")
+
     return {"message": f"Sample {sra_code} status updated to {status}"}
 
 @router.get("/quality_analysis/completed")
