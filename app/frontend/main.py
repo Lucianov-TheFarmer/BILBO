@@ -27,6 +27,9 @@ async def main(page: ft.Page):
     async def toggle_theme(e):
         page.theme_mode = "dark" if page.theme_mode == "light" else "light"
         page.update()
+        # Se ainda não há token (está na tela de login), recarrega a interface de login
+        if token is None:
+            await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
 
     async def logout(e):
         nonlocal token, username
