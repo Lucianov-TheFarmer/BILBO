@@ -37,8 +37,11 @@ async def display_graph(page, token, graph_type, sample_name, user_id, analysis_
         zip_path = f"../users/{user_id}/QC/{sra_base}/{sample_code}_fastqc.zip"
         image_path = f"{sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     elif analysis_type == "QC_PostTrim":
+        # sample_code example: SRR11196539_1_post_trim -> trimmed_sample_code: SRR11196539_1_trimmed
         trimmed_sample_code = sample_code.replace("_post_trim", "_trimmed")
-        sra_base_trimmed = re.sub(r'(_[12])$', '', trimmed_sample_code)
+        # Remove trailing _trimmed then remove _1/_2 to get folder base (same convention as pre-trim QC)
+        tmp_base = re.sub(r'_trimmed$', '', trimmed_sample_code)
+        sra_base_trimmed = re.sub(r'(_[12])$', '', tmp_base)
         zip_path = f"../users/{user_id}/QC_PostTrim/{sra_base_trimmed}/{trimmed_sample_code}_fastqc.zip"
         image_path = f"{trimmed_sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     else:

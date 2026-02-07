@@ -486,8 +486,23 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             while True:
                 message = await websocket.recv()
                 await log_message(page, message, container_terminal=container_terminal)
-                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                await update_quality_analysis_table(page, token, user_id)
+                # Update main tables when backend broadcasts events (start/completion)
+                try:
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                except Exception as e:
+                    logger.warning(f"Failed to atualizar_tabela from websocket event: {e}")
+                try:
+                    await update_quality_analysis_table(page, token, user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to update_quality_analysis_table from websocket event: {e}")
+                try:
+                    await update_trimmagem_table(page, token)
+                except Exception as e:
+                    logger.warning(f"Failed to update_trimmagem_table from websocket event: {e}")
+                try:
+                    await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to update post-trim quality table from websocket event: {e}")
                 page.update()
 
     page.run_task(connect_websocket)

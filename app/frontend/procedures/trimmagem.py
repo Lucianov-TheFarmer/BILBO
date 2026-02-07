@@ -416,6 +416,8 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
         await log_message(page, f"Iniciando trimmagem para {selected_samples}")
         dlg_modal_trimmagem.open = False
+        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+        await update_trimmagem_table(page, token) 
         page.update()
 
         # Collect parameters

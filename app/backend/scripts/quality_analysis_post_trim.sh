@@ -1,32 +1,61 @@
 #!/bin/bash
 
-sra_code=$1
-user_id=$2
-token=$3  # Adicionado para receber o token como argumento
-output_dir="../users/${user_id}/QC_PostTrim/$sra_code"
+set -euo pipefail
+
+sra_code="$1"
+user_id="$2"
+# Normalize base names: remove .fastq and optional _trimmed/_1/_2 to get base
+sra_code_base=$(echo "$sra_code" | sed -E 's/(_1|_2|_trimmed)?\.fastq$//')
+# sra_base without _1/_2 (folder grouping like pre-trim QC)
+sra_base=$(echo "$sra_code_base" | sed -E 's/(_[12])$//')
+output_dir="../users/${user_id}/QC_PostTrim/${sra_base}"
 log_file="/tmp/${sra_code}_quality_analysis_post_trim.log"
 
-if ! command -v tmux &> /dev/null; then
-    echo "tmux não está instalado. Instalando tmux..." >> $log_file
-    apt-get update >> $log_file 2>&1
-    apt-get install -y tmux >> $log_file 2>&1
+echo "Starting quality_analysis_post_trim for $sra_code (user $user_id)" > "$log_file"
+
+mkdir -p "$output_dir"
+
+# Input file is expected to be ../users/<user>/trimmed/<sra_code>
+input_file="../users/${user_id}/trimmed/${sra_code}"
+if [ ! -f "$input_file" ]; then
+    echo "Input file not found: $input_file" >> "$log_file"
+    exit 2
 fi
 
-sra_code_base=${sra_code%_[12].fastq}
+# Determine sample basename (without path and .fastq)
+sample_basename=$(basename "$sra_code" .fastq)
 
-echo "Criando diretório para análise de qualidade pós-trimmagem: $output_dir" >> $log_file
-mkdir -p $output_dir
+# Run fastqc with timeout to avoid hangs
+if command -v timeout >/dev/null 2>&1; then
+    RUN_CMD=(timeout 30m fastqc -t 4 -o "$output_dir" "$input_file")
+else
+    RUN_CMD=(fastqc -t 4 -o "$output_dir" "$input_file")
+fi
 
-echo "Iniciando sessão tmux para fastqc pós-trimmagem" >> $log_file
-tmux new-session -d -s QC_PostTrim_$user_id "fastqc -o $output_dir ../users/$user_id/trimmed/$sra_code >> $log_file 2>&1; exit_code=\$?; if [ \$exit_code -eq 0 ]; then echo 'Análise de qualidade pós-trimmagem concluída com sucesso' >> $log_file; curl -X POST http://bioinfo-container:8000/quality_analysis_post_trim/update_status -H 'Content-Type: application/x-www-form-urlencoded' -H \"Authorization: Bearer $token\" -d \"sra_code=$sra_code_base&status=Completed\" >> $log_file 2>&1; else echo 'Análise de qualidade pós-trimmagem falhou com código de saída \$exit_code' >> $log_file; fi; tmux wait-for -S quality_analysis_post_trim_done"
+"${RUN_CMD[@]}" >> "$log_file" 2>&1 || true
+exit_code=$?
 
-echo "Aguardando finalização da sessão tmux" >> $log_file
-tmux wait-for quality_analysis_post_trim_done
+# Expected zip path produced by FastQC
+expected_zip="$output_dir/${sample_basename}_fastqc.zip"
 
-echo "Encerrando sessão tmux" >> $log_file
-tmux kill-session -t QC_PostTrim_$user_id
+echo "FastQC exit_code=$exit_code" >> "$log_file"
+echo "Expected zip: $expected_zip" >> "$log_file"
+echo "Output dir listing:" >> "$log_file"
+ls -la "$output_dir" >> "$log_file" 2>&1 || true
 
-echo "Conteúdo do arquivo de log:" >> $log_file
-cat $log_file
+if [ $exit_code -eq 0 ] && [ -f "$expected_zip" ]; then
+    echo "Post-trim quality analysis completed successfully and zip found." >> "$log_file"
+    # Extract base sra code (remove _1/_2, _trimmed, and .fastq)
+    sra_code_base=$(echo "$sra_code" | sed -E 's/(_1|_2|_trimmed)?\.fastq$//')
+    curl -s -X POST http://bioinfo-container:8000/quality_analysis_post_trim/update_status -H 'Content-Type: application/x-www-form-urlencoded' -d "sra_code=$sra_code_base&new_status=Completed" >> "$log_file" 2>&1 || true
+else
+    echo "Post-trim quality analysis failed or zip missing (exit_code=$exit_code)." >> "$log_file"
+    sra_code_base=$(echo "$sra_code" | sed -E 's/(_1|_2|_trimmed)?\.fastq$//')
+    echo "Will report status Failed for $sra_code_base" >> "$log_file"
+    curl -s -X POST http://bioinfo-container:8000/quality_analysis_post_trim/update_status -H 'Content-Type: application/x-www-form-urlencoded' -d "sra_code=$sra_code_base&new_status=Failed" >> "$log_file" 2>&1 || true
+fi
+
+echo "----- log output -----" >> "$log_file"
+cat "$log_file" >> "$log_file" 2>&1 || true
 
 exit $exit_code

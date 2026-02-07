@@ -176,6 +176,20 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                 logger.error(f"Erro no download de {sample_name}: {e}")
                 await log_message(page, f"Erro no download de {sample_name}: {str(e)}")
         
+        # Show download button only when sample status is Completed
+        actions = []
+        try:
+            status = (sample.get("status") or "").lower()
+        except Exception:
+            status = ""
+
+        if status == "completed":
+            actions.append(ft.IconButton(
+                icon="download",
+                tooltip="Baixar arquivo da amostra",
+                on_click=download_sample_file
+            ))
+
         tabela_amostras_local.rows.append(
             ft.DataRow(
                 cells=[
@@ -183,11 +197,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                     ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
-                    ft.DataCell(ft.IconButton(
-                        icon="download",
-                        tooltip="Baixar arquivo da amostra",
-                        on_click=download_sample_file
-                    )),
+                    ft.DataCell(ft.Row(actions)),
                 ],
             )
         )
@@ -228,11 +238,8 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                             ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Checkbox()),
-                            ft.DataCell(ft.IconButton(
-                                icon="download",
-                                tooltip="Baixar arquivo da amostra",
-                                on_click=download_sample_file
-                            )),
+                            # Show download button only when sample status is Completed
+                            (ft.DataCell(ft.Row([ft.IconButton(icon="download", tooltip="Baixar arquivo da amostra", on_click=download_sample_file)])) if ((sample.get("status") or "").lower() == "completed") else ft.DataCell(ft.Row([]))),
                         ],
                     )
                 )

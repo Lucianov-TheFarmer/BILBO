@@ -47,6 +47,16 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                         page.launch_url(download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
+                    # Only show view/download when status is Completed
+                    actions = []
+                    try:
+                        status = (sample.get("status") or "").lower()
+                    except Exception:
+                        status = ""
+                    if status == "completed":
+                        actions.append(ft.IconButton(icon="visibility", on_click=view_sample_details_handler))
+                        actions.append(ft.IconButton(icon="download", on_click=download_handler))
+
                     tabela_amostras_pos_trimmagem.rows.append(
                         ft.DataRow(
                             cells=[
@@ -70,10 +80,7 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                                 ),
                                 ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.Row([
-                                    ft.IconButton(icon="visibility", on_click=view_sample_details_handler),
-                                    ft.IconButton(icon="download", on_click=download_handler),
-                                ])),
+                                ft.DataCell(ft.Row(actions)),
                             ],
                         )
                     )

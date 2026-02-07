@@ -54,43 +54,61 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
         db.add(new_sample_stage)
         db.commit()
 
+        # Launch the quality analysis post-trim script in background to avoid blocking the API
+        # Pass token optionally if available in env (not required)
         command = f"bash /app/backend/scripts/quality_analysis_post_trim.sh {name} {user_id}"
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
-        if process.returncode != 0:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error starting quality analysis post-trimmagem for {name}: {stderr}")
-
-        new_sample_stage.status = "Completed"
-        db.commit()
-
-        # Enviar mensagem de conclusão via WebSocket
         try:
-            asyncio.run(manager.broadcast(f"Análise de qualidade pós-trimmagem concluída para {name}"))
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+            logger.info(f"Launched quality_analysis_post_trim (PID={process.pid}) for {name}")
         except Exception as e:
-            logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
+            logger.error(f"Failed to launch quality analysis post-trim for {name}: {e}")
+            new_sample_stage.status = "Failed"
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error launching quality analysis post-trim for {name}: {e}")
+
+        # Broadcast that post-trim analysis started
+        try:
+            asyncio.run(manager.broadcast(f"Análise de qualidade pós-trimmagem iniciada para {name}"))
+        except Exception as e:
+            logger.warning(f"Não foi possível enviar mensagem WebSocket de início: {e}")
 
     return {"message": "Quality analysis post-trimmagem started successfully"}
 
 @router.post("/quality_analysis_post_trim/update_status")
-def update_quality_analysis_post_trim_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    logger.info(f"Recebendo solicitação para atualizar status: sra_code={sra_code}, status={status}")
-    user_id = current_user.id
-    logger.info(f"Usuário autenticado: {user_id}")
+def update_quality_analysis_post_trim_status(sra_code: str = Form(...), new_status: str = Form(...), db: Session = Depends(get_db)):
+    logger.info(f"Recebendo solicitação para atualizar status: sra_code={sra_code}, status={new_status}")
 
-    db_sample_stage = db.query(SampleStage).filter(
-        SampleStage.sra_code == sra_code,
-        SampleStage.stage_id == 4,
-        SampleStage.user_id == user_id
-    ).first()
+    # Update any matching post-trim sample entries for any user.
+    updated = False
+    candidates = [f"{sra_code}_post_trim.html", f"{sra_code}_1_post_trim.html", f"{sra_code}_2_post_trim.html"]
+    for name in candidates:
+        db_sample_stage = db.query(SampleStage).filter(
+            SampleStage.name == name,
+            SampleStage.stage_id == 4
+        ).first()
+        if db_sample_stage:
+            db_sample_stage.status = new_status
+            db.commit()
+            updated = True
 
-    if not db_sample_stage:
-        logger.error(f"Amostra não encontrada: {sra_code}")
+    if not updated:
+        logger.error(f"No post-trim sample found for {sra_code}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
 
-    db_sample_stage.status = status
-    db.commit()
-    logger.info(f"Status atualizado com sucesso para {status} para a amostra {sra_code}")
-    return {"message": f"Status atualizado para {status} para a amostra {sra_code}"}
+    # Broadcast update to frontend
+    try:
+        asyncio.run(manager.broadcast(f"Quality analysis post-trim {sra_code} status: {new_status}"))
+    except Exception as e:
+        logger.warning(f"Failed to broadcast post-trim status: {e}")
+
+    logger.info(f"Status atualizado com sucesso para {new_status} para a amostra {sra_code}")
+    return {"message": f"Status atualizado para {new_status} para a amostra {sra_code}"}
 
 @router.delete("/quality_analysis_post_trim/{name}")
 def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

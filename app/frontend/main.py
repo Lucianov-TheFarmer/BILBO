@@ -14,7 +14,7 @@ async def main(page: ft.Page):
     if not page.session.get("lang"):
         page.session.set("lang", "pt")
 
-    page.title = t("login_title", page.session.get("lang"))
+    # page.title = t("login_title", page.session.get("lang"))
 
     async def show_snackbar(message):
         page.snack_bar.content = ft.Text(message)
