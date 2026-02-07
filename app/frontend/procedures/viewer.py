@@ -102,6 +102,28 @@ async def display_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        # Prefer the explicit preview container if present
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and getattr(container, "key", None) == "container_preview":
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,
+                                        ),
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return
+
+        # Fallback: previous heuristic based on expand==2
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:
@@ -135,6 +157,28 @@ async def display_quantification_log(page, log_content):
         )
 
 
+        # Prefer explicit preview container
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and getattr(container, "key", None) == "container_preview":
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,
+                                        ),
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return
+
+        # Fallback heuristic
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:

@@ -382,8 +382,34 @@ def index_genome(
         db.commit()
 
         star_script_path = "/app/backend/scripts/index_genome_star.sh"
-        star_command = ["bash", star_script_path, genome_dir, str(sjdb_overhang), str(threads)]
-        logger.info(f"Iniciando indexação do genoma {genome_name} com STAR...")
+
+        # Tentar calcular um limite de memória baseado em MemTotal (80% do total)
+        def _calculate_ram_limit():
+            try:
+                with open('/proc/meminfo', 'r') as mf:
+                    for line in mf:
+                        if line.startswith('MemTotal:'):
+                            parts = line.split()
+                            mem_kb = int(parts[1])
+                            # usar 80% da memória total como limite (em bytes)
+                            return int(mem_kb * 1024 * 0.8)
+            except Exception:
+                return None
+
+        limit_ram = _calculate_ram_limit()
+        if limit_ram is None:
+            # fallback para 50GB caso não seja possível ler /proc/meminfo
+            limit_ram = 50 * 1024 ** 3
+
+        star_command = [
+            "bash",
+            star_script_path,
+            genome_dir,
+            str(sjdb_overhang),
+            str(threads),
+            str(limit_ram),
+        ]
+        logger.info(f"Iniciando indexação do genoma {genome_name} com STAR... (limitGenomeGenerateRAM={limit_ram})")
         process = subprocess.Popen(star_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
 

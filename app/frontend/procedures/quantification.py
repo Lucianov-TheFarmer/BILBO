@@ -43,7 +43,11 @@ async def update_tabela_quantificacao(page, token, user_id):
                 tabela_quantificacao.rows.clear()
                 for sample in samples:
                     def view_log_handler(e, s=sample["name"]):
-                        asyncio.run(view_quantification_log_handler(page, token, s, user_id))
+                        try:
+                            asyncio.get_event_loop().create_task(view_quantification_log_handler(page, token, s, user_id))
+                        except RuntimeError:
+                            # Fallback if no running loop: run in a new loop
+                            asyncio.run(view_quantification_log_handler(page, token, s, user_id))
 
                     log_button_disabled = sample["status"].lower() != "completed"
 
