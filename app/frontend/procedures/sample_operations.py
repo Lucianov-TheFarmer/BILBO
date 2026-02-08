@@ -203,8 +203,8 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         )
 
     stage_counts = {}
-    # Fetch counts for stages 1..6 (samples, QC, trimming, QC_post_trim, alignment, quantification)
-    for stage_id in range(1, 7):
+    # Fetch counts for stages 1..10
+    for stage_id in range(1, 11):
         try:
             response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
             stage_counts[stage_id] = len(response.json())
@@ -217,14 +217,15 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
             resp = await client.get("http://bioinfo-container:8000/contrasts/", headers=headers)
             if resp.status_code == 200:
                 contrasts = resp.json()
-                stage_counts[8] = len(contrasts)
+                # DEG results are represented at stage_id 7 in the UI
+                stage_counts[7] = len(contrasts)
             else:
-                stage_counts[8] = 0
+                stage_counts[7] = 0
     except Exception:
-        stage_counts[8] = 0
+        stage_counts[7] = 0
 
     # Map table rows order to corresponding stage ids. If UI order changes, update this map accordingly.
-    stage_map = [1, 2, 3, 4, 5, 6, 8]
+    stage_map = [1, 2, 3, 4, 5, 6, 7, 9, 10]
     for i, row in enumerate(container_menu_direita.content.controls[0].rows):
         mapped_stage = stage_map[i] if i < len(stage_map) else (i + 1)
         # update the quantity cell (row.cells[1].content.content holds the Text)

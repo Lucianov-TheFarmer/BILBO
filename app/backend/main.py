@@ -52,6 +52,8 @@ app.include_router(preprocess.router, tags=["preprocess"])
 app.include_router(deg.router, tags=["deg"])
 app.include_router(results.router, tags=["results"])
 app.include_router(upload.router, tags=["upload"])
+from .routes import clustering as clustering_route
+app.include_router(clustering_route.router, tags=["clustering"])
 
 
 class ChatRequest(BaseModel):

@@ -3,6 +3,7 @@ import numpy as np
 import umap
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.colors as mcolors
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min, silhouette_score
@@ -11,17 +12,13 @@ import re
 from unidecode import unidecode
 from nltk.stem import SnowballStemmer
 
-FILE_PATH = 'artigos/RNAseq_example.xlsx'
-IMG_FINAL = 'Cluster.png'
-IMG_METRICS = 'Otimizacao_K.png'
 SEED = 42
-
 K_RANGE = range(2, 21)
-
-COL_ID = 'Name GFF'
-COL_LFC = 'log2FoldChange'
-COL_PADJ = 'padj'
+COL_ID = 'Product GFF'
+COL_LFC = 'logFC'
+COL_PADJ = 'FDR'
 COLS_TXT = ['Uniprot Function', 'Uniprot BP', 'Uniprot CC', 'Uniprot MF']
+
 
 def clean_text(text):
     if not isinstance(text, str): return ""
@@ -34,9 +31,11 @@ def clean_text(text):
     stemmer = SnowballStemmer("english")
     return " ".join([stemmer.stem(t) for t in text.split() if len(t) > 2])
 
-def load_and_process_data(path):
+
+def load_and_process_data(path, sheet_name=None):
     print(">>> [1/5] Carregando e limpando dados...")
-    df = pd.read_excel(path)
+    # If sheet_name is provided, read only that sheet (contrast-specific)
+    df = pd.read_excel(path, sheet_name=sheet_name) if sheet_name else pd.read_excel(path)
     df = df.dropna(subset=[COL_LFC, COL_PADJ, COL_ID])
 
     for col in COLS_TXT:
@@ -49,13 +48,15 @@ def load_and_process_data(path):
 
     return df
 
+
 def vectorize_text(df):
     print(">>> [2/5] Vetorizando texto (TF-IDF)...")
     vectorizer = TfidfVectorizer(stop_words='english', min_df=3, max_features=300)
     matrix = vectorizer.fit_transform(df['text']).toarray()
     return matrix, vectorizer
 
-def find_optimal_k(coords):
+
+def find_optimal_k(coords, img_metrics_path):
     print(">>> [3/5] Buscando número ideal de clusters (K)...")
     inertias = []
     silhouettes = []
@@ -82,13 +83,14 @@ def find_optimal_k(coords):
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig(IMG_METRICS, dpi=300)
-    print(f"    -> Gráfico de métricas salvo: {IMG_METRICS}")
+    plt.savefig(img_metrics_path, dpi=300)
+    print(f"    -> Gráfico de métricas salvo: {img_metrics_path}")
 
     best_k = K_RANGE[np.argmax(silhouettes)]
     print(f"    -> Melhor K encontrado: {best_k} (Score: {max(silhouettes):.3f})")
 
     return best_k
+
 
 def analyze_clusters(df, matrix, vectorizer, reps):
     print(f"\n{' ANÁLISE DE CONTEÚDO ':*^50}")
@@ -107,7 +109,8 @@ def analyze_clusters(df, matrix, vectorizer, reps):
         print(f"   Termos: {terms_str}\n")
     print("*"*50)
 
-def plot_final_map(df, reps, score, k):
+
+def plot_final_map(df, reps, score, k, img_final_path):
     print(">>> [5/5] Gerando mapa...")
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=1.3)
@@ -117,14 +120,16 @@ def plot_final_map(df, reps, score, k):
     sorted_clusters = sorted(df['cluster'].unique())
     hue_order = [f"C{i}" for i in sorted_clusters]
 
-    palette = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf",
-    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896",
-    "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7",
-    "dbdb8d"
-    ]
+    # Build a contrasting palette with enough distinct colors for all clusters
+    n_colors = len(sorted_clusters)
+    if n_colors <= 20:
+        pal = sns.color_palette("tab20", n_colors=n_colors)
+    else:
+        # use HLS for larger numbers to get evenly spaced hues
+        pal = sns.color_palette("hls", n_colors=n_colors)
+
+    # Convert to hex strings to avoid invalid RGBA arguments
+    palette = [mcolors.to_hex(c) for c in pal]
 
     sns.scatterplot(
         data=df, x='x', y='y',
@@ -162,11 +167,12 @@ def plot_final_map(df, reps, score, k):
     plt.ylabel("UMAP Dimension 2")
 
     plt.tight_layout()
-    plt.savefig(IMG_FINAL, dpi=300)
-    print(f"    -> Gráfico salvo: {IMG_FINAL}")
+    plt.savefig(img_final_path, dpi=300)
+    print(f"    -> Gráfico salvo: {img_final_path}")
 
-def cluster_pipeline():
-    df = load_and_process_data(FILE_PATH)
+
+def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', img_metrics_path='Otimizacao_K.png'):
+    df = load_and_process_data(file_path, sheet_name=sheet_name)
     matrix, vec = vectorize_text(df)
 
     print(">>> [3/5] Projetando dados (UMAP)...")
@@ -174,7 +180,7 @@ def cluster_pipeline():
     coords = umap_model.fit_transform(matrix)
     df['x'], df['y'] = coords[:, 0], coords[:, 1]
 
-    best_k = find_optimal_k(coords)
+    best_k = find_optimal_k(coords, img_metrics_path)
 
     print(f">>> [4/5] Aplicando KMeans (K={best_k})...")
     kmeans = KMeans(n_clusters=best_k, init='k-means++', random_state=SEED, n_init=100)
@@ -189,7 +195,7 @@ def cluster_pipeline():
     reps = df.iloc[closest].copy()
 
     analyze_clusters(df, matrix, vec, reps)
-    plot_final_map(df, reps, final_score, best_k)
+    plot_final_map(df, reps, final_score, best_k, img_final_path)
 
     dados_estruturados = {}
 
@@ -203,6 +209,16 @@ def cluster_pipeline():
         }
 
     print(f">>> Pipeline Finalizada. Dados estruturados para {len(dados_estruturados)} clusters.")
-    return dados_estruturados
+    return {
+        "clusters": dados_estruturados,
+        "img_final": img_final_path,
+        "img_metrics": img_metrics_path,
+        "score": float(final_score),
+        "k": int(best_k)
+    }
+
+
 if __name__ == "__main__":
-    cluster_pipeline()
+    import sys
+    path = sys.argv[1]
+    cluster_pipeline(path)

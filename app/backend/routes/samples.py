@@ -266,7 +266,9 @@ def create_stages(db: Session = Depends(get_db)):
         {"id": 5, "name": "alinhamento"},
         {"id": 6, "name": "quantificacao"},
         {"id": 7, "name": "referencia"},
-        {"id": 8, "name": "contraste"}
+        {"id": 8, "name": "contraste"},
+        {"id": 9, "name": "clustering_semantico"},
+        {"id": 10, "name": "interpretacao_llm"}
 
     ]
     for stage in stages:
