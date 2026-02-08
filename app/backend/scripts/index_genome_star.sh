@@ -44,14 +44,14 @@ if [ ! -f "$GENOME_FASTA" ]; then
 fi
 
 # Compute recommended genomeSAindexNbases based on genome length to reduce memory
-GENOME_LEN=$(awk '/^>/ {next} {len+=length($0)} END{print len+0}' "$GENOME_FASTA")
-if [ -z "$GENOME_LEN" ] || [ "$GENOME_LEN" -le 0 ]; then
-    echo "Warning: Could not determine genome length, using default SAindexNbases=14" >> "$LOG_FILE"
-    SAINDEX_NBASES=14
-else
-    SAINDEX_NBASES=$(awk -v L="$GENOME_LEN" 'BEGIN{n=int(log(L)/log(2)/2 -1); if(n>14) n=14; if(n<8) n=8; print n}')
-fi
-echo "Computed genome length=$GENOME_LEN; genomeSAindexNbases=$SAINDEX_NBASES" >> "$LOG_FILE"
+# GENOME_LEN=$(awk '/^>/ {next} {len+=length($0)} END{print len+0}' "$GENOME_FASTA")
+# if [ -z "$GENOME_LEN" ] || [ "$GENOME_LEN" -le 0 ]; then
+#     echo "Warning: Could not determine genome length, using default SAindexNbases=14" >> "$LOG_FILE"
+#     SAINDEX_NBASES=14
+# else
+#     SAINDEX_NBASES=$(awk -v L="$GENOME_LEN" 'BEGIN{n=int(log(L)/log(2)/2 -1); if(n>14) n=14; if(n<8) n=8; print n}')
+# fi
+# echo "Computed genome length=$GENOME_LEN; genomeSAindexNbases=$SAINDEX_NBASES" >> "$LOG_FILE"
 
 # Run STAR to generate the genome index
 echo "Running STAR to index the genome in $GENOME_DIR with sjdbOverhang=$SJDB_OVERHANG and threads=$THREADS..." >> "$LOG_FILE"
@@ -60,8 +60,8 @@ STAR_CMD=(STAR --runThreadN "$THREADS" \
      --runMode genomeGenerate \
      --genomeDir "$INDEX_DIR" \
      --genomeFastaFiles "$GENOME_FASTA" \
-     --sjdbOverhang "$SJDB_OVERHANG" \
-     --genomeSAindexNbases "$SAINDEX_NBASES")
+     --sjdbOverhang "$SJDB_OVERHANG" ) 
+    #  --genomeSAindexNbases "$SAINDEX_NBASES")
 
 # Only add GTF if it exists
 if [ -f "$GENOME_GTF" ]; then
@@ -71,17 +71,17 @@ else
 fi
 
 # Optional memory limit to avoid full RAM consumption by STAR
-if [ -n "$LIMIT_RAM" ]; then
-    STAR_CMD+=(--limitGenomeGenerateRAM "$LIMIT_RAM")
-    echo "Applying STAR RAM limit: $LIMIT_RAM bytes" >> "$LOG_FILE"
-fi
+# if [ -n "$LIMIT_RAM" ]; then
+#     STAR_CMD+=(--limitGenomeGenerateRAM "$LIMIT_RAM")
+#     echo "Applying STAR RAM limit: $LIMIT_RAM bytes" >> "$LOG_FILE"
+# fi
 
-# Optional tmp dir (useful to avoid tmpfs or memory-backed dirs)
-if [ -n "$TMP_DIR" ]; then
-    mkdir -p "$TMP_DIR"
-    STAR_CMD+=(--outTmpDir "$TMP_DIR")
-    echo "Using STAR temporary directory: $TMP_DIR" >> "$LOG_FILE"
-fi
+# # Optional tmp dir (useful to avoid tmpfs or memory-backed dirs)
+# if [ -n "$TMP_DIR" ]; then
+#     mkdir -p "$TMP_DIR"
+#     STAR_CMD+=(--outTmpDir "$TMP_DIR")
+#     echo "Using STAR temporary directory: $TMP_DIR" >> "$LOG_FILE"
+# fi
 
 # Log and run
 echo "STAR command: ${STAR_CMD[*]}" >> "$LOG_FILE"

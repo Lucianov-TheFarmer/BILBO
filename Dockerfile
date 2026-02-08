@@ -44,16 +44,13 @@ SHELL ["conda", "run", "-n", "bioinfo", "/bin/bash", "-c"]
 # Instale FastAPI e Uvicorn
 RUN pip install fastapi==0.115.11 uvicorn==0.34.0 flet==0.28.2 sqlalchemy==2.0.39 \
     psycopg2-binary==2.9.10 python-jose==3.4.0 passlib==1.7.4 python-multipart==0.0.20 \
-    requests==2.32.3 websockets==15.0.1 venny4py==1.0.3 seaborn==0.13.2 ollama==0.6.1 unidecode=1.4.0 adjustText=1.3.0 umap-learn==0.5.11 \ 
+    requests==2.32.3 websockets==15.0.1 venny4py==1.0.3 seaborn==0.13.2 ollama==0.6.1 unidecode==1.4.0 adjustText==1.3.0 umap-learn==0.5.11 \ 
     RSeQC==5.0.4 openpyxl==3.1.3 pandas==2.2.3
 
-# Instalação dos pacotes R: BiocManager, edgeR, ggplot2, pheatmap e gplots (após o ambiente conda estar pronto)
-RUN Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
-    Rscript -e "BiocManager::install('edgeR', ask=FALSE, update=FALSE)" && \
-    Rscript -e "BiocManager::install('ComplexHeatmap', ask=FALSE, update=FALSE)" && \
-    Rscript -e "install.packages('ggplot2', repos='https://cloud.r-project.org')" && \
-    Rscript -e "install.packages('pheatmap', repos='https://cloud.r-project.org')" && \
-    Rscript -e "install.packages('gplots', repos='https://cloud.r-project.org')"
+# Instalação dos pacotes R necessários (CRAN + Bioconductor)
+RUN Rscript -e "options(repos='https://cloud.r-project.org'); pkgs <- c('ggplot2','pheatmap','gplots','openxlsx','reshape2','httr','zip','Rcpp'); install.packages(pkgs)" && \
+    Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
+    Rscript -e "BiocManager::install(c('edgeR','limma','ComplexHeatmap'), ask=FALSE, update=FALSE)"
 
 # Copie os scripts para o contêiner
 COPY app /app

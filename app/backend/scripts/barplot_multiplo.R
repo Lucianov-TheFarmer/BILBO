@@ -22,20 +22,11 @@ if (!file.exists(deg_xlsx_path)) {
   quit(save = "no", status = 1)
 }
 
-# Carrega bibliotecas necessárias
+# Carrega bibliotecas necessárias (assumidas instaladas na imagem Docker)
 suppressMessages({
-  if (!require(openxlsx, quietly = TRUE)) {
-    install.packages("openxlsx", repos = "http://cran.us.r-project.org")
-    library(openxlsx)
-  }
-  if (!require(ggplot2, quietly = TRUE)) {
-    install.packages("ggplot2", repos = "http://cran.us.r-project.org")
-    library(ggplot2)
-  }
-  if (!require(reshape2, quietly = TRUE)) {
-    install.packages("reshape2", repos = "http://cran.us.r-project.org")
-    library(reshape2)
-  }
+  library(openxlsx)
+  library(ggplot2)
+  library(reshape2)
 })
 
 # Lê o arquivo DEG.xlsx

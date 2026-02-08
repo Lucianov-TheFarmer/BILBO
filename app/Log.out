@@ -1,80 +1,48 @@
 STAR version=2.7.11b
 STAR compilation time,server,dir=2025-04-26T21:36:55+0000 :/opt/conda/conda-bld/star_1745703265435/work/source
 ##### Command Line:
-/opt/conda/envs/bioinfo/bin/STAR-avx2 --runThreadN 6 --runMode genomeGenerate --genomeDir ../users/ref_genomes/GCF_000005845.2/STAR_index --genomeFastaFiles ../users/ref_genomes/GCF_000005845.2/genomic.fa --sjdbOverhang 100 --genomeSAindexNbases 10 --sjdbGTFfile ../users/ref_genomes/GCF_000005845.2/genomic.gtf --limitGenomeGenerateRAM 4854657843
+/opt/conda/envs/bioinfo/bin/STAR-avx2 --runThreadN 4 --runMode genomeGenerate --genomeDir ../users/ref_genomes/GCF_036785885.1/STAR_index --genomeFastaFiles ../users/ref_genomes/GCF_036785885.1/genomic.fa --sjdbOverhang 100 --sjdbGTFfile ../users/ref_genomes/GCF_036785885.1/genomic.gtf
 ##### Initial USER parameters from Command Line:
 ###### All USER parameters from Command Line:
-runThreadN                    6     ~RE-DEFINED
+runThreadN                    4     ~RE-DEFINED
 runMode                       genomeGenerate        ~RE-DEFINED
-genomeDir                     ../users/ref_genomes/GCF_000005845.2/STAR_index     ~RE-DEFINED
-genomeFastaFiles              ../users/ref_genomes/GCF_000005845.2/genomic.fa        ~RE-DEFINED
+genomeDir                     ../users/ref_genomes/GCF_036785885.1/STAR_index     ~RE-DEFINED
+genomeFastaFiles              ../users/ref_genomes/GCF_036785885.1/genomic.fa        ~RE-DEFINED
 sjdbOverhang                  100     ~RE-DEFINED
-genomeSAindexNbases           10     ~RE-DEFINED
-sjdbGTFfile                   ../users/ref_genomes/GCF_000005845.2/genomic.gtf     ~RE-DEFINED
-limitGenomeGenerateRAM        4854657843     ~RE-DEFINED
+sjdbGTFfile                   ../users/ref_genomes/GCF_036785885.1/genomic.gtf     ~RE-DEFINED
 ##### Finished reading parameters from all sources
 
 ##### Final user re-defined parameters-----------------:
 runMode                           genomeGenerate   
-runThreadN                        6
-genomeDir                         ../users/ref_genomes/GCF_000005845.2/STAR_index
-genomeFastaFiles                  ../users/ref_genomes/GCF_000005845.2/genomic.fa   
-genomeSAindexNbases               10
-limitGenomeGenerateRAM            4854657843
-sjdbGTFfile                       ../users/ref_genomes/GCF_000005845.2/genomic.gtf
+runThreadN                        4
+genomeDir                         ../users/ref_genomes/GCF_036785885.1/STAR_index
+genomeFastaFiles                  ../users/ref_genomes/GCF_036785885.1/genomic.fa   
+sjdbGTFfile                       ../users/ref_genomes/GCF_036785885.1/genomic.gtf
 sjdbOverhang                      100
 
 -------------------------------
 ##### Final effective command line:
-/opt/conda/envs/bioinfo/bin/STAR-avx2   --runMode genomeGenerate      --runThreadN 6   --genomeDir ../users/ref_genomes/GCF_000005845.2/STAR_index   --genomeFastaFiles ../users/ref_genomes/GCF_000005845.2/genomic.fa      --genomeSAindexNbases 10   --limitGenomeGenerateRAM 4854657843   --sjdbGTFfile ../users/ref_genomes/GCF_000005845.2/genomic.gtf   --sjdbOverhang 100
+/opt/conda/envs/bioinfo/bin/STAR-avx2   --runMode genomeGenerate      --runThreadN 4   --genomeDir ../users/ref_genomes/GCF_036785885.1/STAR_index   --genomeFastaFiles ../users/ref_genomes/GCF_036785885.1/genomic.fa      --sjdbGTFfile ../users/ref_genomes/GCF_036785885.1/genomic.gtf   --sjdbOverhang 100
 ----------------------------------------
 
 Number of fastq files for each mate = 1
 ParametersSolo: --soloCellFilterType CellRanger2.2 filtering parameters:  3000 0.99 10
 Finished loading and checking parameters
---genomeDir directory exists and will be overwritten: ../users/ref_genomes/GCF_000005845.2/STAR_index/
-!!!!! WARNING: Could not move Log.out file from ./Log.out into ../users/ref_genomes/GCF_000005845.2/STAR_index/Log.out. Will keep ./Log.out
+--genomeDir directory exists and will be overwritten: ../users/ref_genomes/GCF_036785885.1/STAR_index/
+!!!!! WARNING: Could not move Log.out file from ./Log.out into ../users/ref_genomes/GCF_036785885.1/STAR_index/Log.out. Will keep ./Log.out
 
-Feb 07 22:39:29 ... starting to generate Genome files
-../users/ref_genomes/GCF_000005845.2/genomic.fa : chr # 0  "NC_000913.3" chrStart: 0
-Chromosome sequence lengths: 
-NC_000913.3	4641652
-Genome sequence total length = 4641652
-Genome size with padding = 4718592
-Feb 07 22:39:30 ..... processing annotations GTF
-Processing pGe.sjdbGTFfile=../users/ref_genomes/GCF_000005845.2/genomic.gtf, found:
-		216 transcripts
-		216 exons (non-collapsed)
-		0 collapsed junctions
-Total junctions: 0
-Feb 07 22:39:30 ..... finished GTF processing
-
-Estimated genome size with padding and SJs: total=genome+SJ=205718592 = 4718592 + 201000000
-GstrandBit=32
-Number of SA indices: 9283304
-Feb 07 22:39:30 ... starting to sort Suffix Array. This may take a long time...
-Number of chunks: 6;   chunks size limit: 14853280 bytes
-Feb 07 22:39:30 ... sorting Suffix Array chunks and saving them to disk...
-Writing 954816 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_5 ; empty space on disk = 21524353024 bytes ... done
-Writing 14473712 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_4 ; empty space on disk = 21518860288 bytes ...Writing 14771360 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_0 ; empty space on disk = 21517877248 bytes ...Writing 14814864 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_2 ; empty space on disk = 21507457024 bytes ...Writing 14683168 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_3 ; empty space on disk = 21501231104 bytes ...Writing 14568512 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA_1 ; empty space on disk = 21496053760 bytes ... done
- done
- done
- done
- done
-Feb 07 22:39:31 ... loading chunks from disk, packing SA...
-Feb 07 22:39:32 ... finished generating suffix array
-Feb 07 22:39:32 ... generating Suffix Array index
-Feb 07 22:39:32 ... completed Suffix Array index
-Feb 07 22:39:32   Finished preparing junctions
-Feb 07 22:39:32 ..... finished inserting junctions into genome
-Feb 07 22:39:32 ... writing Genome to disk ...
-Writing 4718592 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//Genome ; empty space on disk = 21517926400 bytes ... done
-SA size in bytes: 38293632
-Feb 07 22:39:32 ... writing Suffix Array to disk ...
-Writing 38293632 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SA ; empty space on disk = 21513207808 bytes ... done
-Feb 07 22:39:32 ... writing SAindex to disk
-Writing 8 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 21474910208 bytes ... done
-Writing 88 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 21474910208 bytes ... done
-Writing 6116691 bytes into ../users/ref_genomes/GCF_000005845.2/STAR_index//SAindex ; empty space on disk = 21474910208 bytes ... done
-Feb 07 22:39:33 ..... finished successfully
-DONE: Genome generation, EXITING
+Feb 08 15:00:33 ... starting to generate Genome files
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 0  "NC_092310.1" chrStart: 0
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 1  "NC_092311.1" chrStart: 59244544
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 2  "NC_092312.1" chrStart: 117178368
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 3  "NC_092313.1" chrStart: 194248704
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 4  "NC_092314.1" chrStart: 271581184
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 5  "NC_092315.1" chrStart: 316407808
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 6  "NC_092316.1" chrStart: 365690880
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 7  "NC_092317.1" chrStart: 418119680
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 8  "NC_092318.1" chrStart: 466878464
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 9  "NC_092319.1" chrStart: 521928704
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 10  "NC_092320.1" chrStart: 571211776
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 11  "NC_092321.1" chrStart: 635174912
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 12  "NC_092322.1" chrStart: 698613760
+../users/ref_genomes/GCF_036785885.1/genomic.fa : chr # 13  "NC_092323.1" chrStart: 739246080

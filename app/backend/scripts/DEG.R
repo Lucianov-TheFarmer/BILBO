@@ -21,9 +21,6 @@ sink(log_file, append = TRUE, type = "message")
 
 logmsg("Iniciando DEG.R")
 
-if (!requireNamespace("openxlsx", quietly = TRUE)) {
-  install.packages("openxlsx", repos = "http://cran.us.r-project.org")
-}
 library(openxlsx)
 library(edgeR)
 library(httr)
@@ -34,13 +31,60 @@ targets <- readTargets(fileEncoding="latin1")
 names <- targets$description
 
 logmsg("Lendo matriz de contagem")
-matrix_input <- readDGE(targets, comment.char="!")
-MetaTags <- grep("^__", rownames(matrix_input))
-matrix_input <- matrix_input[-MetaTags,]
+matrix_input <- tryCatch({
+  readDGE(targets, comment.char="!")
+}, error = function(e) {
+  logmsg(paste("readDGE failed:", conditionMessage(e)))
+  stop(e)
+})
+
+## Safely remove meta-tag rows (rows starting with '__') if present.
+if (!is.null(matrix_input$counts)) {
+  rn <- rownames(matrix_input$counts)
+  if (!is.null(rn)) {
+    MetaTags <- grep("^__", rn)
+    if (length(MetaTags) > 0) {
+      keep <- setdiff(seq_len(nrow(matrix_input$counts)), MetaTags)
+      matrix_input$counts <- matrix_input$counts[keep, , drop = FALSE]
+      if (!is.null(matrix_input$genes)) {
+        matrix_input$genes <- matrix_input$genes[keep, , drop = FALSE]
+      }
+      logmsg(paste("Removed", length(MetaTags), "MetaTags rows from counts"))
+    } else {
+      logmsg("No MetaTags rows found; skipping removal")
+    }
+  } else {
+    logmsg("No rownames in matrix_input$counts; skipping MetaTags removal")
+  }
+} else {
+  logmsg("matrix_input$counts is NULL; aborting")
+  stop("matrix_input$counts is NULL")
+}
 
 rnaseqmatrix <- matrix_input$counts
-rnaseqmatrix <- rnaseqmatrix[rowMeans(rnaseqmatrix) >= 10, ]
+
+# Compute row means and filter low-expression genes with fallback
+row_means <- tryCatch({
+  rowMeans(rnaseqmatrix)
+}, error = function(e) {
+  logmsg(paste("rowMeans failed:", conditionMessage(e)))
+  stop(e)
+})
+keep <- which(row_means >= 10)
+logmsg(paste("number of genes before filter:", nrow(rnaseqmatrix), "after >=10 filter:", length(keep)))
+if (length(keep) == 0) {
+  logmsg("Filtering removed all genes; falling back to unfiltered counts.")
+  rnaseqmatrix <- matrix_input$counts
+} else {
+  rnaseqmatrix <- rnaseqmatrix[keep, , drop = FALSE]
+}
+
 conditions = matrix_input$samples[,2]
+
+if (nrow(rnaseqmatrix) == 0) {
+  logmsg("No genes available for DGEList; aborting")
+  stop("No genes available for DGEList")
+}
 
 analysis_matrix <- DGEList(counts = rnaseqmatrix, group = conditions)
 colnames(analysis_matrix$counts) <- names

@@ -128,7 +128,8 @@ async def start_preprocess(
     # Execute o script R em background, passando user_id como argumento
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R"))
     try:
-        subprocess.Popen(["Rscript", script_path, str(user_id)])
+        # Execute Rscript with working directory set to the user's preprocess directory
+        subprocess.Popen(["Rscript", script_path, str(user_id)], cwd=base_dir)
     except Exception as e:
         # Logue o erro, mas não interrompa a resposta
         print(f"Erro ao executar o script R: {e}")

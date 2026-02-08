@@ -68,9 +68,26 @@ async def start_processing(
         sample_stage.status = "counting"
         db.commit()
 
-        # Executar o script de quantificação
-        command = f"bash /app/backend/scripts/quantification.sh {sample_name} {user_id} {request.feature_type} {request.id_attribute}"
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Determinar genoma selecionado (se houver) a partir do preprocess do usuário
+        preprocess_dir = os.path.join("..", "users", str(user_id), "preprocess")
+        selected_genome = None
+        selected_genome_path = os.path.join(preprocess_dir, "selected_genome.txt")
+        try:
+            if os.path.exists(selected_genome_path):
+                with open(selected_genome_path, "r", encoding="utf-8") as f:
+                    line = f.readline().strip()
+                    if line:
+                        selected_genome = line
+        except Exception:
+            selected_genome = None
+
+        # Executar o script de quantificação. Passar selected_genome como 5º parâmetro se disponível.
+        script_path = "/app/backend/scripts/quantification.sh"
+        cmd = ["bash", script_path, sample_name, str(user_id), request.feature_type, request.id_attribute]
+        if selected_genome:
+            cmd.append(selected_genome)
+
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
 
         if process.returncode != 0:

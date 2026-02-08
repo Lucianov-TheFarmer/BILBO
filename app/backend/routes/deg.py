@@ -87,12 +87,23 @@ async def run_deg(
 
     # Anotar DEG.xlsx com Name GFF e Product/Note GFF
     if genome_accession:
-        gff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}/genomic.gff"))
+        # Try to find genomic.gff or genomic.gtf in the genome folder
+        genome_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}"))
+        gff_candidate = os.path.join(genome_folder, "genomic.gff")
+        gtf_candidate = os.path.join(genome_folder, "genomic.gtf")
+        gff_path = None
+        if os.path.exists(gff_candidate):
+            gff_path = os.path.abspath(gff_candidate)
+        elif os.path.exists(gtf_candidate):
+            gff_path = os.path.abspath(gtf_candidate)
+        else:
+            gff_path = None
+
         annotate_gff_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
         annotate_uniprot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_uniprot.py"))
         deg_barplot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/deg_graphs.py"))
         await manager.broadcast("Iniciando anotação com GFF")
-        if os.path.exists(gff_path) and os.path.exists(annotate_gff_script):
+        if gff_path and os.path.exists(annotate_gff_script):
             try:
                 process = subprocess.Popen(
                     ["python", annotate_gff_script, deg_xlsx, gff_path],
