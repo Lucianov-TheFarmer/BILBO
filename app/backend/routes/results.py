@@ -1,14 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import User
-from ..utils import get_current_user
+from ..utils import get_current_user, SECRET_KEY, ALGORITHM
 import os
 import openpyxl
 import subprocess
 import tempfile
 import logging
-from fastapi.responses import JSONResponse
+from jose import jwt, JWTError
+import pandas as pd
+from fastapi import Query
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -122,9 +126,9 @@ async def delete_barplot_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    data = await request.json()
-    user_id = data.get("user_id", current_user.id)
-    filename = data.get("filename", "").strip()
+    # Accept query params for compatibility with frontend delete calls
+    user_id = request.query_params.get("user_id", current_user.id)
+    filename = request.query_params.get("filename", "").strip()
     if not filename:
         raise HTTPException(status_code=400, detail="Nome do arquivo obrigatório.")
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
@@ -148,32 +152,9 @@ async def get_venn_files(
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
     if not os.path.exists(deg_dir):
         return {"files": []}
-    files = [f for f in os.listdir(deg_dir) if f.startswith("VENN.MULTIPLO - ") and f.endswith(".txt")]
+    # List generated Venn diagram PNGs
+    files = [f for f in os.listdir(deg_dir) if f.startswith("VENN.DIAGRAM - ") and f.endswith(".png")]
     return {"files": files}
-
-@router.post("/results/create_venn_file")
-async def create_venn_file(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    data = await request.json()
-    user_id = data.get("user_id", current_user.id)
-    title = data.get("title", "").strip()
-    contrasts = data.get("contrasts", [])
-    if not title:
-        raise HTTPException(status_code=400, detail="Título obrigatório.")
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    os.makedirs(deg_dir, exist_ok=True)
-    filename = f"VENN.MULTIPLO - {title}.txt"
-    file_path = os.path.join(deg_dir, filename)
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            for contrast in contrasts:
-                f.write(contrast + "\n")
-        return {"status": "ok", "file": filename}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao criar arquivo: {e}")
 
 @router.get("/results/heatmap_files")
 async def get_heatmap_files(
@@ -185,60 +166,75 @@ async def get_heatmap_files(
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
     if not os.path.exists(deg_dir):
         return {"files": []}
-    files = [f for f in os.listdir(deg_dir) if f.startswith("HEATMAP.MULTIPLO - ") and f.endswith(".txt")]
+    # List generated heatmap PNGs
+    files = [f for f in os.listdir(deg_dir) if f.startswith("HEATMAP - ") and f.endswith(".png")]
     return {"files": files}
 
-@router.post("/results/create_heatmap_file")
-async def create_heatmap_file(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    data = await request.json()
-    user_id = data.get("user_id", current_user.id)
-    title = data.get("title", "").strip()
-    contrasts = data.get("contrasts", [])
-    if not title:
-        raise HTTPException(status_code=400, detail="Título obrigatório.")
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    os.makedirs(deg_dir, exist_ok=True)
-    filename = f"HEATMAP.MULTIPLO - {title}.txt"
-    file_path = os.path.join(deg_dir, filename)
+
+@router.get("/results/download_deg_sheets")
+def download_deg_sheets(sheets: str = Query(None), token: str = Query(...), db: Session = Depends(get_db)):
+    """Download an XLSX containing only the requested sheets (comma-separated list)."""
     try:
-        # Cria arquivo temporário com contrastes
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_file:
-            for contrast in contrasts:
-                temp_file.write(contrast + "\n")
-            temp_contrasts_path = temp_file.name
-        
-        # Executa script de geração do barplot múltiplo
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/multiple_barplot.py"))
-        
-        if not os.path.exists(script_path):
-            raise HTTPException(status_code=500, detail="Script multiple_barplot.py não encontrado.")
-        
-        result = subprocess.run(
-            ["python", script_path, temp_contrasts_path, deg_xlsx, png_path, title],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        # Remove arquivo temporário
-        os.unlink(temp_contrasts_path)
-        
-        if result.returncode != 0:
-            logging.error(f"Erro ao executar multiple_barplot.py: {result.stderr}")
-            raise HTTPException(status_code=500, detail=f"Erro ao gerar barplot: {result.stderr}")
-        
-        logging.info(f"Barplot múltiplo gerado: {png_filename}")
-        return {"status": "ok", "file": png_filename}
-        
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="Timeout na geração do barplot.")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    user_id = user.id
+    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+    deg_xlsx_path = os.path.join(deg_dir, "DEG.xlsx")
+    if not os.path.exists(deg_xlsx_path):
+        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+
+    requested = [] if not sheets else [s.strip() for s in sheets.split(",") if s.strip()]
+
+    # If no sheets requested, return the full file
+    if not requested:
+        return FileResponse(path=deg_xlsx_path, filename=os.path.basename(deg_xlsx_path), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    try:
+        # Read requested sheets into pandas and write to a new temporary Excel file
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            for sheet in requested:
+                try:
+                    df = pd.read_excel(deg_xlsx_path, sheet_name=sheet)
+                    df.to_excel(writer, sheet_name=sheet, index=False)
+                except Exception:
+                    # Skip missing sheets
+                    pass
+
+        return FileResponse(path=tmp_path, filename=f"DEG_selected_sheets_{user_id}.xlsx", media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
-        logging.error(f"Erro ao criar barplot múltiplo: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro ao criar barplot: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar arquivo XLSX: {e}")
+
+@router.get("/results/download_image")
+def download_deg_image(user_id: int = Query(...), filename: str = Query(...), token: str = Query(...)):
+    """Serve an image file from the user's DEG directory."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
+    file_path = os.path.join(deg_dir, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(path=file_path, filename=os.path.basename(file_path), media_type="application/octet-stream")
+
+
 
 @router.post("/results/create_venn_file")
 async def create_venn_file(
@@ -452,29 +448,50 @@ async def create_heatmap_file(
                 temp_file.write(contrast + '\n')
             temp_contrasts_path = temp_file.name
         
-        try:
-            # Executa o script de geração de heatmap (Rscript)
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/heatmap.R"))
-            if not os.path.exists(script_path):
-                raise HTTPException(status_code=500, detail="Script heatmap.R não encontrado.")
-            result = subprocess.run([
-                "Rscript", script_path, temp_contrasts_path, deg_xlsx, png_path, title
-            ], capture_output=True, text=True, check=True)
-            
-            logging.info(f"Heatmap criado com sucesso: {png_filename}")
-            logging.info(f"Output do script: {result.stdout}")
-            
-            return {"status": "ok", "message": "Heatmap criado com sucesso", "filename": png_filename}
-            
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Erro ao executar script de heatmap: {e.stderr}")
-            raise HTTPException(status_code=500, detail=f"Erro ao gerar heatmap: {e.stderr}")
-        finally:
-            # Remove arquivo temporário
+        # Run the heatmap script in a background thread so the request returns immediately
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/heatmap.R"))
+        if not os.path.exists(script_path):
             try:
                 os.unlink(temp_contrasts_path)
-            except:
+            except Exception:
                 pass
+            raise HTTPException(status_code=500, detail="Script heatmap.R não encontrado.")
+
+        def _worker():
+            # Clear, explicit terminal logs for start and finish
+            start_msg = f"[HEATMAP] Iniciando geração: user_id={user_id} title='{title}' contrasts={selected_contrasts}"
+            print(start_msg)
+            logging.info(start_msg)
+            try:
+                result = subprocess.run([
+                    "Rscript", script_path, temp_contrasts_path, deg_xlsx, png_path, title
+                ], capture_output=True, text=True)
+                if result.returncode != 0:
+                    err_msg = f"[HEATMAP] Erro ao executar heatmap.R (rc={result.returncode}): {result.stderr}"
+                    print(err_msg)
+                    logging.error(err_msg)
+                else:
+                    ok_msg = f"[HEATMAP] Heatmap criado com sucesso: {png_path}"
+                    print(ok_msg)
+                    logging.info(ok_msg)
+                    # include stdout for diagnostics
+                    if result.stdout:
+                        print(f"[HEATMAP] Script output:\n{result.stdout}")
+                        logging.info(f"Heatmap script stdout: {result.stdout}")
+            except Exception as e:
+                exc_msg = f"[HEATMAP] Exceção ao gerar heatmap: {e}"
+                print(exc_msg)
+                logging.error(exc_msg, exc_info=True)
+            finally:
+                try:
+                    os.unlink(temp_contrasts_path)
+                except Exception:
+                    pass
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+        return {"status": "started", "filename": png_filename, "message": "Geração de heatmap iniciada"}
                 
     except Exception as e:
         logging.error(f"Erro ao criar heatmap: {e}")

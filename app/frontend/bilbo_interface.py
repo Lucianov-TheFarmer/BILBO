@@ -11,6 +11,7 @@ from .procedures.alignment import show_alignment_modal, show_genomes_modal, crea
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
+from .procedures.deg import show_deg_results
 import websockets
 import httpx
 import logging
@@ -124,6 +125,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     async def iniciar_quantificacao_handler(e):
         await show_quantification_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
+    async def show_deg_results_handler(e):
+        await show_deg_results(page, token, user_id, container_amostras)
+
     async def excluir_quantificacao_handler(e):
         selected_samples = [row.cells[0].content.value for row in tabela_quantificacao.rows if row.cells[4].content.value]
         if not selected_samples:
@@ -189,6 +193,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     create_button(t("btn_delete", lang), excluir_quantificacao_handler, color="red", expand=True),
                 ]
             )
+        elif stage_id == 7:
+            # DEG stage: show DEG results in the actions area (container_amostras)
+            await show_deg_results(page, token, user_id, container_amostras)
 
     container_menu_direita = ft.Container(
         expand=1 ,
@@ -288,6 +295,19 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                                 )),
                             ],
                         ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                            content=ft.Text(t("menu_deg", lang)),
+                                            on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=7)
+                                        )),
+                                        ft.DataCell(ft.Container(
+                                            content=ft.Text("0"),
+                                            alignment=ft.alignment.center,
+                                            on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=7)
+                                        )),
+                            ],
+                        ),
                     ],
                 )
             ]
@@ -373,7 +393,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         )
     )
 
-    menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+    menubar_principal = create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id)
 
     container_terminal = ft.Container(
         expand=2,

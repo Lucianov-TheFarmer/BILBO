@@ -37,7 +37,7 @@ async def mudar_tema(page):
         page.theme_mode = "light"
     page.update()
 
-def create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
+def create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id):
     lang = page.session.get("lang") or "pt"
 
     return ft.MenuBar(
@@ -129,25 +129,25 @@ def create_menubar(page, token, container_menu_direita, tabela_amostras_local, a
                     create_menu_item(
                         t("menu_view_deg_results", lang),
                         on_click=lambda e: asyncio.run(
-                            show_deg_results(page, token, user_id, page.controls[1].controls[0].controls[0])
+                            show_deg_results(page, token, user_id, container_amostras)
                         )
                     ),
                     create_menu_item(
                         t("menu_barplots", lang),
                         on_click=lambda e: asyncio.run(
-                            show_barplots_table(page, token, user_id, page.controls[1].controls[0].controls[0])
+                            show_barplots_table(page, token, user_id, container_amostras)
                         )
                     ),
                     create_menu_item(
                         t("menu_venn", lang),
                         on_click=lambda e: asyncio.run(
-                            show_venn_table(page, token, user_id, page.controls[1].controls[0].controls[0])
+                            show_venn_table(page, token, user_id, container_amostras)
                         )
                     ),
                     create_menu_item(
                         t("menu_heatmaps", lang),
                         on_click=lambda e: asyncio.run(
-                            show_heatmaps_table(page, token, user_id, page.controls[1].controls[0].controls[0])
+                            show_heatmaps_table(page, token, user_id, container_amostras)
                         )
                     ),
                 ],

@@ -203,12 +203,39 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         )
 
     stage_counts = {}
+    # Fetch counts for stages 1..6 (samples, QC, trimming, QC_post_trim, alignment, quantification)
     for stage_id in range(1, 7):
-        response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
-        stage_counts[stage_id] = len(response.json())
+        try:
+            response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+            stage_counts[stage_id] = len(response.json())
+        except Exception:
+            stage_counts[stage_id] = 0
 
+    # Fetch contrasts count to represent DEG results (stage_id 8)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("http://bioinfo-container:8000/contrasts/", headers=headers)
+            if resp.status_code == 200:
+                contrasts = resp.json()
+                stage_counts[8] = len(contrasts)
+            else:
+                stage_counts[8] = 0
+    except Exception:
+        stage_counts[8] = 0
+
+    # Map table rows order to corresponding stage ids. If UI order changes, update this map accordingly.
+    stage_map = [1, 2, 3, 4, 5, 6, 8]
     for i, row in enumerate(container_menu_direita.content.controls[0].rows):
-        row.cells[1].content.content.value = str(stage_counts.get(i + 1, 0))
+        mapped_stage = stage_map[i] if i < len(stage_map) else (i + 1)
+        # update the quantity cell (row.cells[1].content.content holds the Text)
+        try:
+            row.cells[1].content.content.value = str(stage_counts.get(mapped_stage, 0))
+        except Exception:
+            # fallback if structure differs
+            try:
+                row.cells[1].content.value = str(stage_counts.get(mapped_stage, 0))
+            except Exception:
+                pass
 
     page.update()
 

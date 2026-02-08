@@ -78,6 +78,9 @@ async def main(page: ft.Page):
         except httpx.RequestError as ex:
             await show_snackbar(f"An error occurred: {ex}")
 
-    username_input = ft.TextField(label="Username", width=300)
-    password_input = ft.TextField(label="Password", password=True, width=300)
-    await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
+    # username_input = ft.TextField(label="Username", width=300)
+    # password_input = ft.TextField(label="Password", password=True, width=300)
+    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
+    username_input = ft.TextField(value="admin")
+    password_input = ft.TextField(value="admin123", password=True)
+    await login(None)    

@@ -90,6 +90,9 @@ plot_data <- melt(all_data, id.vars = "contrast", variable.name = "type", value.
 # Ajusta valores para barras negativas (down-regulated)
 plot_data$count[plot_data$type == "down"] <- -plot_data$count[plot_data$type == "down"]
 
+# Preserve factor order from all_data so x positions are stable
+plot_data$contrast <- factor(plot_data$contrast, levels = all_data$contrast)
+
 # Define cores
 colors <- c("up" = "#1976D2", "down" = "#D32F2F")
 
@@ -109,7 +112,7 @@ tryCatch({
     scale_fill_manual(values = colors, labels = c("Down-regulated", "Up-regulated")) +
     geom_hline(yintercept = 0, color = "black", linewidth = 1.2) +
     labs(x = "", y = "Number of DEGs") +
-    ylim(-max_val * 1.15, max_val * 1.15) +
+    ylim(-max_val * 1.25, max_val * 1.25) +
     theme_minimal(base_size = 16) +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 14),
@@ -124,23 +127,22 @@ tryCatch({
     ) +
     scale_y_continuous(labels = function(x) abs(x))
   
-  # Adiciona valores nas barras
-  for (i in 1:nrow(all_data)) {
-    up_val <- all_data$up[i]
-    down_val <- all_data$down[i]
-    
-    if (up_val > 0) {
-      p <- p + annotate("text", x = i, y = up_val + max_val*0.04, 
-                        label = up_val, 
-                        hjust = 0.5, vjust = 0, size = 6, color = colors["up"], fontface = "bold")
-    }
-    
-    if (down_val > 0) {
-      p <- p + annotate("text", x = i, y = -down_val - max_val*0.04, 
-                        label = down_val, 
-                        hjust = 0.5, vjust = 1, size = 6, color = colors["down"], fontface = "bold")
-    }
-  }
+  # Adiciona valores nas barras via geom_text — usa abs() para mostrar contagem positiva
+  p <- p +
+    geom_text(data = subset(plot_data, type == "up"),
+              aes(label = count),
+              vjust = -0.4,
+              color = colors["up"],
+              fontface = "bold",
+              size = 6)
+
+  p <- p +
+    geom_text(data = subset(plot_data, type == "down"),
+              aes(label = abs(count)),
+              vjust = 1.2,
+              color = colors["down"],
+              fontface = "bold",
+              size = 6)
   
   print(p)
   dev.off()
