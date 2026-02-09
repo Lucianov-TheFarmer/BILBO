@@ -63,10 +63,11 @@ async def run_clustering(request: Request, db: Session = Depends(get_db), curren
         os.makedirs(out_dir, exist_ok=True)
         img_final = os.path.join(out_dir, "cluster.png")
         img_metrics = os.path.join(out_dir, "metrics.png")
+        cluster_json = os.path.join(out_dir, "clusters.json")
         try:
-            res = clustering_script.cluster_pipeline(deg_xlsx, sheet_name=sheet, img_final_path=img_final, img_metrics_path=img_metrics)
+            res = clustering_script.cluster_pipeline(deg_xlsx, sheet_name=sheet, img_final_path=img_final, img_metrics_path=img_metrics, clusters_json_path=cluster_json)
             # res contains keys img_final and img_metrics (paths passed)
-            results[sheet] = {"status": "done", "img_final": os.path.relpath(img_final, start=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))), "img_metrics": os.path.relpath(img_metrics, start=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))}
+            results[sheet] = {"status": "done", "img_final": os.path.relpath(img_final, start=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))), "img_metrics": os.path.relpath(img_metrics, start=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))), "clusters_json": os.path.relpath(cluster_json, start=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))}
             # Record clustering result in DB as a SampleStage (stage_id=9)
             try:
                 existing = db.query(SampleStage).filter(SampleStage.user_id == int(user_id), SampleStage.stage_id == 9, SampleStage.name == sheet).first()

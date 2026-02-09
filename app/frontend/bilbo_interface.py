@@ -13,6 +13,7 @@ from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
 from .procedures.deg import show_deg_results
 from .procedures.clustering import show_clustering
+from .procedures.llm import show_llm
 import websockets
 import httpx
 import logging
@@ -201,8 +202,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         elif stage_id == 9:
             await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao)
         elif stage_id == 10:
-            # Interpretation by LLM placeholder
-            await log_message(page, "Interpretação por LLM: funcionalidade em desenvolvimento.")
+            await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
 
     container_menu_direita = ft.Container(
         expand=1 ,
@@ -455,10 +455,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
         margin=ft.margin.only(0, 5, 0, 0),
         padding=ft.padding.all(12),
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.top_center,
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.START,
             controls=[
                 ft.Container(expand=True)
             ]

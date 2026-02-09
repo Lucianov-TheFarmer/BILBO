@@ -52,13 +52,27 @@ async def main(page: ft.Page):
             async with httpx.AsyncClient() as client:
                 response = await client.post("http://bioinfo-container:8000/token", data={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
             if response.status_code == 200:
-                token = response.json()["access_token"]
-                user_id = response.json()["user_id"]
+                data = None
+                try:
+                    data = response.json()
+                except Exception:
+                    pass
+                if data:
+                    token = data.get("access_token")
+                    user_id = data.get("user_id")
+                else:
+                    await show_snackbar("Login succeeded but server returned unexpected response.")
+                    return
                 print(f"Token: {token}")
                 username = username_input.value
                 await show_bilbo_interface(page, logout, username, token, user_id)
             else:
-                error_message = response.json().get("detail", "An unknown error occurred.")
+                try:
+                    err = response.json()
+                    error_message = err.get("detail", "An unknown error occurred.")
+                except Exception:
+                    txt = response.text
+                    error_message = txt if txt else f"Server returned status {response.status_code}"
                 await show_snackbar(error_message)
         except httpx.RequestError as ex:
             await show_snackbar(f"An error occurred: {ex}")
@@ -73,7 +87,12 @@ async def main(page: ft.Page):
             if response.status_code == 200:
                 await show_snackbar("Registration successful! Please log in.")
             else:
-                error_message = response.json().get("detail", "An unknown error occurred.")
+                try:
+                    err = response.json()
+                    error_message = err.get("detail", "An unknown error occurred.")
+                except Exception:
+                    txt = response.text
+                    error_message = txt if txt else f"Server returned status {response.status_code}"
                 await show_snackbar(error_message)
         except httpx.RequestError as ex:
             await show_snackbar(f"An error occurred: {ex}")

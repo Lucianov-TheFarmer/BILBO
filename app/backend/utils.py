@@ -12,7 +12,7 @@ SECRET_KEY = "your_secret_key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 
 class ConnectionManager:
     def __init__(self):
@@ -38,7 +38,17 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except ValueError as e:
+        msg = str(e)
+        if "longer than 72 bytes" in msg:
+            try:
+                truncated = plain_password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+            except Exception:
+                truncated = plain_password[:72]
+            return pwd_context.verify(truncated, hashed_password)
+        raise
 
 def get_password_hash(password):
     return pwd_context.hash(password)

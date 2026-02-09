@@ -1,17 +1,18 @@
 import os
-import glob
 import json
+import glob
 import chromadb
 from chromadb import EmbeddingFunction, Documents, Embeddings
 import ollama
-# from gene import cluster_pipeline
 
-DIRETORIO_ARTIGOS = "./artigos"
-CAMINHO_BANCO_VETORIAL = "./chroma_db_arctic"
-NOME_COLECAO = "banco_literatura_bio"
+# Fixed path to vector DB (as requested)
+CHROMA_DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "users", "rag_models", "chroma_db_BILBO_Plants"))
+COLLECTION_NAME = "banco_literatura_bio"
 
+# models (kept from rag.py)
 MODELO_LLM = "qwen3:0.6b"
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
+
 
 class FuncaoEmbedding(EmbeddingFunction):
     def __call__(self, entrada: Documents) -> Embeddings:
@@ -22,59 +23,24 @@ class FuncaoEmbedding(EmbeddingFunction):
             vetores.append(resposta["embedding"])
         return vetores
 
-def ler_artigos():
-    if not os.path.exists(DIRETORIO_ARTIGOS):
-        os.makedirs(DIRETORIO_ARTIGOS)
-        print(f"[AVISO] Pasta '{DIRETORIO_ARTIGOS}' criada.")
-        return []
 
-    arquivos = glob.glob(os.path.join(DIRETORIO_ARTIGOS, "*.md"))
-    fragmentos = []
-
-    print(f">>> Lendo {len(arquivos)} arquivos de literatura...")
-    for caminho_arquivo in arquivos:
-        with open(caminho_arquivo, "r", encoding="utf-8") as f:
-            conteudo = f.read()
-
-        tamanho_fragmento, sobreposicao = 1000, 200
-        for i in range(0, len(conteudo), tamanho_fragmento - sobreposicao):
-            segmento = conteudo[i : i + tamanho_fragmento]
-            fragmentos.append({
-                "texto": segmento,
-                "fonte": os.path.basename(caminho_arquivo),
-                "id": f"{os.path.basename(caminho_arquivo)}_{i}"
-            })
-    return fragmentos
-
-def inicializar_banco_vetorial(fragmentos):
-    cliente = chromadb.PersistentClient(path=CAMINHO_BANCO_VETORIAL)
+def inicializar_banco_vetorial():
+    print(f"[llm.py] Conectando ao ChromaDB em: {CHROMA_DB_PATH}")
+    cliente = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     funcao_embedding = FuncaoEmbedding()
-    colecao = cliente.get_or_create_collection(name=NOME_COLECAO, embedding_function=funcao_embedding)
-
-    if len(fragmentos) > 0 and colecao.count() == 0:
-        print(f">>> Indexando {len(fragmentos)} fragmentos...")
-        tamanho_lote = 50
-        for i in range(0, len(fragmentos), tamanho_lote):
-            lote = fragmentos[i : i + tamanho_lote]
-            colecao.add(
-                documents=[c["texto"] for c in lote],
-                metadatas=[{"fonte": c["fonte"]} for c in lote],
-                ids=[c["id"] for c in lote]
-            )
-    else:
-        print(f">>> Banco carregado ({colecao.count()} fragmentos).")
+    colecao = cliente.get_or_create_collection(name=COLLECTION_NAME, embedding_function=funcao_embedding)
     return colecao
+
 
 def analisar_descricao_cluster(colecao, lista_genes):
     genes_str = ", ".join(lista_genes[:50])
-
-    print(f"   [Cluster] Identifying theme ({len(lista_genes)} genes)...")
+    print(f"[llm.py] [Cluster] Identifying theme ({len(lista_genes)} genes)...")
 
     consulta = f"biological pathway and function shared by genes: {genes_str}"
     resultados = colecao.query(query_texts=[consulta], n_results=5)
 
     contexto = ""
-    if resultados['documents'][0]:
+    if resultados and resultados.get('documents') and resultados['documents'][0]:
         contexto = "\n".join(resultados['documents'][0])
 
     prompt_cluster = f"""
@@ -97,11 +63,12 @@ def analisar_descricao_cluster(colecao, lista_genes):
         )
         return resposta['message']['content']
     except Exception as e:
-        print(f"Erro no cluster: {e}")
+        print(f"[llm.py] Erro no cluster: {e}")
         return "Descrição indisponível."
 
+
 def analisar_coesao_cluster(colecao, lista_genes, descricao_tema):
-    print(f"   [Validation] Verifying outliers and cohesion...")
+    print(f"[llm.py] [Validation] Verifying outliers and cohesion...")
 
     genes_str = ", ".join(lista_genes[:99])
     if len(lista_genes) > 99:
@@ -111,7 +78,7 @@ def analisar_coesao_cluster(colecao, lista_genes, descricao_tema):
     resultados = colecao.query(query_texts=[consulta], n_results=3)
 
     contexto = ""
-    if resultados['documents'][0]:
+    if resultados and resultados.get('documents') and resultados['documents'][0]:
         contexto = "\n".join(resultados['documents'][0])
 
     prompt_validacao = f"""
@@ -142,7 +109,7 @@ def analisar_coesao_cluster(colecao, lista_genes, descricao_tema):
         dados = json.loads(resposta['message']['content'])
         return dados
     except Exception as e:
-        print(f"      [!] Erro na validação: {e}")
+        print(f"[llm.py] [!] Erro na validação: {e}")
         return {
             "cohesion_status": "Error",
             "justification": "Could not validate due to LLM error.",
@@ -150,17 +117,19 @@ def analisar_coesao_cluster(colecao, lista_genes, descricao_tema):
             "outliers": []
         }
 
+
 def analisar_representante(colecao, gene_rep, descricao_do_cluster):
-    print(f"      -> Analisando Representante: {gene_rep}...")
+    print(f"[llm.py] -> Analisando Representante: {gene_rep}...")
 
     consulta = f"functional role of {gene_rep} in context of {descricao_do_cluster}"
     resultados = colecao.query(query_texts=[consulta], n_results=3)
 
     contexto_str = ""
     fontes = []
-    if resultados['documents'][0]:
+    if resultados and resultados.get('documents') and resultados['documents'][0]:
         contexto_str = "\n\n".join(resultados['documents'][0])
-        fontes = sorted(list(set(m['fonte'] for m in resultados['metadatas'][0])))
+        if resultados.get('metadatas') and resultados['metadatas'][0]:
+            fontes = sorted(list(set(m.get('fonte') for m in resultados['metadatas'][0] if m.get('fonte'))))
 
     prompt_gene = f"""
     You are an expert biologist. Analyze the representative gene '{gene_rep}'.
@@ -189,41 +158,16 @@ def analisar_representante(colecao, gene_rep, descricao_do_cluster):
         dados['sources'] = fontes
         return dados
     except Exception as e:
-        print(f"      [!] Erro gene {gene_rep}: {e}")
+        print(f"[llm.py] [!] Erro gene {gene_rep}: {e}")
         return None
 
-def executar_pipeline_completo(colecao, dados_clusters):
-    print("\n>>> Iniciando Análise Hierárquica e Validação...")
 
-    relatorio_final = []
+def salvar_resultados(dados, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    json_path = os.path.join(out_dir, "data.json")
+    md_path = os.path.join(out_dir, "report.md")
 
-    for nome_cluster, dados in dados_clusters.items():
-        print(f"\n--- Processando {nome_cluster} ---")
-
-        rep_gene = dados['representative']
-        todos_genes = dados['genes']
-
-        descricao_cluster = analisar_descricao_cluster(colecao, todos_genes)
-        print(f"   [Theme]: {descricao_cluster}...")
-
-        dados_validacao = analisar_coesao_cluster(colecao, todos_genes, descricao_cluster)
-        dados_rep = analisar_representante(colecao, rep_gene, descricao_cluster)
-
-        if dados_rep:
-            item_relatorio = {
-                "cluster_id": nome_cluster,
-                "cluster_description": descricao_cluster,
-                "validation_analysis": dados_validacao,
-                "representative_analysis": dados_rep,
-                "total_genes_in_cluster": len(todos_genes),
-                "genes_list": todos_genes
-            }
-            relatorio_final.append(item_relatorio)
-
-    salvar_resultados(relatorio_final)
-
-def salvar_resultados(dados):
-    with open("Relatorio_Final_Estruturado.json", "w", encoding="utf-8") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(dados, f, indent=4, ensure_ascii=False)
 
     md_lines = ["# Relatório de Clusters Gênicos com Validação de IA\n"]
@@ -265,21 +209,76 @@ def salvar_resultados(dados):
         md_lines.append(f"**Sources: _{fontes}_**")
         md_lines.append("---\n")
 
-    with open("Relatorio_Final.md", "w", encoding="utf-8") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
 
-    print(f"\n>>> Relatórios salvos com sucesso!")
-    print("    - Relatorio_Final_Estruturado.json")
-    print("    - Relatorio_Final.md")
+    print(f"[llm.py] Relatórios salvos: {json_path}, {md_path}")
+    return {"report": md_path, "json": json_path}
+
+
+def executar_pipeline_completo(colecao, dados_clusters, out_dir):
+    print("[llm.py] Iniciando Análise...")
+
+    relatorio_final = []
+
+    for nome_cluster, dados in dados_clusters.items():
+        print(f"[llm.py] --- Processando {nome_cluster} ---")
+
+        rep_gene = dados.get('representative')
+        todos_genes = dados.get('genes', [])
+
+        descricao_cluster = analisar_descricao_cluster(colecao, todos_genes)
+        print(f"[llm.py] [Theme]: {descricao_cluster}...")
+
+        dados_validacao = analisar_coesao_cluster(colecao, todos_genes, descricao_cluster)
+        dados_rep = None
+        if rep_gene:
+            dados_rep = analisar_representante(colecao, rep_gene, descricao_cluster)
+
+        if dados_rep:
+            item_relatorio = {
+                "cluster_id": nome_cluster,
+                "cluster_description": descricao_cluster,
+                "validation_analysis": dados_validacao,
+                "representative_analysis": dados_rep,
+                "total_genes_in_cluster": len(todos_genes),
+                "genes_list": todos_genes
+            }
+            relatorio_final.append(item_relatorio)
+
+    return relatorio_final
+
+
+def run_llm(file_path, sheet_name=None, out_dir=None, user_id=None):
+    """Main entry called by the route. Expects `sheet_name` to be the contrast name.
+
+    Will look for clusters JSON at: ../users/{user_id}/clustering/{sheet_name}/clusters.json
+    Uses fixed CHROMA_DB_PATH for the vector DB and writes outputs to `out_dir`.
+    """
+    if out_dir is None:
+        if user_id is None:
+            raise ValueError("user_id must be provided when out_dir is not specified")
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "users", str(user_id), "llm", sheet_name or "default"))
+    os.makedirs(out_dir, exist_ok=True)
+
+    # locate clusters file
+    clusters_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".." , "users", str(user_id), "clustering", sheet_name, "clusters.json"))
+    if not os.path.exists(clusters_path):
+        raise FileNotFoundError(f"clusters.json not found for contrast {sheet_name} at {clusters_path}")
+
+    with open(clusters_path, "r", encoding="utf-8") as f:
+        clusters_dict = json.load(f)
+
+    # load articles (if any) and connect to vector DB
+    colecao = inicializar_banco_vetorial()
+
+    # execute pipeline and save results to out_dir
+    relatorio = executar_pipeline_completo(colecao, clusters_dict, out_dir)
+    saved = salvar_resultados(relatorio, out_dir)
+    return saved
+
 
 if __name__ == "__main__":
-    clusters_dict = cluster_pipeline()
-
-    if clusters_dict:
-        textos = ler_artigos()
-        kb = inicializar_banco_vetorial(textos)
-
-        executar_pipeline_completo(kb, clusters_dict)
-    else:
-        print("Erro: O pipeline de clusters não retornou dados.")
-
+    # Module intended to be used via import by the backend routes.
+    # No CLI behavior is provided in production.
+    print("llm.py loaded — call run_llm(file_path=None, sheet_name=..., out_dir=..., user_id=...) from your application.")

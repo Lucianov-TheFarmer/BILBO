@@ -1,9 +1,11 @@
 import pandas as pd
 import numpy as np
+import os
 import umap
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.colors as mcolors
+import json
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min, silhouette_score
@@ -171,7 +173,7 @@ def plot_final_map(df, reps, score, k, img_final_path):
     print(f"    -> Gráfico salvo: {img_final_path}")
 
 
-def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', img_metrics_path='Otimizacao_K.png'):
+def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', img_metrics_path='Otimizacao_K.png', clusters_json_path=None):
     df = load_and_process_data(file_path, sheet_name=sheet_name)
     matrix, vec = vectorize_text(df)
 
@@ -209,10 +211,24 @@ def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', i
         }
 
     print(f">>> Pipeline Finalizada. Dados estruturados para {len(dados_estruturados)} clusters.")
+
+    # Determine clusters_json_path if not provided: save next to img_final_path
+    try:
+        if clusters_json_path is None:
+            img_dir = os.path.dirname(os.path.abspath(img_final_path)) or os.getcwd()
+            clusters_json_path = os.path.join(img_dir, 'clusters.json')
+
+        with open(clusters_json_path, 'w', encoding='utf-8') as jf:
+            json.dump(dados_estruturados, jf, indent=2, ensure_ascii=False)
+        print(f"    -> Clusters JSON salvo: {clusters_json_path}")
+    except Exception as e:
+        print(f"    [!] Erro ao salvar clusters JSON: {e}")
+
     return {
         "clusters": dados_estruturados,
         "img_final": img_final_path,
         "img_metrics": img_metrics_path,
+        "clusters_json": clusters_json_path,
         "score": float(final_score),
         "k": int(best_k)
     }

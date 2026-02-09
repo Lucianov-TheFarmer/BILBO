@@ -54,6 +54,8 @@ app.include_router(results.router, tags=["results"])
 app.include_router(upload.router, tags=["upload"])
 from .routes import clustering as clustering_route
 app.include_router(clustering_route.router, tags=["clustering"])
+from .routes import llm as llm_route
+app.include_router(llm_route.router, tags=["llm"])
 
 
 class ChatRequest(BaseModel):
