@@ -10,7 +10,7 @@ DIRETORIO_ARTIGOS = "./artigos"
 CAMINHO_BANCO_VETORIAL = "./chroma_db_arctic"
 NOME_COLECAO = "banco_literatura_bio"
 
-MODELO_LLM = "qwen3:0.6b"
+MODELO_LLM = os.getenv("LLM_PRIMARY_MODEL", "qwen3:14b")
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
 
 class FuncaoEmbedding(EmbeddingFunction):
@@ -282,4 +282,3 @@ if __name__ == "__main__":
         executar_pipeline_completo(kb, clusters_dict)
     else:
         print("Erro: O pipeline de clusters não retornou dados.")
-

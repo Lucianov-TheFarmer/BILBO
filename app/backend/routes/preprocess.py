@@ -35,11 +35,11 @@ async def start_preprocess(
     if not contrasts:
         raise HTTPException(status_code=404, detail="Contrastes não encontrados.")
 
-    # Buscar todos os arquivos de quantificação do usuário (stage_id=6, status="Completed")
+    # Buscar todos os arquivos de quantificação do usuário (stage_id=6, status completed)
     quant_samples = db.query(SampleStage).filter(
         SampleStage.stage_id == 6,
         SampleStage.user_id == user_id,
-        SampleStage.status == "Completed"
+        SampleStage.status.in_(["COMPLETED", "Completed"])
     ).all()
     sra_to_filename = {s.sra_code: s.name for s in quant_samples}
 

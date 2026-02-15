@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from ..db.database import get_db
-from ..db.models import SampleStage, User
-from ..utils import get_current_user, manager
-from pydantic import BaseModel
-import os
 import base64
 import logging
-import asyncio
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from ..core.settings import settings
+from ..db.database import get_db
+from ..db.models import SampleStage, User
+from ..services.job_service import normalize_status
+from ..utils import get_current_user, manager
+from ..utils_paths import safe_resolve_user_path
+from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -20,7 +25,6 @@ class DebugPrint(BaseModel):
 class FileUpload(BaseModel):
     filename: str
     content: str  # conteúdo do arquivo em base64
-    user_id: int
 
 def calculate_file_size(file_path: str) -> str:
     """Calculate file size and return in appropriate units"""
@@ -59,7 +63,7 @@ def detect_sequencing_type(filename: str) -> str:
     return "Single-End"
 
 @router.post("/upload/fastq")
-async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
+async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Endpoint para salvar arquivos FASTQ e adicionar ao banco de dados"""
     try:
         # Determinar basename e tipo de sequenciamento
@@ -68,11 +72,11 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
         sequencing_type = detect_sequencing_type(filename)
         
         # Criar diretório
-        user_dir = f"../users/{data.user_id}/samples/{basename}"
-        os.makedirs(user_dir, exist_ok=True)
+        user_dir = safe_resolve_user_path(settings.users_root, current_user.id, "samples", basename)
+        user_dir.mkdir(parents=True, exist_ok=True)
         
         # Salvar arquivo
-        file_path = os.path.join(user_dir, filename)
+        file_path = user_dir / Path(filename).name
         
         # Decodificar conteúdo base64
         file_content = base64.b64decode(data.content)
@@ -87,7 +91,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
         existing_sample = db.query(SampleStage).filter(
             SampleStage.sra_code == basename,
             SampleStage.stage_id == 1,
-            SampleStage.user_id == data.user_id
+            SampleStage.user_id == current_user.id
         ).first()
         
         if not existing_sample:
@@ -97,8 +101,8 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
                 name=filename,
                 sra_code=basename,
                 size=file_size,
-                status="Completed",
-                user_id=data.user_id,
+                status="COMPLETED",
+                user_id=current_user.id,
             )
             db.add(new_sample)
             db.commit()
@@ -107,7 +111,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
             logger.info(f"Nova amostra criada no banco: {basename} - {filename}")
         else:
             # Atualizar entrada existente se necessário
-            existing_sample.status = "Completed"
+            existing_sample.status = normalize_status("completed")
             existing_sample.size = file_size
             db.commit()
             
@@ -115,7 +119,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
         
         # Enviar mensagem para o terminal
         terminal_message = f"Upload da amostra {filename} concluído"
-        await manager.broadcast(terminal_message)
+        await manager.broadcast(terminal_message, user_id=current_user.id)
         
         print("=" * 60)
         print(f"ARQUIVO SALVO: {file_path}")
@@ -127,7 +131,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
         
         return {
             "status": "saved", 
-            "path": file_path,
+            "path": str(file_path),
             "basename": basename,
             "size": file_size,
             "sequencing_type": sequencing_type,
@@ -137,7 +141,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"ERRO ao salvar arquivo: {e}")
         logger.error(f"Erro ao salvar arquivo: {e}")
-        await manager.broadcast(f"❌ Erro no upload: {filename} - {str(e)}")
+        await manager.broadcast(f"❌ Erro no upload: {filename} - {str(e)}", user_id=current_user.id)
         return {"status": "error", "message": str(e)}
 
 @router.post("/upload/finalize")
@@ -152,7 +156,7 @@ async def finalize_upload_batch(current_user: User = Depends(get_current_user), 
         
         # Enviar mensagem de finalização
         final_message = f"Upload finalizado! Total de amostras: {total_samples}"
-        await manager.broadcast(final_message)
+        await manager.broadcast(final_message, user_id=current_user.id)
         
         return {
             "status": "finalized",
@@ -162,5 +166,5 @@ async def finalize_upload_batch(current_user: User = Depends(get_current_user), 
         
     except Exception as e:
         logger.error(f"Erro ao finalizar lote de upload: {e}")
-        await manager.broadcast(f"❌ Erro ao finalizar upload: {str(e)}")
+        await manager.broadcast(f"❌ Erro ao finalizar upload: {str(e)}", user_id=current_user.id)
         return {"status": "error", "message": str(e)}

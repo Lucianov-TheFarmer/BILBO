@@ -4,6 +4,7 @@ import asyncio
 import logging
 import pandas as pd
 from .utils import log_message
+from .jobs import wait_for_job
 import os
 from ..components.general_components import create_table
 
@@ -121,15 +122,25 @@ async def run_deg_analysis(page, token, user_id):
                 response = await client.post(
                     "http://localhost:8000/deg/run",
                     json={
-                        "user_id": user_id,
                         "contrast_ids": list(selected_ids),
                         "genome_accession": genome_accession,
                     },
                     headers=headers,
-                    timeout=600,
+                    timeout=120,
                 )
-                if response.status_code == 200:
-                    await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
+                if response.status_code in (200, 202):
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"DEG enfileirado (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        if status == "COMPLETED":
+                            await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
+                        else:
+                            await log_message(page, f"DEG finalizado com status {status}.")
+                    else:
+                        await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
                 else:
                     await log_message(page, f"Erro na análise DEG: {response.text}")
         except Exception as ex:
@@ -183,7 +194,7 @@ async def run_deg_analysis(page, token, user_id):
 
 async def fetch_sheet_data(token, user_id, sheet_name):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    params = {"user_id": user_id, "sheet": sheet_name}
+    params = {"sheet": sheet_name}
     async with httpx.AsyncClient() as client:
         response = await client.get("http://localhost:8000/deg/sheet_data", headers=headers, params=params)
         response.raise_for_status()
@@ -564,7 +575,7 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                                         return
                                     import urllib.parse
                                     fname_enc = urllib.parse.quote(current_filename, safe='')
-                                    download_url = f"http://localhost:8000/results/download_image?user_id={user_id}&filename={fname_enc}&token={token}"
+                                    download_url = f"http://localhost:8000/results/download_image?filename={fname_enc}&token={token}"
                                     page.launch_url(download_url)
                                 except Exception as ex:
                                     await log_message(page, f"Erro ao iniciar download da figura: {ex}")
@@ -593,10 +604,9 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
 
 async def show_deg_results(page, token, user_id, container_amostras):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    params = {"user_id": user_id}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:8000/deg/sheets", headers=headers, params=params)
+            response = await client.get("http://localhost:8000/deg/sheets", headers=headers)
             if response.status_code == 200:
                 sheets = response.json().get("sheets", [])
                 if not sheets:
@@ -687,7 +697,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
 
                         import urllib.parse
                         sheets_param = urllib.parse.quote(",".join(selected), safe='')
-                        download_url = f"http://localhost:8000/results/download_deg_sheets?user_id={user_id}&sheets={sheets_param}&token={token}"
+                        download_url = f"http://localhost:8000/results/download_deg_sheets?sheets={sheets_param}&token={token}"
                         page.launch_url(download_url)
 
                     from ..components.general_components import create_button

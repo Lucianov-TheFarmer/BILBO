@@ -41,6 +41,7 @@ O BILBO é construído sobre uma arquitetura robusta para garantir reprodutibili
 * **Backend & API:** [FastAPI](https://fastapi.tiangolo.com/) com Uvicorn.
 * **Banco de Dados:** PostgreSQL (armazenamento de metadados de amostras e estágios do pipeline).
 * **Containerização:** Docker & Docker Compose (Isolamento total do ambiente).
+* **Orquestração de jobs:** Celery + Redis (execução assíncrona e rastreável por `job_id`).
 * **Ferramentas de Bioinformática:**
     * `SRA Toolkit` (Download de dados)
     * `STAR` (Alinhamento de alta performance)
@@ -53,6 +54,18 @@ O BILBO é construído sobre uma arquitetura robusta para garantir reprodutibili
 ## 🚀 Como Começar
 
 O BILBO foi projetado para ser "Plug and Play". Siga os passos abaixo para preparar seu laboratório virtual.
+
+### Variáveis de ambiente obrigatórias
+Para publicação/produção, configure:
+
+* `SECRET_KEY` (obrigatória, sem valor padrão inseguro)
+* `DATABASE_URL` (ou `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`)
+* `CORS_ORIGINS` (lista separada por vírgula)
+* `CELERY_BROKER_URL`
+* `CELERY_RESULT_BACKEND`
+* `LLM_PRIMARY_MODEL` (default `qwen3:14b`)
+* `LLM_FALLBACK_MODELS` (default `qwen3:8b,qwen3:0.6b`)
+* `ARTIFACT_RETENTION_DAYS`, `LOG_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`
 
 ### 1. Pré-requisitos
 Certifique-se de ter instalado em sua máquina:
@@ -77,9 +90,36 @@ cd bilbo
 # 3. Execute o inicializador automático
 python init.py
 
+# ou diretamente com Docker Compose
+docker compose up -d bioinfo worker db redis ollama
+```
 
+### Troubleshooting rápido: erro de senha do Postgres
 
-# organização dos arquivos
+Se aparecer no log:
+
+* `PostgreSQL Database directory appears to contain a database; Skipping initialization`
+* `password authentication failed for user "postgres"`
+
+o volume do banco foi criado com senha antiga. Para alinhar com o `.env` atual:
+
+```bash
+docker compose down
+docker volume rm bilbo_postgres_data
+docker compose up -d db
+docker compose logs -f db
+# aguarde: "database system is ready to accept connections"
+docker compose up -d --build redis ollama bioinfo worker
+```
+
+Validação:
+
+```bash
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
+```
+
+## organização dos arquivos
 bilbo/
 ├── app/
 │   ├── backend/       # API FastAPI, Banco de Dados e Scripts (R/Bash)
@@ -113,6 +153,33 @@ A plataforma utiliza uma técnica chamada **RAG (Retrieval-Augmented Generation)
 * **Interpretação de Genes:** Pergunte à IA sobre a função biológica dos genes encontrados.
 * **Insights Científicos:** Peça resumos sobre as vias metabólicas afetadas em seu experimento.
 * **Privacidade:** Todo o processamento da IA ocorre localmente dentro do container, sem enviar seus dados para a nuvem.
+
+### Política de modelo LLM
+
+O backend prioriza `qwen3:14b` e aplica fallback automático para `qwen3:8b` e `qwen3:0.6b` quando necessário.
+
+## 🧪 Qualidade e DevEx
+
+Comandos utilitários:
+
+```bash
+make lint
+make test
+make run
+make worker
+```
+
+## 🧭 API de Jobs
+
+Endpoints principais:
+
+* `POST /jobs/{stage}/enqueue`
+* `GET /jobs/{job_id}`
+* `GET /jobs?stage=&status=`
+* `POST /jobs/{job_id}/cancel`
+* `GET /jobs/{job_id}/artifacts`
+
+As rotas longas do pipeline retornam `202` com `{job_id, status, message}`.
 
 ---
 

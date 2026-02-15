@@ -10,7 +10,7 @@ CHROMA_DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "
 COLLECTION_NAME = "banco_literatura_bio"
 
 # models (kept from rag.py)
-MODELO_LLM = "qwen3:0.6b"
+MODELO_LLM = os.getenv("BILBO_LLM_MODEL_OVERRIDE") or os.getenv("LLM_PRIMARY_MODEL", "qwen3:14b")
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
 
 

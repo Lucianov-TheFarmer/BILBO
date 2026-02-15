@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+import logging
+import shutil
+
+from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+
+from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import SampleStage, User
-from ..utils import get_current_user, manager
-import subprocess
-import os
-import logging
-import asyncio
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user
+from ..utils_paths import safe_resolve_user_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,9 +21,10 @@ router = APIRouter()
 class QualityAnalysisPostTrimRequest(BaseModel):
     samples: list[str]
 
-@router.post("/quality_analysis_post_trim/start")
+@router.post("/quality_analysis_post_trim/start", status_code=status.HTTP_202_ACCEPTED)
 def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user_id = current_user.id
+    to_process: list[str] = []
     for name in request.samples:
         db_sample_stage = db.query(SampleStage).filter(
             SampleStage.name == name,
@@ -40,48 +45,42 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
         ).first()
 
         if existing_entry:
-            logger.warning(f"Entrada já existente para {basename}_post_trim.html. Ignorando duplicação.")
-            continue
-
-        new_sample_stage = SampleStage(
-            stage_id=4,
-            name=f"{basename}_post_trim.html",
-            sra_code=db_sample_stage.sra_code,
-            size=None,
-            status="In Progress",
-            user_id=user_id,
-        )
-        db.add(new_sample_stage)
-        db.commit()
-
-        # Launch the quality analysis post-trim script in background to avoid blocking the API
-        # Pass token optionally if available in env (not required)
-        command = f"bash /app/backend/scripts/quality_analysis_post_trim.sh {name} {user_id}"
-        try:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
+            existing_entry.status = "RUNNING"
+            db.add(existing_entry)
+        else:
+            db.add(
+                SampleStage(
+                    stage_id=4,
+                    name=f"{basename}_post_trim.html",
+                    sra_code=db_sample_stage.sra_code,
+                    size=None,
+                    status="RUNNING",
+                    user_id=user_id,
+                )
             )
-            logger.info(f"Launched quality_analysis_post_trim (PID={process.pid}) for {name}")
-        except Exception as e:
-            logger.error(f"Failed to launch quality analysis post-trim for {name}: {e}")
-            new_sample_stage.status = "Failed"
-            db.commit()
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error launching quality analysis post-trim for {name}: {e}")
+        to_process.append(name)
 
-        # Broadcast that post-trim analysis started
-        try:
-            asyncio.run(manager.broadcast(f"Análise de qualidade pós-trimmagem iniciada para {name}"))
-        except Exception as e:
-            logger.warning(f"Não foi possível enviar mensagem WebSocket de início: {e}")
+    db.commit()
 
-    return {"message": "Quality analysis post-trimmagem started successfully"}
+    job = create_job(db, stage="quality_analysis_post_trim", user_id=user_id, payload={"samples": to_process})
+    audit(
+        db,
+        action="quality_analysis_post_trim_enqueued",
+        user_id=user_id,
+        stage="quality_analysis_post_trim",
+        job_id=job.id,
+        metadata_json={"samples": to_process},
+    )
+    enqueue_pipeline_job(job.id)
+    return {"job_id": job.id, "status": "PENDING", "message": "Post-trim quality analysis job enqueued"}
 
 @router.post("/quality_analysis_post_trim/update_status")
-def update_quality_analysis_post_trim_status(sra_code: str = Form(...), new_status: str = Form(...), db: Session = Depends(get_db)):
+def update_quality_analysis_post_trim_status(
+    sra_code: str = Form(...),
+    new_status: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     logger.info(f"Recebendo solicitação para atualizar status: sra_code={sra_code}, status={new_status}")
 
     # Update any matching post-trim sample entries for any user.
@@ -90,22 +89,17 @@ def update_quality_analysis_post_trim_status(sra_code: str = Form(...), new_stat
     for name in candidates:
         db_sample_stage = db.query(SampleStage).filter(
             SampleStage.name == name,
-            SampleStage.stage_id == 4
+            SampleStage.stage_id == 4,
+            SampleStage.user_id == current_user.id,
         ).first()
         if db_sample_stage:
-            db_sample_stage.status = new_status
+            db_sample_stage.status = normalize_status(new_status)
             db.commit()
             updated = True
 
     if not updated:
         logger.error(f"No post-trim sample found for {sra_code}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sra_code} not found")
-
-    # Broadcast update to frontend
-    try:
-        asyncio.run(manager.broadcast(f"Quality analysis post-trim {sra_code} status: {new_status}"))
-    except Exception as e:
-        logger.warning(f"Failed to broadcast post-trim status: {e}")
 
     logger.info(f"Status atualizado com sucesso para {new_status} para a amostra {sra_code}")
     return {"message": f"Status atualizado para {new_status} para a amostra {sra_code}"}
@@ -126,13 +120,9 @@ def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), cur
     db.delete(db_sample_stage)
     db.commit()
 
-    # Excluir o diretório de resultados de análise de qualidade pós-trimmagem
-    user_id = current_user.id
     basename = name.replace("_post_trim.html", "_trimmed.fastq")
-    output_dir = f"../users/{user_id}/QC_PostTrim/{basename}"
-    output_dir = output_dir.replace(".html", ".fastq")
-    logger.info(f"Deleting output directory: {output_dir}")
-    if os.path.exists(output_dir):
-        subprocess.run(["rm", "-rf", output_dir])
+    output_dir = safe_resolve_user_path(settings.users_root, current_user.id, "QC_PostTrim", basename)
+    if output_dir.exists():
+        shutil.rmtree(output_dir, ignore_errors=True)
 
     return {"message": f"Quality analysis result {name} deleted successfully"}

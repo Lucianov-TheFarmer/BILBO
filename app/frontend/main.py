@@ -29,7 +29,7 @@ async def main(page: ft.Page):
         page.update()
         # Se ainda não há token (está na tela de login), recarrega a interface de login
         if token is None:
-            await show_login_interface(page, login, register, toggle_theme, username_input, password_input, result)
+            await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
 
     async def logout(e):
         nonlocal token, username
@@ -37,11 +37,6 @@ async def main(page: ft.Page):
         username = None
         page.controls.clear()
         await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
-        page.update()
-
-    async def show_snackbar(message):
-        page.snack_bar.content = ft.Text(message)
-        page.snack_bar.open = True
         page.update()
 
     async def login(e):
@@ -97,9 +92,6 @@ async def main(page: ft.Page):
         except httpx.RequestError as ex:
             await show_snackbar(f"An error occurred: {ex}")
 
-    # username_input = ft.TextField(label="Username", width=300)
-    # password_input = ft.TextField(label="Password", password=True, width=300)
-    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
-    username_input = ft.TextField(value="admin")
-    password_input = ft.TextField(value="admin123", password=True)
-    await login(None)    
+    username_input = ft.TextField(label="Username", width=300)
+    password_input = ft.TextField(label="Password", password=True, width=300)
+    await show_login_interface(page, login, register, toggle_theme, username_input, password_input)

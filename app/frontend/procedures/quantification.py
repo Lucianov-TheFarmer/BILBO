@@ -2,6 +2,7 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import view_quantification_log
 
@@ -181,31 +182,29 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                     sample_txt = sample.replace(".bam", ".txt")
                     for row in tabela_quantificacao.rows:
                         if row.cells[0].content.value == sample_txt:
-                            row.cells[2].content.value = "Counting"
+                            row.cells[2].content.value = "RUNNING"
                             page.update()
                             break
 
-                    async with httpx.AsyncClient(timeout=300.0) as client:
-                        response = await client.post(
-                            "http://bioinfo-container:8000/quantification/start_processing",
-                            json={"samples": [sample], "feature_type": feature_type, "id_attribute": id_attribute},
-                            headers=headers,
-                        )
-                        if response.status_code == 200:
-                            size_response = await client.post(
-                                "http://bioinfo-container:8000/quantification/update_status",
-                                data={"sample_name": sample_txt.replace(".txt", ""), "status": "Completed"},
-                                headers=headers,
-                            )
-                            if size_response.status_code != 200:
-                                logger.error(f"Erro ao calcular tamanho do arquivo para {sample_txt}: {size_response.status_code} - {size_response.text}")
-
-                            await log_message(page, f"Quantificação concluída para {sample}")
-                            await update_tabela_quantificacao(page, token, user_id)
-                            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                            page.update()
-                        else:
-                            await log_message(page, f"Erro ao processar {sample}: {response.status_code} - {response.text}")
+                response = await client.post(
+                    "http://bioinfo-container:8000/quantification/start_processing",
+                    json={"samples": selected_samples, "feature_type": feature_type, "id_attribute": id_attribute},
+                    headers=headers,
+                    timeout=120.0,
+                )
+                if response.status_code in (200, 202):
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"Quantificação enfileirada (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        await log_message(page, f"Quantificação finalizada com status {status}.")
+                    await update_tabela_quantificacao(page, token, user_id)
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                    page.update()
+                else:
+                    await log_message(page, f"Erro ao processar quantificação: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"Erro ao iniciar quantificação: {e}", exc_info=True)
 

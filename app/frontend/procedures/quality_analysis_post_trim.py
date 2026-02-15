@@ -2,6 +2,7 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import create_dropdown_menu, display_graph
 
@@ -212,7 +213,14 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post("http://bioinfo-container:8000/quality_analysis_post_trim/start", json={"samples": selected_samples}, headers=headers)
-                if response.status_code == 200:
+                if response.status_code in (200, 202):
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"QC pós-trim enfileirado (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        await log_message(page, f"QC pós-trim finalizado com status {status}.")
                     logger.info(f"Análise de qualidade pós-trimmagem iniciada para {selected_samples} com sucesso!")
                     await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
                     page.update()

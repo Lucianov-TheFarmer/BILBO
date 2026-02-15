@@ -2,7 +2,7 @@ import flet as ft
 import httpx
 import logging
 import asyncio
-import websockets
+from .jobs import wait_for_job
 from .utils import log_message
 from .quality_analysis import update_quality_analysis_table
 from ..components.general_components import create_table  # Import reusable table
@@ -290,21 +290,20 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                     return
                 for _ in range(pending_count):
                     response = await client.post("http://bioinfo-container:8000/samples/download", headers=headers)
-                    if response.status_code == 200:
-                        logger.info("Download iniciado!")
-                        sample_name = response.json().get("sample_name", "Unknown")
+                    if response.status_code in (200, 202):
+                        logger.info("Download enfileirado!")
+                        body = response.json()
+                        sample_name = body.get("sample_name", "Unknown")
+                        job_id = body.get("job_id")
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
-                        async with websockets.connect("ws://bioinfo-container:8000/ws") as ws:
-                            while True:
-                                message = await ws.recv()
-                                await log_message(page, message)
-                                if "Download da amostra" in message and "concluído" in message:
-                                    await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
-                                    break
-                                else:
-                                    logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
+                        if job_id:
+                            result = await wait_for_job(token, job_id)
+                            final_status = result.get("status")
+                            await log_message(page, f"Download da amostra {sample_name} finalizado com status {final_status}.")
+                            if final_status == "COMPLETED":
+                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()

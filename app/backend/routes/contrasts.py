@@ -8,11 +8,23 @@ import logging
 router = APIRouter()
 
 @router.get("/contrasts/samples")
-def get_completed_samples(stage_id: int = 6, status: str = "Completed", db: Session = Depends(get_db)):
+def get_completed_samples(
+    stage_id: int = 6,
+    status: str = "COMPLETED",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Fetch samples from sample_stages with the given stage_id and status.
     """
-    samples = db.query(SampleStage).filter_by(stage_id=stage_id, status=status).all()
+    status_values = [status]
+    if status.upper() == "COMPLETED":
+        status_values.extend(["Completed"])
+    samples = db.query(SampleStage).filter(
+        SampleStage.stage_id == stage_id,
+        SampleStage.user_id == current_user.id,
+        SampleStage.status.in_(status_values),
+    ).all()
     if not samples:
         raise HTTPException(status_code=404, detail="No samples found.")
     return [{"id": sample.id, "name": sample.name} for sample in samples]

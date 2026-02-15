@@ -4,12 +4,12 @@ sample_name=$1
 user_id=$2
 feature_type=$3
 id_attribute=$4
-alignment_dir="../users/${user_id}/alignment/${sample_name%.bam}"
+alignment_dir="/users/${user_id}/alignment/${sample_name%.bam}"
 # Optional 5th parameter: genome accession or absolute/relative path to ref_genome dir
 genome_param="$5"
 
 # log and output (defined early so detection errors can be logged)
-output_dir="../users/${user_id}/quantification"
+output_dir="/users/${user_id}/quantification"
 log_file="/tmp/${sample_name}_quantification.log"
 
 # Determine reference genome directory
@@ -17,10 +17,10 @@ if [ -n "$genome_param" ]; then
     if [ -d "$genome_param" ]; then
         ref_genome_dir="$genome_param"
     else
-        ref_genome_dir="../users/ref_genomes/${genome_param}"
+        ref_genome_dir="/users/ref_genomes/${genome_param}"
     fi
 else
-    REF_PARENT="../users/ref_genomes"
+    REF_PARENT="/users/ref_genomes"
     if [ -d "$REF_PARENT" ]; then
         # find candidate dirs containing genomic.gff or genomic.gtf
         candidates=()
@@ -35,7 +35,7 @@ else
             exit 1
         fi
     else
-        echo "Erro: diretório ../users/ref_genomes não existe." >> "$log_file"
+        echo "Erro: diretório /users/ref_genomes não existe." >> "$log_file"
         exit 1
     fi
 fi

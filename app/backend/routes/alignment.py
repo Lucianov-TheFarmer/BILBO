@@ -2,7 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import SampleStage, User
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager  # Atualizado para incluir manager
+from ..utils_paths import ensure_safe_component
 import subprocess
 import os
 import logging
@@ -102,7 +105,7 @@ def add_samples(
             stage_id=5,
             name=f"{basename}.bam",
             sra_code=basename,
-            status="Pending",
+            status="PENDING",
             user_id=user_id,
         )
         db.add(new_stage)
@@ -110,13 +113,12 @@ def add_samples(
     db.commit()
     return {"message": "Samples added successfully."}
 
-@router.post("/alignment/start")
+@router.post("/alignment/start", status_code=status.HTTP_202_ACCEPTED)
 async def start_alignment(
     sample: str = Form(...),
     genome: str = Form(...),
     threads: int = Query(..., description="Número de threads para o STAR"),
     additional_params: AdditionalParams = Depends(),
-    token: str = Form(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -139,7 +141,7 @@ async def start_alignment(
             detail=f"Genome index not found at {genome_dir}. Ensure the genome is indexed correctly.",
         )
 
-    basename = sample.split('_')[0]
+    basename = ensure_safe_component(sample.split('_')[0], "sample")
     sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
     sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
 
@@ -159,34 +161,40 @@ async def start_alignment(
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    if sample_stage.status != "Pending":
+    if normalize_status(sample_stage.status) != "PENDING":
         raise HTTPException(status_code=400, detail="Sample is already being processed or completed")
 
-    sample_stage.status = "Aligning"
+    sample_stage.status = "RUNNING"
     db.commit()
 
-    # Prepare command for alignment
-    command = [
-        "bash",
-        "/app/backend/scripts/alignment.sh",
-        basename,
-        str(user_id),
-        alignment_path,
-        genome_dir,
-        str(threads),
-        token,
-    ]
-
+    extra_params: list[str] = []
     if additional_params:
         for key, value in additional_params.dict().items():
             if value is not None and key != "threads":
-                command.append(f"--{key}={value}")
+                extra_params.append(f"--{key}={value}")
 
-    # Execute alignment
-    logger.info(f"Executing alignment command: {' '.join(command)}")
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    job = create_job(
+        db,
+        stage="alignment",
+        user_id=user_id,
+        payload={
+            "sample": basename,
+            "genome_dir": genome_dir,
+            "threads": threads,
+            "additional": extra_params,
+        },
+    )
+    audit(
+        db,
+        action="alignment_enqueued",
+        user_id=user_id,
+        stage="alignment",
+        job_id=job.id,
+        metadata_json={"sample": basename, "genome": accession},
+    )
+    enqueue_pipeline_job(job.id)
 
-    return {"message": f"Alignment started for {basename}"}
+    return {"job_id": job.id, "status": "PENDING", "message": f"Alignment job enqueued for {basename}"}
 
 @router.post("/alignment/update_status")
 async def update_alignment_status(
@@ -217,12 +225,12 @@ async def update_alignment_status(
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    sample_stage.status = status
+    sample_stage.status = normalize_status(status)
     sample_stage.size = bam_size_mb
     db.commit()
 
     # Emitir mensagem para o frontend
-    await manager.broadcast(f"Alinhamento concluído para {sra_code}")
+    await manager.broadcast(f"Alinhamento concluído para {sra_code}", user_id=user_id)
 
     return {"message": f"Status atualizado para {sra_code}", "size": bam_size_mb}
 
@@ -264,10 +272,10 @@ def delete_alignment_result(sample_name: str, db: Session = Depends(get_db), cur
         raise HTTPException(status_code=500, detail="Erro ao excluir alinhamento do banco de dados.")
 
 @router.post("/ws/")
-async def broadcast_message(message: str = Form(...)):
+async def broadcast_message(message: str = Form(...), current_user: User = Depends(get_current_user)):
     """Broadcast a message to all WebSocket clients."""
     try:
-        await manager.broadcast(message)
+        await manager.broadcast(message, user_id=current_user.id)
         return {"message": "Broadcast sent successfully"}
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem de broadcast: {e}")
@@ -342,7 +350,7 @@ def download_genome(
         raise HTTPException(status_code=500, detail=f"Erro ao baixar genoma: {e}")
 
 @router.get("/genomes/{accession}/analyze")
-def analyze_gff(accession: str):
+def analyze_gff(accession: str, current_user: User = Depends(get_current_user)):
     """Executa o script analyze_gff.py para o genoma especificado e retorna o resultado."""
     gff_file = f"../users/ref_genomes/{accession}/genomic.gff"
     command = ["python", "backend/scripts/analyze_gff.py", gff_file]
@@ -374,7 +382,7 @@ def index_genome(
         initial_stage = SampleStage(
             name=genome_name,
             size=None,
-            status="Indexing",
+            status="RUNNING",
             stage_id=7,
             user_id=current_user.id,
         )
@@ -424,7 +432,7 @@ def index_genome(
             SampleStage.stage_id == 7,
         ).first()
         if genome_stage:
-            genome_stage.status = "Completed"
+            genome_stage.status = "COMPLETED"
             genome_stage.size = genome_size
             db.commit()
 

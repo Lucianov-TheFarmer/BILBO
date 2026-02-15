@@ -4,6 +4,7 @@ import httpx
 import asyncio
 from functools import partial
 from ..components.general_components import create_button
+from .jobs import wait_for_job
 from .utils import log_message
 
 async def show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao):
@@ -39,10 +40,9 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         """Fetch image bytes from backend and return an InteractiveViewer control."""
         try:
             headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-            params = {"user_id": user_id, "sheet": sheet, "file": filename, "token": token}
-            url = f"http://localhost:8000/clustering/file?file={filename}&sheet={sheet}&user_id={user_id}&token={token}"
+            url = f"http://localhost:8000/clustering/file?file={filename}&sheet={sheet}"
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 return ft.Text(f"Erro ao baixar imagem: {resp.status_code}", color="red")
             data = resp.content
@@ -65,7 +65,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
 
         async with httpx.AsyncClient() as client:
-            resp = await client.get("http://localhost:8000/clustering/contrasts", params={"user_id": user_id}, headers=headers)
+            resp = await client.get("http://localhost:8000/clustering/contrasts", headers=headers)
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar contrasts: {resp.text}")
                 return
@@ -84,14 +84,25 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                 await log_message(page, "Nenhum contraste selecionado.")
                 return
 
-            payload = {"user_id": user_id, "sheets": selected}
+            payload = {"sheets": selected}
             # Allow long-running request: set a high timeout (or None to disable)
             async with httpx.AsyncClient(timeout=None) as client:
                 resp = await client.post("http://localhost:8000/clustering/run", json=payload, headers=headers)
-            if resp.status_code != 200:
+            if resp.status_code not in (200, 202):
                 await log_message(page, f"Erro ao iniciar clusterização: {resp.text}")
             else:
-                await log_message(page, "Clusterização iniciada/completa. Atualize a tabela para ver resultados.")
+                body = resp.json()
+                job_id = body.get("job_id")
+                if job_id:
+                    await log_message(page, f"Clusterização enfileirada (job {job_id}).")
+                    result = await wait_for_job(token, job_id)
+                    status = result.get("status")
+                    if status == "COMPLETED":
+                        await log_message(page, "Clusterização concluída com sucesso.")
+                    else:
+                        await log_message(page, f"Clusterização finalizada com status {status}.")
+                else:
+                    await log_message(page, "Clusterização iniciada.")
             dlg.open = False
             page.update()
 
@@ -128,9 +139,6 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         for entry in files:
             sheet = entry.get("sheet", "")
             # build URLs for cluster and metrics
-            cluster_url = f"http://localhost:8000/clustering/file?file=cluster.png&sheet={sheet}&user_id={user_id}&token={token}"
-            metrics_url = f"http://localhost:8000/clustering/file?file=metrics.png&sheet={sheet}&user_id={user_id}&token={token}"
-
             # icon buttons: view (opens dropdown+viewer+download) and delete (call backend)
             async def _open_viewer(e, sheet_name=sheet):
                 # Render viewer directly into the preview container instead of a modal
@@ -158,7 +166,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                         import urllib.parse
                         fname = "cluster.png" if dropdown.value == "Cluster" else "metrics.png"
                         fname_enc = urllib.parse.quote(fname, safe='')
-                        download_url = f"http://localhost:8000/clustering/file?file={fname_enc}&sheet={sheet_name}&user_id={user_id}&token={token}"
+                        download_url = f"http://localhost:8000/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
                         page.launch_url(download_url)
                     except Exception as ex:
                         await log_message(page, f"Erro ao iniciar download da figura: {ex}")
@@ -187,7 +195,10 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
             async def _delete_sheet(e, sheet_name=sheet):
                 try:
                     async with httpx.AsyncClient() as client:
-                        resp = await client.delete(f"http://localhost:8000/clustering/{sheet_name}", params={"user_id": user_id, "token": token})
+                        resp = await client.delete(
+                            f"http://localhost:8000/clustering/{sheet_name}",
+                            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                        )
                     if resp.status_code == 200:
                         await log_message(page, f"Clusterização {sheet_name} excluída.")
                         await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao)

@@ -2,6 +2,7 @@ import flet as ft
 import httpx
 import asyncio
 from ..components.general_components import create_button
+from .jobs import wait_for_job
 from .utils import log_message
 
 
@@ -26,9 +27,9 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_md(e, sheet_name):
         try:
-            url = f"http://localhost:8000/llm/file?file=report.md&sheet={sheet_name}&user_id={user_id}&token={token}"
+            url = f"http://localhost:8000/llm/file?file=report.md&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .md: {resp.status_code} - {resp.text}")
                 return
@@ -61,9 +62,9 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_json(e, sheet_name):
         try:
-            url = f"http://localhost:8000/llm/file?file=data.json&sheet={sheet_name}&user_id={user_id}&token={token}"
+            url = f"http://localhost:8000/llm/file?file=data.json&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .json: {resp.status_code} - {resp.text}")
                 return
@@ -79,7 +80,10 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
     async def _delete_sheet(e, sheet_name):
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.delete(f"http://localhost:8000/llm/{sheet_name}", params={"user_id": user_id, "token": token})
+                resp = await client.delete(
+                    f"http://localhost:8000/llm/{sheet_name}",
+                    headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
+                )
             if resp.status_code == 200:
                 await log_message(page, f"LLM {sheet_name} excluído.")
                 await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
@@ -116,8 +120,8 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                resp_deg = await client.get("http://localhost:8000/deg/sheets", params={"user_id": user_id}, headers=headers)
-                resp_llm = await client.get("http://localhost:8000/llm/contrasts", params={"user_id": user_id}, headers=headers)
+                resp_deg = await client.get("http://localhost:8000/deg/sheets", headers=headers)
+                resp_llm = await client.get("http://localhost:8000/llm/contrasts", headers=headers)
 
             if resp_deg.status_code != 200:
                 await log_message(page, f"Erro ao buscar abas DEG: {resp_deg.text}")
@@ -144,14 +148,25 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
                 await log_message(page, f"Iniciando interpretação LLM para: {', '.join(selected)}")
 
-                payload = {"user_id": user_id, "sheets": selected}
+                payload = {"sheets": selected}
                 try:
                     async with httpx.AsyncClient(timeout=None) as client:
                         resp = await client.post("http://localhost:8000/llm/run", json=payload, headers=headers)
-                    if resp.status_code != 200:
+                    if resp.status_code not in (200, 202):
                         await log_message(page, f"Erro ao iniciar LLM: {resp.status_code} - {resp.text}")
                     else:
-                        await log_message(page, "Interpretação LLM iniciada/completa. Atualize a tabela para ver resultados.")
+                        body = resp.json()
+                        job_id = body.get("job_id")
+                        if job_id:
+                            await log_message(page, f"Interpretação LLM enfileirada (job {job_id}).")
+                            result = await wait_for_job(token, job_id)
+                            status = result.get("status")
+                            if status == "COMPLETED":
+                                await log_message(page, "Interpretação LLM concluída com sucesso.")
+                            else:
+                                await log_message(page, f"Interpretação LLM finalizada com status {status}.")
+                        else:
+                            await log_message(page, "Interpretação LLM iniciada.")
                         # refresh list
                         await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
                 except Exception as ex:

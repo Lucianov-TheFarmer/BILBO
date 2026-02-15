@@ -1,39 +1,36 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from ..db.database import get_db
-from ..db.models import User, SampleStage
-from ..utils import get_current_user, manager
-import subprocess
-import threading
 import logging
 import os
+
 import openpyxl
 import pandas as pd
-from fastapi.responses import JSONResponse
+
+from ..db.database import get_db
+from ..db.models import SampleStage, User
+from ..services.job_service import audit, create_job
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.post("/deg/run")
+@router.post("/deg/run", status_code=202)
 async def run_deg(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     data = await request.json()
-    user_id = data.get("user_id", current_user.id)
+    user_id = current_user.id
     contrast_ids = data.get("contrast_ids", [])
-    genome_accession = data.get("genome_accession")  # <-- novo parâmetro
+    genome_accession = data.get("genome_accession")
     logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids} e genoma {genome_accession}")
 
     preprocess_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
     os.makedirs(deg_dir, exist_ok=True)
-    deg_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/DEG.R"))
-
-    if not os.path.exists(deg_script):
-        logger.error("Arquivo DEG.R não encontrado.")
-        raise HTTPException(status_code=500, detail="Arquivo DEG.R não encontrado.")
 
     if not os.path.exists(preprocess_dir):
         logger.error(f"Diretório preprocess não encontrado: {preprocess_dir}")
@@ -63,142 +60,22 @@ async def run_deg(
         with open(genome_file_path, "w", encoding="utf-8") as f:
             f.write(str(genome_accession) + "\n")
 
-    try:
-        # Passa ambos os diretórios para o script R: preprocess_dir e deg_dir
-        process = subprocess.Popen(
-            ["Rscript", deg_script, preprocess_dir, deg_dir],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        stdout, stderr = process.communicate()
-        logger.info(f"Saída do DEG.R:\n{stdout}")
-        if stderr:
-            logger.error(f"Erros do DEG.R:\n{stderr}")
-        if process.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Erro ao executar DEG.R: {stderr}")
-    except Exception as e:
-        logger.error(f"Erro ao executar DEG.R: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro ao executar DEG.R: {e}")
-
-    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
-    if not os.path.exists(deg_xlsx):
-        raise HTTPException(status_code=500, detail="Arquivo DEG.xlsx não foi gerado.")
-
-    # Anotar DEG.xlsx com Name GFF e Product/Note GFF
-    if genome_accession:
-        # Try to find genomic.gff or genomic.gtf in the genome folder
-        genome_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../users/ref_genomes/{genome_accession}"))
-        gff_candidate = os.path.join(genome_folder, "genomic.gff")
-        gtf_candidate = os.path.join(genome_folder, "genomic.gtf")
-        gff_path = None
-        if os.path.exists(gff_candidate):
-            gff_path = os.path.abspath(gff_candidate)
-        elif os.path.exists(gtf_candidate):
-            gff_path = os.path.abspath(gtf_candidate)
-        else:
-            gff_path = None
-
-        annotate_gff_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_gff.py"))
-        annotate_uniprot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/annotate_deg_with_uniprot.py"))
-        deg_barplot_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/deg_graphs.py"))
-        await manager.broadcast("Iniciando anotação com GFF")
-        if gff_path and os.path.exists(annotate_gff_script):
-            try:
-                process = subprocess.Popen(
-                    ["python", annotate_gff_script, deg_xlsx, gff_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                stdout, stderr = process.communicate()
-                logger.info(f"Saída do annotate_deg_with_gff.py:\n{stdout}")
-                if stderr:
-                    logger.error(f"Erros do annotate_deg_with_gff.py:\n{stderr}")
-                if process.returncode != 0:
-                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_gff.py: {stderr}")
-            except Exception as e:
-                logger.error(f"Erro ao executar annotate_deg_with_gff.py: {e}")
-                raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_gff.py: {e}")
-        else:
-            logger.warning("GFF ou annotate_deg_with_gff.py não encontrado para anotação.")
-
-        # Chamada do novo script Uniprot
-        if os.path.exists(annotate_uniprot_script):
-            await manager.broadcast("Iniciando anotação com Uniprot")
-            try:
-                # Run the annotate script and stream its stdout/stderr to the app logger in real-time.
-                process = subprocess.Popen(
-                    ["python", annotate_uniprot_script, deg_xlsx],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                )
-
-                # Readers for streaming output
-                stderr_lines = []
-
-                def _stream_reader(pipe, log_fn, collect=None):
-                    try:
-                        for line in iter(pipe.readline, ''):
-                            line = line.rstrip('\n')
-                            if line:
-                                log_fn(line)
-                                if collect is not None:
-                                    collect.append(line)
-                    finally:
-                        try:
-                            pipe.close()
-                        except Exception:
-                            pass
-
-                t_out = threading.Thread(target=_stream_reader, args=(process.stdout, logger.info))
-                t_err = threading.Thread(target=_stream_reader, args=(process.stderr, logger.error, stderr_lines))
-                t_out.start()
-                t_err.start()
-
-                # wait for process to finish
-                return_code = process.wait()
-                # ensure threads finished reading
-                t_out.join()
-                t_err.join()
-
-                if return_code != 0:
-                    err_text = '\n'.join(stderr_lines[-50:]) if stderr_lines else 'No stderr captured.'
-                    raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py (rc={return_code}): {err_text}")
-                else:
-                    logger.info("annotate_deg_with_uniprot.py finished successfully.")
-            except Exception as e:
-                logger.error(f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
-                raise HTTPException(status_code=500, detail=f"Erro ao executar annotate_deg_with_uniprot.py: {e}")
-        else:
-            logger.warning("annotate_deg_with_uniprot.py não encontrado para anotação.")
-
-        # Chamada do script de barplot isolado
-        if os.path.exists(deg_barplot_script):
-            await manager.broadcast("Gerando figuras")
-            try:
-                process = subprocess.Popen(
-                    ["python", deg_barplot_script, deg_xlsx, deg_dir],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                stdout, stderr = process.communicate()
-                logger.info(f"Saída do deg_barplot.py:\n{stdout}")
-                if stderr:
-                    logger.error(f"Erros do deg_barplot.py:\n{stderr}")
-                if process.returncode != 0:
-                    raise HTTPException(status_code=500, detail=f"Erro ao executar deg_barplot.py: {stderr}")
-            except Exception as e:
-                logger.error(f"Erro ao executar deg_barplot.py: {e}")
-                raise HTTPException(status_code=500, detail=f"Erro ao executar deg_barplot.py: {e}")
-        else:
-            logger.warning("deg_barplot.py não encontrado para geração de barplots.")
-
-    logger.info("DEG.xlsx gerado com sucesso.")
-    return {"message": "DEG finalizado com sucesso."}
+    job = create_job(
+        db,
+        stage="deg",
+        user_id=user_id,
+        payload={"contrast_ids": contrast_ids, "genome_accession": genome_accession},
+    )
+    audit(
+        db,
+        action="deg_enqueued",
+        user_id=user_id,
+        stage="deg",
+        job_id=job.id,
+        metadata_json={"contrast_ids": contrast_ids, "genome_accession": genome_accession},
+    )
+    enqueue_pipeline_job(job.id)
+    return {"job_id": job.id, "status": "PENDING", "message": "DEG job enqueued"}
 
 @router.get("/deg/sheets")
 async def get_deg_sheets(
@@ -206,7 +83,7 @@ async def get_deg_sheets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    user_id = request.query_params.get("user_id", current_user.id)
+    user_id = current_user.id
     deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
     deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
     if not os.path.exists(deg_xlsx):
@@ -226,8 +103,10 @@ async def get_deg_sheet_data(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    user_id = request.query_params.get("user_id", current_user.id)
+    user_id = current_user.id
     sheet_name = request.query_params.get("sheet")
+    page = max(1, int(request.query_params.get("page", "1")))
+    page_size = min(500, max(1, int(request.query_params.get("page_size", "100"))))
     logger.info(f"[DEG] Requisição para sheet_data: user_id={user_id}, sheet_name={sheet_name}")
     
     if not sheet_name:
@@ -241,27 +120,26 @@ async def get_deg_sheet_data(
         raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
     
     try:
-        # Usando pandas para ler o arquivo Excel
         df = pd.read_excel(deg_xlsx, sheet_name=sheet_name)
-        
-        # Verificar se o DataFrame está vazio
         if df.empty:
-            logger.info("[DEG] DataFrame vazio encontrado")
-            return {"columns": [], "rows": []}
-        
-        # Converter NaN para strings vazias
+            return {"columns": [], "rows": [], "page": page, "page_size": page_size, "total_rows": 0}
+
         df = df.fillna("")
-        
-        # Obter colunas e linhas
+
+        total_rows = len(df)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paged_df = df.iloc[start:end]
+
         columns = df.columns.tolist()
-        rows = df.values.tolist()
-        
-        logger.info(f"[DEG] Número de colunas: {len(columns)}")
-        logger.info(f"[DEG] Número de linhas: {len(rows)}")
-        
+        rows = paged_df.values.tolist()
+
         return JSONResponse(content={
             "columns": columns,
-            "rows": rows
+            "rows": rows,
+            "page": page,
+            "page_size": page_size,
+            "total_rows": total_rows,
         })
         
     except ValueError as e:

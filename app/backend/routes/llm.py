@@ -1,130 +1,128 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
+
+from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import User, SampleStage
-from ..utils import get_current_user
-from fastapi.responses import FileResponse, JSONResponse
-import os
-import logging
-from ..utils import SECRET_KEY, ALGORITHM
-from jose import JWTError, jwt
-from fastapi import Request
-from ..scripts import llm as llm_script
-from ..utils import manager
+from ..services.job_service import audit, create_job
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user, get_current_user_compat
+from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.get("/llm/contrasts")
-def list_llm_contrasts(user_id: int = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    uid = user_id or current_user.id
+def list_llm_contrasts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    uid = current_user.id
     # list SampleStage entries for stage_id=10
     stages = db.query(SampleStage).filter(SampleStage.user_id == int(uid), SampleStage.stage_id == 10).all()
     results = []
     for s in stages:
-        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(uid), "llm", s.name))
+        try:
+            safe_sheet = ensure_safe_component(s.name, "sheet")
+        except HTTPException:
+            continue
+        out_dir = safe_resolve_user_path(settings.users_root, uid, "llm", safe_sheet)
         files = []
-        if os.path.exists(out_dir):
-            files = [f for f in os.listdir(out_dir) if f.lower().endswith(('.md', '.json'))]
-        results.append({"sheet": s.name, "files": files})
+        if out_dir.exists():
+            files = [f.name for f in out_dir.iterdir() if f.is_file() and f.suffix.lower() in {".md", ".json"}]
+        results.append({"sheet": safe_sheet, "files": files})
     return {"contrasts": results}
 
 
 @router.get("/llm/file")
-def download_llm_file(file: str, sheet: str, user_id: int, token: str, db: Session = Depends(get_db)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = db.query(User).filter(User.username == username).first()
-    if user is None or user.id != int(user_id):
-        raise HTTPException(status_code=401, detail="User mismatch or not found")
-
-    file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "llm", sheet, file))
-    if not os.path.exists(file_path):
+def download_llm_file(
+    file: str,
+    sheet: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_compat),
+):
+    safe_sheet = ensure_safe_component(sheet, "sheet")
+    safe_file = ensure_safe_component(file, "file")
+    file_path = safe_resolve_user_path(settings.users_root, current_user.id, "llm", safe_sheet, safe_file)
+    if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    # determine media type
-    media_type = "text/markdown" if file.lower().endswith('.md') else "application/json"
-    return FileResponse(path=file_path, filename=os.path.basename(file_path), media_type=media_type)
+    media_type = "text/markdown" if safe_file.lower().endswith('.md') else "application/json"
+    headers = {}
+    if not request.headers.get("Authorization") and request.query_params.get("token"):
+        headers["X-Auth-Deprecated"] = "Use Authorization: Bearer <token>; query token support will be removed."
+    audit(
+        db,
+        action="llm_artifact_download",
+        user_id=current_user.id,
+        stage="llm",
+        metadata_json={"sheet": safe_sheet, "file": file_path.name},
+    )
+    return FileResponse(path=str(file_path), filename=file_path.name, media_type=media_type, headers=headers)
 
 
 @router.delete("/llm/{sheet}")
-def delete_llm_sheet(sheet: str, user_id: int, token: str, db: Session = Depends(get_db)):
+def delete_llm_sheet(sheet: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    safe_sheet = ensure_safe_component(sheet, "sheet")
+    out_dir = safe_resolve_user_path(settings.users_root, current_user.id, "llm", safe_sheet)
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = db.query(User).filter(User.username == username).first()
-    if user is None or user.id != int(user_id):
-        raise HTTPException(status_code=401, detail="User mismatch or not found")
-
-    out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "llm", sheet))
-    try:
-        if os.path.exists(out_dir):
-            for f in os.listdir(out_dir):
+        if out_dir.exists():
+            for f in out_dir.iterdir():
                 try:
-                    os.remove(os.path.join(out_dir, f))
+                    if f.is_file():
+                        f.unlink(missing_ok=True)
                 except Exception:
                     pass
             try:
-                os.rmdir(out_dir)
+                out_dir.rmdir()
             except Exception:
                 pass
     except Exception as ex:
         logger.warning(f"Erro ao excluir LLM files: {ex}")
 
     try:
-        ss = db.query(SampleStage).filter(SampleStage.user_id == int(user_id), SampleStage.stage_id == 10, SampleStage.name == sheet).first()
+        ss = db.query(SampleStage).filter(SampleStage.user_id == current_user.id, SampleStage.stage_id == 10, SampleStage.name == safe_sheet).first()
         if ss:
             db.delete(ss)
             db.commit()
     except Exception as ex:
         logger.warning(f"Erro ao remover SampleStage LLM: {ex}")
 
+    audit(
+        db,
+        action="llm_deleted",
+        user_id=current_user.id,
+        stage="llm",
+        metadata_json={"sheet": safe_sheet},
+    )
     return JSONResponse(content={"message": "LLM sheet deleted"})
 
 
-@router.post("/llm/run")
+@router.post("/llm/run", status_code=202)
 async def run_llm_route(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     data = await request.json()
-    user_id = data.get("user_id", current_user.id)
+    user_id = current_user.id
     sheets = data.get("sheets") or []
     if isinstance(sheets, str):
         sheets = [sheets]
+    sheets = [ensure_safe_component(str(s), "sheet") for s in sheets]
 
-    results = {}
     for sheet in sheets:
-        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "llm", sheet))
-        os.makedirs(out_dir, exist_ok=True)
-        try:
-            res = llm_script.run_llm(file_path=None, sheet_name=sheet, out_dir=out_dir, user_id=user_id)
-            results[sheet] = {"status": "done", "paths": res}
-            try:
-                existing = db.query(SampleStage).filter(SampleStage.user_id == int(user_id), SampleStage.stage_id == 10, SampleStage.name == sheet).first()
-                if not existing:
-                    ss = SampleStage(stage_id=10, name=sheet, sra_code=None, size="", status="Interpreted", user_id=int(user_id))
-                    db.add(ss)
-                    db.commit()
-            except Exception as ex:
-                logger.warning(f"Não foi possível criar SampleStage para LLM: {ex}")
-        except Exception as e:
-            logger.error(f"Erro ao executar LLM para sheet {sheet}: {e}")
-            results[sheet] = {"status": "error", "error": str(e)}
+        existing = db.query(SampleStage).filter(SampleStage.user_id == int(user_id), SampleStage.stage_id == 10, SampleStage.name == sheet).first()
+        if not existing:
+            db.add(SampleStage(stage_id=10, name=sheet, sra_code=None, size="", status="PENDING", user_id=int(user_id)))
+    db.commit()
 
-    # Notify via websocket that LLM finished
-    try:
-        await manager.broadcast("LLM completed")
-    except Exception:
-        pass
-
-    return JSONResponse(content={"results": results})
+    job = create_job(db, stage="llm", user_id=user_id, payload={"sheets": sheets})
+    audit(
+        db,
+        action="llm_enqueued",
+        user_id=user_id,
+        stage="llm",
+        job_id=job.id,
+        metadata_json={"sheets": sheets},
+    )
+    enqueue_pipeline_job(job.id)
+    return JSONResponse(content={"job_id": job.id, "status": "PENDING", "message": "LLM job enqueued"}, status_code=202)

@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.colors as mcolors
 import json
+from scipy import sparse
+from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min, silhouette_score
 from adjustText import adjust_text
 import re
@@ -54,41 +55,62 @@ def load_and_process_data(path, sheet_name=None):
 def vectorize_text(df):
     print(">>> [2/5] Vetorizando texto (TF-IDF)...")
     vectorizer = TfidfVectorizer(stop_words='english', min_df=3, max_features=300)
-    matrix = vectorizer.fit_transform(df['text']).toarray()
+    try:
+        matrix = vectorizer.fit_transform(df['text'])
+    except ValueError:
+        # Fallback for very small datasets where min_df=3 is too restrictive
+        vectorizer = TfidfVectorizer(stop_words='english', min_df=1, max_features=300)
+        matrix = vectorizer.fit_transform(df['text'])
     return matrix, vectorizer
+
+
+def _build_kmeans(k: int, sample_count: int):
+    if sample_count > 2000:
+        return MiniBatchKMeans(n_clusters=k, random_state=SEED, batch_size=512, n_init="auto")
+    return KMeans(n_clusters=k, init='k-means++', random_state=SEED, n_init=20)
 
 
 def find_optimal_k(coords, img_metrics_path):
     print(">>> [3/5] Buscando número ideal de clusters (K)...")
     inertias = []
     silhouettes = []
+    sample_count = coords.shape[0]
+    k_max = max(2, min(20, sample_count - 1))
+    k_values = list(range(2, k_max + 1))
+    if len(k_values) < 2:
+        return 2
 
-    for k in K_RANGE:
-        km = KMeans(n_clusters=k, init='k-means++', random_state=SEED, n_init=100)
+    for k in k_values:
+        km = _build_kmeans(k, sample_count)
         labels = km.fit_predict(coords)
 
         inertias.append(km.inertia_)
-        silhouettes.append(silhouette_score(coords, labels))
+        if sample_count > 5000:
+            rng = np.random.default_rng(SEED)
+            sample_idx = rng.choice(sample_count, size=5000, replace=False)
+            silhouettes.append(silhouette_score(coords[sample_idx], labels[sample_idx]))
+        else:
+            silhouettes.append(silhouette_score(coords, labels))
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-    ax1.plot(K_RANGE, inertias, 'bo-', markersize=8)
+    ax1.plot(k_values, inertias, 'bo-', markersize=8)
     ax1.set_title('Elbow Method')
     ax1.set_xlabel('Clusters number (K)')
-    ax1.set_xticks(K_RANGE)
+    ax1.set_xticks(k_values)
     ax1.grid(True)
 
-    ax2.plot(K_RANGE, silhouettes, 'go-', markersize=8)
+    ax2.plot(k_values, silhouettes, 'go-', markersize=8)
     ax2.set_title('Silhouette Score')
     ax2.set_xlabel('Clusters number (K)')
-    ax2.set_xticks(K_RANGE)
+    ax2.set_xticks(k_values)
     ax2.grid(True)
 
     plt.tight_layout()
     plt.savefig(img_metrics_path, dpi=300)
     print(f"    -> Gráfico de métricas salvo: {img_metrics_path}")
 
-    best_k = K_RANGE[np.argmax(silhouettes)]
+    best_k = k_values[int(np.argmax(silhouettes))]
     print(f"    -> Melhor K encontrado: {best_k} (Score: {max(silhouettes):.3f})")
 
     return best_k
@@ -97,18 +119,28 @@ def find_optimal_k(coords, img_metrics_path):
 def analyze_clusters(df, matrix, vectorizer, reps):
     print(f"\n{' ANÁLISE DE CONTEÚDO ':*^50}")
 
-    term_df = pd.DataFrame(matrix, columns=vectorizer.get_feature_names_out())
-    term_df['cluster'] = df['cluster'].values
-    means = term_df.groupby('cluster').mean()
+    features = vectorizer.get_feature_names_out()
+    labels = df['cluster'].to_numpy()
+    cluster_ids = sorted(df['cluster'].unique())
 
-    for c_id in sorted(means.index):
-        top_terms = means.loc[c_id].nlargest(10)
-        terms_str = ", ".join([f"{t}" for t, _ in top_terms.items()])
+    for c_id in cluster_ids:
+        idx = np.where(labels == c_id)[0]
+        if idx.size == 0:
+            continue
 
-        rep_name = reps.iloc[c_id][COL_ID]
+        if sparse.issparse(matrix):
+            centroid = np.asarray(matrix[idx].mean(axis=0)).ravel()
+        else:
+            centroid = matrix[idx].mean(axis=0)
+
+        top_idx = np.argsort(centroid)[::-1][:10]
+        top_terms = [features[i] for i in top_idx if centroid[i] > 0]
+
+        rep_rows = reps[reps['cluster'] == c_id]
+        rep_name = rep_rows.iloc[0][COL_ID] if not rep_rows.empty else "N/A"
 
         print(f"Cluster {c_id} | Rep: {rep_name}")
-        print(f"   Termos: {terms_str}\n")
+        print(f"   Termos: {', '.join(top_terms)}\n")
     print("*"*50)
 
 
@@ -175,6 +207,8 @@ def plot_final_map(df, reps, score, k, img_final_path):
 
 def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', img_metrics_path='Otimizacao_K.png', clusters_json_path=None):
     df = load_and_process_data(file_path, sheet_name=sheet_name)
+    if df.shape[0] < 3:
+        raise ValueError("Dados insuficientes para clustering (mínimo 3 linhas válidas).")
     matrix, vec = vectorize_text(df)
 
     print(">>> [3/5] Projetando dados (UMAP)...")
@@ -185,7 +219,7 @@ def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', i
     best_k = find_optimal_k(coords, img_metrics_path)
 
     print(f">>> [4/5] Aplicando KMeans (K={best_k})...")
-    kmeans = KMeans(n_clusters=best_k, init='k-means++', random_state=SEED, n_init=100)
+    kmeans = _build_kmeans(best_k, coords.shape[0])
     labels = kmeans.fit_predict(coords)
 
     df['cluster'] = labels

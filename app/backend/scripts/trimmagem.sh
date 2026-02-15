@@ -127,8 +127,4 @@ else
     echo "Trimmagem failed with exit code $exit_code" >> "$log_file"
 fi
 
-# Print the log file content for debugging
-echo "----- log output -----" >> "$log_file"
-cat "$log_file" >> "$log_file" 2>&1 || true
-
 exit $exit_code

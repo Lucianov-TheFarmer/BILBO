@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
-from sqlalchemy.orm import Session
-from pydantic import BaseModel  # Import BaseModel
-from ..db.database import get_db
-from ..db.models import SampleStage, User, Stage  # Substitua 'Sample' por 'SampleStage'
-from ..utils import get_current_user, manager  # Atualizado
-import subprocess
-import os
 import logging
-import asyncio
+import shutil
+
+from fastapi import APIRouter, Depends, Form, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
+from ..core.settings import settings
+from ..db.database import get_db
+from ..db.models import SampleStage, User
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user, manager
+from ..utils_paths import safe_resolve_user_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,9 +21,10 @@ router = APIRouter()
 class QualityAnalysisRequest(BaseModel):
     samples: list[str]
 
-@router.post("/quality_analysis/")  # Iniciar análise de qualidade
+@router.post("/quality_analysis/", status_code=status.HTTP_202_ACCEPTED)  # Iniciar análise de qualidade
 def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user_id = current_user.id
+    to_process: list[str] = []
     for name in request.samples:  # Usar 'name' em vez de 'sra_code'
         # Garantir que o 'name' seja o nome completo da amostra (ex.: SRR31951083_1.fastq ou SRR31951083_2.fastq)
         db_sample_stage = db.query(SampleStage).filter(
@@ -31,51 +36,50 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
 
-        # Determinar o sufixo (_1 ou _2) com base no nome da amostra
         suffix = "_1" if "_1.fastq" in name else "_2"
 
-        # Criar um novo estágio para análise de qualidade (stage_id=2)
-        new_sample_stage = SampleStage(
-            stage_id=2,  # ID do estágio de análise de qualidade
-            name=f"{db_sample_stage.sra_code}{suffix}.html",  # Nome do arquivo de saída com sufixo
-            sra_code=db_sample_stage.sra_code,  # Usar apenas o basename
-            size=None,  # O tamanho permanece como NULL
-            status="In Progress",  # Status inicial
-            user_id=user_id,  # Associar ao usuário atual
-        )
-        db.add(new_sample_stage)
-        db.commit()
-
-        # Executar o script de análise de qualidade em background (não bloquear a rota)
-        command = f"bash /app/backend/scripts/quality_analysis.sh {name} {user_id}"
-        try:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
+        output_name = f"{db_sample_stage.sra_code}{suffix}.html"
+        exists = db.query(SampleStage).filter(
+            SampleStage.name == output_name,
+            SampleStage.stage_id == 2,
+            SampleStage.user_id == user_id,
+        ).first()
+        if not exists:
+            db.add(
+                SampleStage(
+                    stage_id=2,
+                    name=output_name,
+                    sra_code=db_sample_stage.sra_code,
+                    size=None,
+                    status="RUNNING",
+                    user_id=user_id,
+                )
             )
-            logger.info(f"Launched quality analysis (PID={process.pid}) for {name}")
-        except Exception as e:
-            logger.error(f"Failed to launch quality analysis for {name}: {e}")
-            new_sample_stage.status = "Failed"
-            db.commit()
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error launching quality analysis for {name}: {e}")
+        else:
+            exists.status = "RUNNING"
+            db.add(exists)
+        to_process.append(name)
 
-        # Optionally notify frontend that analysis started
-        try:
-            asyncio.run(manager.broadcast(f"Análise de qualidade iniciada para {name}"))
-        except Exception as e:
-            logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
+    db.commit()
 
-    return {"message": "Quality analysis started successfully"}
+    job = create_job(db, stage="quality_analysis", user_id=user_id, payload={"samples": to_process})
+    audit(
+        db,
+        action="quality_analysis_enqueued",
+        user_id=user_id,
+        stage="quality_analysis",
+        job_id=job.id,
+        metadata_json={"samples": to_process},
+    )
+    enqueue_pipeline_job(job.id)
+    return {"job_id": job.id, "status": "PENDING", "message": "Quality analysis job enqueued"}
         
 @router.post("/quality_analysis/update_status")
 async def update_quality_analysis_status(
     sra_code: str = Form(...),
     status: str = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     # Atualize apenas o registro correto, sem sobrescrever o nome
     updated = False
@@ -83,17 +87,18 @@ async def update_quality_analysis_status(
         name = f"{sra_code}{suffix}.html"
         db_sample_stage = db.query(SampleStage).filter(
             SampleStage.name == name,
-            SampleStage.stage_id == 2
+            SampleStage.stage_id == 2,
+            SampleStage.user_id == current_user.id,
         ).first()
         if db_sample_stage:
-            db_sample_stage.status = status
+            db_sample_stage.status = normalize_status(status)
             db.commit()
             updated = True
     if not updated:
         raise HTTPException(status_code=404, detail="Sample not found")
     # Notify frontend via WebSocket about the status change
     try:
-        await manager.broadcast(f"Quality analysis {sra_code} status: {status}")
+        await manager.broadcast(f"Quality analysis {sra_code} status: {status}", user_id=current_user.id)
     except Exception as e:
         logger.warning(f"Failed to broadcast quality analysis status: {e}")
 
@@ -136,12 +141,13 @@ def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), cur
     db.delete(db_sample_stage)
     db.commit()
 
-    # Excluir o diretório de resultados de análise de qualidade
-    user_id = current_user.id
-    output_dir = f"../users/{user_id}/QC/{name}"
-    output_dir = output_dir.replace(".html", ".fastq")
-    logger.info(f"Deleting output directory: {output_dir}")
-    if os.path.exists(output_dir):
-        subprocess.run(["rm", "-rf", output_dir])
+    output_dir = safe_resolve_user_path(
+        settings.users_root,
+        current_user.id,
+        "QC",
+        name.replace(".html", ".fastq"),
+    )
+    if output_dir.exists():
+        shutil.rmtree(output_dir, ignore_errors=True)
 
     return {"message": f"Quality analysis result {name} deleted successfully"}

@@ -538,7 +538,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     async def connect_websocket():
-        async with websockets.connect("ws://bioinfo-container:8000/ws") as websocket:
+        async with websockets.connect(f"ws://bioinfo-container:8000/ws?token={token}") as websocket:
             while True:
                 message = await websocket.recv()
                 await log_message(page, message, container_terminal=container_terminal)

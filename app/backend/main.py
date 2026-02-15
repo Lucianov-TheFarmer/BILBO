@@ -1,41 +1,55 @@
-import os
-import ollama
-from pydantic import BaseModel
-from fastapi import HTTPException
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-import flet as ft
+import asyncio
 import logging
-from .utils import manager
-from .db.database import engine
-from .db.models import Base
-from .routes import auth, samples, quality_analysis, trimmagem, quality_analysis_post_trim, alignment, quantification, contrasts, preprocess, deg, results, upload
+import os
+from typing import Optional
 
-logging.basicConfig(level=logging.INFO)
+import flet as ft
+import ollama
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from .core.settings import settings
+from .db.database import SessionLocal, engine
+from .db.models import Base, PipelineJob, User
+from .routes import (
+    alignment,
+    auth,
+    contrasts,
+    deg,
+    preprocess,
+    quality_analysis,
+    quality_analysis_post_trim,
+    quantification,
+    results,
+    samples,
+    trimmagem,
+    upload,
+)
+from .routes import clustering as clustering_route
+from .routes import jobs as jobs_route
+from .routes import llm as llm_route
+from .utils import decode_token_user, get_current_user, manager
+
+
+logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger(__name__)
 
-print("Creating FastAPI app")
+app = FastAPI(title=settings.app_name)
 
-app = FastAPI()
-
-
-ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 ollama_client = None
-
 try:
-    ollama_client = ollama.Client(host=ollama_host)
-    print(f"A tentar conectar ao Ollama em {ollama_host}...")
-
+    ollama_client = ollama.Client(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     ollama_client.list()
-    print(f"Conexão com Ollama em {ollama_host} bem-sucedida.")
-except Exception as e:
-    print(f"Erro ao conectar com Ollama em {ollama_host}: {e}")
-    print("Ollama não estará disponível. Verifique se o serviço está a correr.")
+    logger.info("Connected to Ollama")
+except Exception as e:  # noqa: BLE001
+    logger.warning("Ollama unavailable: %s", e)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -52,74 +66,101 @@ app.include_router(preprocess.router, tags=["preprocess"])
 app.include_router(deg.router, tags=["deg"])
 app.include_router(results.router, tags=["results"])
 app.include_router(upload.router, tags=["upload"])
-from .routes import clustering as clustering_route
 app.include_router(clustering_route.router, tags=["clustering"])
-from .routes import llm as llm_route
 app.include_router(llm_route.router, tags=["llm"])
+app.include_router(jobs_route.router, tags=["jobs"])
 
 
 class ChatRequest(BaseModel):
     message: str
-    model: str = 'gwen3:0.6b'
+    model: str = settings.llm_primary_model
+
+
+@app.get("/health/live")
+def health_live():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def health_ready():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Database not ready: {e}")
+    return {"status": "ready"}
+
+
+@app.get("/metrics/basic")
+def metrics_basic():
+    db = SessionLocal()
+    try:
+        total_jobs = db.query(PipelineJob).count()
+        by_status = {}
+        for status_name in ["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELED"]:
+            by_status[status_name] = db.query(PipelineJob).filter(PipelineJob.status == status_name).count()
+        return {"jobs_total": total_jobs, "jobs_by_status": by_status}
+    finally:
+        db.close()
 
 
 SYSTEM_PROMPT = """
-Você é o 'Bilbo-AI', o assistente inteligente integrado na plataforma de bioinformática 'Bilbo'.
-A sua persona é a de um Professor Sénior de Bioinformática e Microbiologia: paciente, extremamente técnico, mas com uma didática impecável.
-
-**CONTEXTO DA APLICAÇÃO BILBO:**
-Você opera dentro de um pipeline de RNA-Seq automatizado. Você DEVE saber que o Bilbo utiliza as seguintes ferramentas padrão:
-1.  **Obtenção de Dados:** SRA Toolkit (fastq-dump) para baixar amostras do NCBI.
-2.  **Controle de Qualidade (QC):** FastQC para análise inicial.
-3.  **Trimmagem:** Trimmomatic para remover adaptadores e bases de baixa qualidade.
-4.  **Alinhamento:** STAR (Spliced Transcripts Alignment to a Reference) para alinhar reads ao genoma.
-5.  **Quantificação:** featureCounts (Subread) para contagem de genes.
-6.  **Expressão Diferencial:** R (Bioconductor) usando DESeq2 e edgeR.
-7.  **Visualização:** Heatmaps (ComplexHeatmap), Volcano Plots e Diagramas de Venn.
-
-**SUA MISSÃO:**
-1.  **Microbiologia e Molécula:** Explique fenómenos biológicos (ex: transcrição, regulação génica em bactérias/eucariotos) quando o utilizador tiver dúvidas teóricas.
-2.  **Suporte Técnico:** Ajude a interpretar erros comuns dessas ferramentas específicas (ex: "Exit code 137 no STAR" geralmente é falta de RAM).
-3.  **Interpretação de Resultados:** Ajude o utilizador a entender o que significa um "Phred Score" baixo ou um "P-value ajustado" (FDR).
-
-**REGRAS DE RESPOSTA:**
-* **Idioma:** Sempre em Português do Brasil.
-* **Didática:** Explique o "Porquê" antes do "Como". Use analogias do mundo real para explicar conceitos abstratos de bioinformática.
-* **Formatação:** Use Markdown agressivamente. Destaque **ferramentas** e `comandos` ou `código`. Use listas para passo-a-passo.
-* **Código:** Se o utilizador pedir scripts, dê preferência a Python (para automação) ou R (para estatística), alinhado com a stack do Bilbo.
-* **Proatividade:** Se o utilizador perguntar "Como faço alinhamento?", não explique apenas o conceito; explique como o STAR funciona e por que ele é bom para RNA-Seq.
+Você é o Bilbo-AI, assistente de bioinformática do pipeline RNA-seq da plataforma BILBO.
+Responda sempre em Português (Brasil), com foco técnico, claro e didático.
 """
 
 
 @app.post("/chat", tags=["ollama"])
-async def handle_chat(request: ChatRequest):
+async def handle_chat(request: ChatRequest, _current_user: User = Depends(get_current_user)):
     if ollama_client is None:
-        logger.error("Tentativa de chat, mas o cliente Ollama não está inicializado.")
         raise HTTPException(status_code=503, detail="Serviço Ollama não está disponível.")
 
-    try:
-        print(f"A enviar para o Ollama (modelo {request.model}): {request.message}")
-        messages_list = [
-            {'role': 'system', 'content': SYSTEM_PROMPT},
-            {'role': 'user', 'content': request.message}
-        ]
+    models = [request.model] + [m for m in settings.llm_fallback_models if m != request.model]
+    last_error = None
+    for model in models:
+        try:
+            response = ollama_client.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": request.message},
+                ],
+            )
+            payload = response["message"]
+            payload["model"] = model
+            return payload
+        except Exception as e:  # noqa: BLE001
+            last_error = str(e)
+            continue
 
-        response = ollama_client.chat(
-            model=request.model,
-            messages=messages_list
-        )
+    raise HTTPException(status_code=500, detail=f"Erro ao comunicar com Ollama: {last_error}")
 
-        # 5. Retornar a resposta
-        print("Resposta recebida do Ollama.")
-        return response['message']
-
-    except Exception as e:
-        logger.error(f"Erro ao comunicar com Ollama: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro interno ao processar pedido: {e}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    token = websocket.query_params.get("token", "").strip()
+    auth_header = websocket.headers.get("Authorization", "")
+    if not token and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+    if not token:
+        await websocket.close(code=1008)
+        return
+
+    db = SessionLocal()
+    try:
+        username = decode_token_user(token)
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            await websocket.close(code=1008)
+            return
+        await manager.connect(websocket, user.id)
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    finally:
+        db.close()
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -127,19 +168,44 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-print("Registered routes before mounting Flet:", app.routes)
 
-print("Mounting Flet app")
-from frontend import main
+from frontend import main  # noqa: E402
 
 flet_asgi_app = ft.app(main.main, export_asgi_app=True, assets_dir="assets")
 app.mount("/frontend", flet_asgi_app)
 
-print("Registered routes after mounting Flet:", app.routes)
 
-Base.metadata.create_all(bind=engine)
+@app.on_event("startup")
+async def bootstrap_database() -> None:
+    last_error: Optional[Exception] = None
+    max_attempts = max(1, settings.db_startup_max_attempts)
+    retry_seconds = max(0.1, settings.db_startup_retry_seconds)
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database bootstrap completed (%s/%s).", attempt, max_attempts)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning(
+                "Database bootstrap attempt %s/%s failed: %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(retry_seconds)
+
+    raise RuntimeError(
+        "Database bootstrap failed after "
+        f"{max_attempts} attempts. Check DATABASE_URL/POSTGRES_* in .env and PostgreSQL readiness. "
+        f"Last error: {last_error}"
+    )
 
 if __name__ == "__main__":
-    print("Starting Uvicorn server")
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
