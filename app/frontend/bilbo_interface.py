@@ -218,7 +218,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ft.DataTable(
                     heading_row_color="primary",
                     data_row_color="surface",
-                    border=ft.border.all(0.5,"#000000"),
+                    border=ft.border.all(0.5, "outline"),
                     columns=[
                         ft.DataColumn(ft.Text("Stage", weight=ft.FontWeight.BOLD)),
                         ft.DataColumn(ft.Text("Qty", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),

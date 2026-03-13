@@ -6,7 +6,21 @@ from frontend.procedures.translations import t
 
 async def main(page: ft.Page):
     page.title = "Bionformatics and RNA-Seq Lab Online"
+    page.dark_theme = ft.Theme(
+        color_scheme=ft.ColorScheme(
+            primary="#3C5E86",
+            on_primary="#F3F7FC",
+            secondary="#9CB2CC",
+            on_secondary="#0E1726",
+            background="#0C1320",
+            on_background="#E6EEF8",
+            surface="#111B2A",
+            on_surface="#E6EEF8",
+            outline="#314357",
+        )
+    )
     page.theme_mode = "light"
+    page.bgcolor = "background"
 
     page.snack_bar = ft.SnackBar(content=ft.Text(""), open=False)
     page.overlay.append(page.snack_bar)

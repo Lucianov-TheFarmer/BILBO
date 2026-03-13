@@ -9,7 +9,7 @@ def create_table(columns, rows=None, toggle_select_all_handler=None, expand=True
     table = ft.DataTable(
         heading_row_color="primary",
         data_row_color="surface",
-        border=ft.border.all(0.5, "#000000"),
+        border=ft.border.all(0.5, "outline"),
         column_spacing=20,
         divider_thickness=0.5,
         columns=cols,
