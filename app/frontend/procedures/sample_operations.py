@@ -147,6 +147,18 @@ async def make_request(method, url, headers=None, json=None, params=None):
         logger.error(f"An error occurred: {e}")
         raise
 
+
+def _get_terminal_listview(page):
+    container_terminal = getattr(page, "container_terminal", None)
+    if container_terminal is None:
+        return None
+    if isinstance(container_terminal, ft.ListView):
+        return container_terminal
+    content = getattr(container_terminal, "content", None)
+    if isinstance(content, ft.ListView):
+        return content
+    return None
+
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -296,10 +308,70 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         sample_name = body.get("sample_name", "Unknown")
                         job_id = body.get("job_id")
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
+
+                        terminal_listview = _get_terminal_listview(page)
+                        progress_bar = ft.ProgressBar(value=0, width=260, color="green")
+                        progress_title = ft.Text(f"Download {sample_name}: 0%")
+                        progress_detail = ft.Text("Aguardando início do download...", size=11, color="black54")
+                        progress_container = ft.Container(
+                            border=ft.border.all(1, "black12"),
+                            border_radius=8,
+                            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                            content=ft.Column(
+                                spacing=4,
+                                controls=[progress_title, progress_bar, progress_detail],
+                            ),
+                        )
+                        progress_visible = terminal_listview is not None
+                        if progress_visible:
+                            terminal_listview.controls.append(progress_container)
+
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
+
+                        async def update_download_progress(job_payload):
+                            if not progress_visible:
+                                return
+
+                            status = str(job_payload.get("status") or "")
+                            result_payload = job_payload.get("result") or {}
+                            progress_percent = result_payload.get("progress_percent")
+                            progress_message = str(result_payload.get("progress_message") or "").strip()
+                            error_message = str(job_payload.get("error_message") or "").strip()
+
+                            try:
+                                percent = float(progress_percent)
+                            except (TypeError, ValueError):
+                                percent = (progress_bar.value or 0.0) * 100.0
+
+                            percent = max(0.0, min(percent, 100.0))
+                            if status == "RUNNING" and percent >= 100.0:
+                                percent = 99.0
+
+                            if status == "COMPLETED":
+                                percent = 100.0
+                                progress_bar.color = "green"
+                            elif status in {"FAILED", "CANCELED"}:
+                                progress_bar.color = "red"
+
+                            progress_bar.value = percent / 100.0
+                            progress_title.value = f"Download {sample_name}: {percent:.1f}%"
+
+                            if progress_message:
+                                progress_detail.value = progress_message
+                            elif status == "RUNNING":
+                                progress_detail.value = "Baixando..."
+                            elif status == "COMPLETED":
+                                progress_detail.value = "Download concluído."
+                            elif status == "FAILED":
+                                progress_detail.value = error_message or "Download falhou."
+                            elif status == "CANCELED":
+                                progress_detail.value = "Download cancelado."
+
+                            page.update()
+
                         if job_id:
-                            result = await wait_for_job(token, job_id)
+                            result = await wait_for_job(token, job_id, on_update=update_download_progress)
                             final_status = result.get("status")
                             await log_message(page, f"Download da amostra {sample_name} finalizado com status {final_status}.")
                             if final_status == "COMPLETED":

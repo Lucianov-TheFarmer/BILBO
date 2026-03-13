@@ -51,7 +51,7 @@ class Settings:
     db_startup_retry_seconds: float = float(os.getenv("DB_STARTUP_RETRY_SECONDS", "2"))
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "cors_origins", _list("CORS_ORIGINS", ["http://localhost:8000", "http://127.0.0.1:8000"]))
+        object.__setattr__(self, "cors_origins", _list("CORS_ORIGINS", ["http://localhost:8000", "http://127.0.0.1:8000", "null"]))
         object.__setattr__(self, "llm_fallback_models", _list("LLM_FALLBACK_MODELS", ["qwen3:8b", "qwen3:0.6b"]))
 
         db_url = (self.database_url or "").strip()

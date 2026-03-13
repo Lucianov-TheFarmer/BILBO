@@ -37,7 +37,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         page.session.set("lang", new_lang)
         page.controls.clear()
         await show_bilbo_interface(page, logout, username, token, user_id)
-        await page.update_async()
+        page.update()
 
     async def set_pt(e): await change_language("pt")
     async def set_en(e): await change_language("en")

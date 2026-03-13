@@ -1,81 +1,200 @@
 #!/bin/bash
 
-sample_name=$1
-user_id=$2
-feature_type=$3
-id_attribute=$4
-alignment_dir="/users/${user_id}/alignment/${sample_name%.bam}"
-# Optional 5th parameter: genome accession or absolute/relative path to ref_genome dir
-genome_param="$5"
+set -euo pipefail
 
-# log and output (defined early so detection errors can be logged)
+if [ "$#" -lt 4 ]; then
+    echo "Usage: $0 <sample_name.bam> <user_id> <feature_type> <id_attribute> [genome_param]" >&2
+    exit 1
+fi
+
+sample_name="$1"
+user_id="$2"
+feature_type="$3"
+id_attribute="$4"
+genome_param="${5:-}"
+
+alignment_dir="/users/${user_id}/alignment/${sample_name%.bam}"
 output_dir="/users/${user_id}/quantification"
 log_file="/tmp/${sample_name}_quantification.log"
+ref_parent="/users/ref_genomes"
 
-# Determine reference genome directory
-if [ -n "$genome_param" ]; then
-    if [ -d "$genome_param" ]; then
-        ref_genome_dir="$genome_param"
-    else
-        ref_genome_dir="/users/ref_genomes/${genome_param}"
+mkdir -p "$output_dir"
+: > "$log_file"
+
+log() {
+    echo "$1" >> "$log_file"
+}
+
+log_err() {
+    echo "$1" | tee -a "$log_file" >&2
+}
+
+resolve_bin() {
+    local name="$1"
+    shift
+
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
     fi
-else
-    REF_PARENT="/users/ref_genomes"
-    if [ -d "$REF_PARENT" ]; then
-        # find candidate dirs containing genomic.gff or genomic.gtf
-        candidates=()
-        while IFS= read -r -d $'\0' dir; do
-            candidates+=("$dir")
-        done < <(find "$REF_PARENT" -maxdepth 2 -type f \( -name "genomic.gff" -o -name "genomic.gtf" \) -printf "%h\0" | sort -uz)
 
-        if [ ${#candidates[@]} -eq 1 ]; then
-            ref_genome_dir="${candidates[0]}"
-        else
-            echo "Erro: não foi possível determinar automaticamente o ref_genome. Passe o accession ou caminho como 5º parâmetro." >> "$log_file"
-            exit 1
+    for candidate in "$@"; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
         fi
+    done
+
+    return 1
+}
+
+resolve_ref_genome_dir() {
+    local param="$1"
+
+    if [ -n "$param" ]; then
+        if [ -d "$param" ]; then
+            echo "$param"
+            return 0
+        fi
+
+        if [ -d "/users/ref_genomes/$param" ]; then
+            echo "/users/ref_genomes/$param"
+            return 0
+        fi
+    fi
+
+    if [ ! -d "$ref_parent" ]; then
+        return 1
+    fi
+
+    mapfile -d '' candidates < <(find "$ref_parent" -maxdepth 2 -type f \
+        \( -name "genomic.gff" -o -name "genomic.gff3" -o -name "genomic.gtf" \) \
+        -printf "%h\0" | sort -zu)
+
+    if [ "${#candidates[@]}" -eq 1 ]; then
+        echo "${candidates[0]}"
+        return 0
+    fi
+
+    return 1
+}
+
+resolve_annotation_file() {
+    local dir="$1"
+    for candidate in "genomic.gff" "genomic.gff3" "genomic.gtf"; do
+        if [ -f "$dir/$candidate" ]; then
+            echo "$dir/$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+attribute_exists_for_feature() {
+    local gff="$1"
+    local feature="$2"
+    local attr="$3"
+
+    awk -F '\t' -v ft="$feature" -v target="$attr" '
+        $0 !~ /^#/ && $3 == ft {
+            n = split($9, parts, ";")
+            for (i = 1; i <= n; i++) {
+                p = parts[i]
+                gsub(/^[ \t]+|[ \t]+$/, "", p)
+                key = p
+                sub(/[= ].*$/, "", key)
+                if (key == target) {
+                    found = 1
+                    exit
+                }
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$gff"
+}
+
+detect_fallback_attribute() {
+    local gff="$1"
+    local feature="$2"
+
+    local keys
+    keys="$(awk -F '\t' -v ft="$feature" '
+        $0 !~ /^#/ && $3 == ft {
+            n = split($9, parts, ";")
+            for (i = 1; i <= n; i++) {
+                p = parts[i]
+                gsub(/^[ \t]+|[ \t]+$/, "", p)
+                key = p
+                sub(/[= ].*$/, "", key)
+                if (key != "") print key
+            }
+            exit
+        }
+    ' "$gff" | awk '!seen[$0]++')"
+
+    if [ -z "$keys" ]; then
+        return 1
+    fi
+
+    local preferred
+    for preferred in ID gene_id locus_tag Name Parent transcript_id; do
+        if echo "$keys" | grep -Fxq "$preferred"; then
+            echo "$preferred"
+            return 0
+        fi
+    done
+
+    echo "$keys" | head -n 1
+}
+
+input_file="${alignment_dir}/${sample_name}"
+output_file="${output_dir}/${sample_name%.bam}.txt"
+
+HTSEQ_BIN="$(resolve_bin htseq-count "/opt/conda/envs/bioinfo/bin/htseq-count" "/opt/conda/bin/htseq-count")" || {
+    log_err "Error: htseq-count command not found."
+    exit 1
+}
+
+log "Starting quantification for sample ${sample_name} (user ${user_id})"
+log "Requested feature_type=${feature_type} id_attribute=${id_attribute} genome_param=${genome_param}"
+
+if [ ! -f "$input_file" ]; then
+    log_err "Error: input BAM not found: $input_file"
+    exit 1
+fi
+
+ref_genome_dir="$(resolve_ref_genome_dir "$genome_param" || true)"
+if [ -z "$ref_genome_dir" ]; then
+    log_err "Error: could not resolve reference genome directory. Check selected_genome and /users/ref_genomes."
+    exit 1
+fi
+
+annotation_file="$(resolve_annotation_file "$ref_genome_dir" || true)"
+if [ -z "$annotation_file" ]; then
+    log_err "Error: annotation file not found in $ref_genome_dir (expected genomic.gff, genomic.gff3 or genomic.gtf)."
+    exit 1
+fi
+
+if ! attribute_exists_for_feature "$annotation_file" "$feature_type" "$id_attribute"; then
+    fallback_attr="$(detect_fallback_attribute "$annotation_file" "$feature_type" || true)"
+    if [ -n "$fallback_attr" ]; then
+        log "Warning: attribute '$id_attribute' not found for feature '$feature_type'. Falling back to '$fallback_attr'."
+        id_attribute="$fallback_attr"
     else
-        echo "Erro: diretório /users/ref_genomes não existe." >> "$log_file"
+        log_err "Error: no valid attribute found for feature '$feature_type' in $annotation_file."
         exit 1
     fi
 fi
 
-# Criar o diretório de saída, se não existir
-mkdir -p "$output_dir"
+log "Using reference directory: $ref_genome_dir"
+log "Using annotation file: $annotation_file"
+log "Using htseq-count binary: $HTSEQ_BIN"
+log "Running: $HTSEQ_BIN -a 10 -t $feature_type -i $id_attribute -f bam --stranded=no $input_file $annotation_file"
 
-# Caminho do arquivo de entrada e saída
-input_file="${alignment_dir}/${sample_name}"
-output_file="${output_dir}/${sample_name%.bam}.txt"
-# Prefer genomic.gff, fallback to genomic.gtf
-if [ -f "${ref_genome_dir}/genomic.gff" ]; then
-    gff_file="${ref_genome_dir}/genomic.gff"
-elif [ -f "${ref_genome_dir}/genomic.gtf" ]; then
-    gff_file="${ref_genome_dir}/genomic.gtf"
+if "$HTSEQ_BIN" -a 10 -t "$feature_type" -i "$id_attribute" -f bam --stranded=no "$input_file" "$annotation_file" > "$output_file" 2>> "$log_file"; then
+    log "Quantification completed for $sample_name"
 else
-    gff_file=""
-fi
-
-# Emitir log de início
-echo "Iniciando quantificação para a amostra $sample_name do usuário $user_id" >> "$log_file"
-
-# Verificar se os arquivos de entrada existem
-if [ ! -f "$input_file" ]; then
-    echo "Erro: Arquivo de entrada $input_file não encontrado." >> "$log_file"
-    exit 1
-fi
-
-if [ -z "$gff_file" ] || [ ! -f "$gff_file" ]; then
-    echo "Erro: Arquivo GFF/GTF não encontrado em ${ref_genome_dir}." >> "$log_file"
-    exit 1
-fi
-
-# Executar htseq-count
-htseq-count -a 10 -t "$feature_type" -i "$id_attribute" -f bam --stranded=no "$input_file" "$gff_file" > "$output_file" 2>> "$log_file"
-
-# Verificar se o htseq-count foi executado com sucesso
-if [ $? -eq 0 ]; then
-    echo "Quantificação concluída para $sample_name" >> "$log_file"
-else
-    echo "Erro ao executar htseq-count para $sample_name. Verifique os parâmetros fornecidos." >> "$log_file"
+    log_err "Error: htseq-count failed for $sample_name. Showing last log lines:"
+    tail -n 40 "$log_file" >&2 || true
     exit 1
 fi

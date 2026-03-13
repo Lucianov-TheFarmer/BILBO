@@ -9,12 +9,10 @@ from ..utils_paths import ensure_safe_component
 import subprocess
 import os
 import logging
-import time
 import json
 import shutil
 from pydantic import BaseModel, Field
 from typing import Optional
-import asyncio
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -34,6 +32,19 @@ def calculate_directory_size(directory: str) -> str:
         for filename in filenames
     )
     return f"{size_in_bytes / (1024 * 1024):.2f} MB"
+
+
+def tail_text_file(path: str, max_chars: int = 2000) -> str:
+    """Read the last chunk of a text log file safely."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 16384), os.SEEK_SET)
+            data = handle.read().decode("utf-8", errors="replace")
+        return data[-max_chars:].strip()
+    except Exception:
+        return ""
 
 # ----------------------------------------
 # Pydantic Models
@@ -327,24 +338,41 @@ def download_genome(
 ):
     """Download a genome and prepare it for indexing."""
     try:
-        script_path = "/app/backend/scripts/download_genome.sh"
-        download_command = ["bash", script_path, accession]
-        download_process = subprocess.Popen(download_command)
         logger.info(f"Iniciando download do genoma {accession}...")
+        script_path = "/app/backend/scripts/download_genome.sh"
+        log_file_path = f"/app/backend/logs/download_genome_{accession}.log"
+        download_command = ["bash", script_path, accession]
+        download_result = subprocess.run(download_command, capture_output=True, text=True)
 
-        log_file_path = "/app/backend/logs/download_genome.log"
-        success_message = f"Genoma de referência {accession} baixado, descompactado, renomeado e limpo com sucesso."
+        if download_result.returncode != 0:
+            log_tail = tail_text_file(log_file_path)
+            logger.error(
+                f"Erro ao baixar o genoma {accession}. rc={download_result.returncode} stdout={download_result.stdout.strip()} stderr={download_result.stderr.strip()} log_tail={log_tail}"
+            )
+            detail = f"Erro ao baixar o genoma {accession}. Verifique o log em {log_file_path}."
+            if log_tail:
+                detail = f"{detail} Ultimas linhas do log: {log_tail}"
+            raise HTTPException(
+                status_code=500,
+                detail=detail,
+            )
 
-        while True:
-            if os.path.exists(log_file_path):
-                with open(log_file_path, "r") as log_file:
-                    if success_message in log_file.read():
-                        logger.info(f"Download do genoma {accession} concluído com sucesso.")
-                        break
-            if download_process.poll() is not None and download_process.returncode != 0:
-                raise HTTPException(status_code=500, detail="Erro ao baixar o genoma.")
+        genome_fasta_path = f"/users/ref_genomes/{accession}/genomic.fa"
+        if not os.path.exists(genome_fasta_path):
+            log_tail = tail_text_file(log_file_path)
+            detail = f"Download finalizado, mas o arquivo FASTA não foi encontrado em {genome_fasta_path}."
+            if log_tail:
+                detail = f"{detail} Ultimas linhas do log: {log_tail}"
+            raise HTTPException(
+                status_code=500,
+                detail=detail,
+            )
+
+        logger.info(f"Download do genoma {accession} concluído com sucesso.")
 
         return {"message": f"Download do genoma {accession} concluído com sucesso."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro ao baixar genoma: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao baixar genoma: {e}")
@@ -462,16 +490,18 @@ def delete_reference_genome(accession: str, db: Session = Depends(get_db), curre
         else:
             logger.warning(f"Diretório do genoma {accession} não encontrado.")
 
-        # Caminho do arquivo de log
-        log_file_path = "/app/backend/logs/download_genome.log"
-
-        # Excluir o arquivo de log, se existir
-        if os.path.exists(log_file_path):
-            try:
-                os.remove(log_file_path)
-                logger.info(f"Arquivo de log {log_file_path} excluído com sucesso.")
-            except Exception as e:
-                logger.warning(f"Erro ao excluir o arquivo de log {log_file_path}: {e}")
+        # Excluir logs de download relacionados ao accession
+        download_log_paths = [
+            f"/app/backend/logs/download_genome_{accession}.log",
+            "/app/backend/logs/download_genome.log",
+        ]
+        for log_file_path in download_log_paths:
+            if os.path.exists(log_file_path):
+                try:
+                    os.remove(log_file_path)
+                    logger.info(f"Arquivo de log {log_file_path} excluído com sucesso.")
+                except Exception as e:
+                    logger.warning(f"Erro ao excluir o arquivo de log {log_file_path}: {e}")
 
         db.delete(genome_stage)
         db.commit()

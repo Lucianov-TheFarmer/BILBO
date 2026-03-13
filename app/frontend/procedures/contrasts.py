@@ -8,12 +8,13 @@ from .utils import log_message  # Import log_message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def fetch_samples():
+async def fetch_samples(token):
     """Fetch samples from the backend."""
     logger.info("Fetching samples from the backend.")
+    headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get("http://localhost:8000/contrasts/samples")
+            response = await client.get("http://localhost:8000/contrasts/samples", headers=headers)
             response.raise_for_status()
             samples = response.json()
             logger.info(f"Fetched samples: {samples}")
@@ -44,7 +45,19 @@ async def show_contrasts_modal(page, token, user_id):
     used_samples = set()  # Track used sample IDs
 
     # Fetch samples and build sra_code -> id mapping
-    samples = await fetch_samples()
+    try:
+        samples = await fetch_samples(token)
+    except httpx.HTTPStatusError as ex:
+        if ex.response.status_code == 401:
+            await log_message(page, "Sessão expirada ou inválida. Faça login novamente para definir contrastes.")
+            return
+        await log_message(page, f"Erro ao buscar amostras para contrastes: HTTP {ex.response.status_code}.")
+        return
+    except Exception as ex:
+        logger.error(f"Error fetching samples: {ex}", exc_info=True)
+        await log_message(page, "Erro ao buscar amostras para contrastes.")
+        return
+
     if samples is None or len(samples) == 0:
         await log_message(page, "Nenhuma amostra disponível para definição de contrastes.")
         return
@@ -384,7 +397,19 @@ async def show_contrasts_modal(page, token, user_id):
             return asyncio.run(coro)
 
     # --- Build existing contrasts visually ---
-    existing_contrasts = await fetch_existing_contrasts(token)
+    try:
+        existing_contrasts = await fetch_existing_contrasts(token)
+    except httpx.HTTPStatusError as ex:
+        if ex.response.status_code == 401:
+            await log_message(page, "Sessão expirada ou inválida. Faça login novamente para carregar contrastes.")
+            return
+        await log_message(page, f"Erro ao carregar contrastes existentes: HTTP {ex.response.status_code}.")
+        return
+    except Exception as ex:
+        logger.error(f"Error fetching existing contrasts: {ex}", exc_info=True)
+        await log_message(page, "Erro ao carregar contrastes existentes.")
+        return
+
     if existing_contrasts:
         for contrast in existing_contrasts:
             group_1, reps_1, group_2, reps_2 = parse_contrast_name(contrast["name"])

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -45,6 +47,78 @@ def _as_pipeline_status(value: str) -> PipelineStatus:
         return PipelineStatus.PENDING
 
 
+def _tail_text_file(path: str, max_bytes: int = 32768) -> str:
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes), os.SEEK_SET)
+            return handle.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _extract_progress_percent(log_text: str) -> Optional[float]:
+    matches = re.findall(r"(\d{1,3}(?:\.\d+)?)%", log_text)
+    if not matches:
+        return None
+
+    for value in reversed(matches):
+        try:
+            pct = float(value)
+        except ValueError:
+            continue
+        if 0.0 <= pct <= 100.0:
+            return pct
+    return None
+
+
+def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    payload = job.payload or {}
+    if not isinstance(payload, dict):
+        return None
+
+    sra_code = str(payload.get("sra_code") or "").strip()
+    if not sra_code:
+        return None
+
+    log_path = f"/app/backend/logs/{sra_code}_download.log"
+    log_text = _tail_text_file(log_path)
+    status_value = str(job.status or "")
+
+    percent = _extract_progress_percent(log_text) if log_text else None
+    if percent is None:
+        if status_value == PipelineStatus.COMPLETED.value:
+            percent = 100.0
+        elif status_value == PipelineStatus.RUNNING.value:
+            percent = 1.0
+
+    if percent is not None and status_value == PipelineStatus.RUNNING.value and percent >= 100.0:
+        # Keep running jobs below 100% until completion is confirmed.
+        percent = 99.0
+
+    progress_message = ""
+    if log_text:
+        lines = [line.strip() for line in log_text.replace("\r", "\n").split("\n") if line.strip()]
+        if lines:
+            progress_message = lines[-1]
+
+    if status_value == PipelineStatus.COMPLETED.value and not progress_message:
+        progress_message = "Download concluido"
+    elif status_value == PipelineStatus.FAILED.value and not progress_message:
+        progress_message = "Download falhou"
+
+    if percent is None and not progress_message:
+        return None
+
+    return {
+        "progress_percent": percent,
+        "progress_source": "samples_download_log",
+    }
+
+
 @router.post("/jobs/{stage}/enqueue", status_code=status.HTTP_202_ACCEPTED, response_model=JobEnqueueResponse)
 def enqueue_stage_job(
     stage: str,
@@ -84,13 +158,19 @@ def get_job_status(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    result_payload = dict(job.result or {})
+    if job.stage == "samples_download":
+        progress_data = _samples_download_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+
     return JobStatusResponse(
         job_id=job.id,
         stage=job.stage,
         status=_as_pipeline_status(job.status),
         user_id=job.user_id,
         payload=job.payload,
-        result=job.result,
+        result=result_payload or None,
         error_message=job.error_message,
         created_at=job.created_at,
         started_at=job.started_at,

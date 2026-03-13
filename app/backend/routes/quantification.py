@@ -8,16 +8,46 @@ from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
 import logging
 import os
+import re
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _normalize_selected_genome(raw_value: Optional[str]) -> Optional[str]:
+    if not raw_value:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    # Accept formats like "GCF_..." or "Organism Name (GCF_...)".
+    candidates: list[str] = [value]
+    match = re.search(r"\(([^()]+)\)\s*$", value)
+    if match:
+        accession = match.group(1).strip()
+        if accession:
+            candidates.insert(0, accession)
+
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return candidate
+
+        ref_dir = os.path.join("/users/ref_genomes", candidate)
+        if os.path.isdir(ref_dir):
+            return candidate
+
+    return None
+
 class QuantificationRequest(BaseModel):
     samples: list[str]
     feature_type: str
     id_attribute: str
+    selected_genome: Optional[str] = None
 
 @router.post("/quantification/add_to_queue")
 def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -56,16 +86,34 @@ async def start_processing(
     """Enfileira a quantificação em job assíncrono."""
     user_id = current_user.id
     selected_genome = None
-    preprocess_dir = os.path.join("..", "users", str(user_id), "preprocess")
-    selected_genome_path = os.path.join(preprocess_dir, "selected_genome.txt")
-    try:
-        if os.path.exists(selected_genome_path):
-            with open(selected_genome_path, "r", encoding="utf-8") as f:
-                line = f.readline().strip()
-                if line:
-                    selected_genome = line
-    except Exception:
-        selected_genome = None
+
+    # Prefer explicit genome selected in the quantification modal.
+    if request.selected_genome:
+        selected_genome = _normalize_selected_genome(request.selected_genome)
+        if selected_genome is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected reference genome is invalid or not available.",
+            )
+
+    # Backward-compatible fallback for legacy clients that do not send selected_genome.
+    if selected_genome is None:
+        preprocess_dir = os.path.join("/users", str(user_id), "preprocess")
+        selected_genome_path = os.path.join(preprocess_dir, "selected_genome.txt")
+        try:
+            if os.path.exists(selected_genome_path):
+                with open(selected_genome_path, "r", encoding="utf-8") as f:
+                    line = f.readline().strip()
+                    if line:
+                        selected_genome = _normalize_selected_genome(line)
+                        if selected_genome is None:
+                            logger.warning(
+                                "Ignoring stale selected_genome '%s' for user %s",
+                                line,
+                                user_id,
+                            )
+        except Exception:
+            selected_genome = None
 
     for sample_name in request.samples:
         sample_stage = db.query(SampleStage).filter(

@@ -52,7 +52,8 @@ async def update_tabela_alinhamento(page, token, user_id):
                     def view_log_handler(e, s=sample["name"]):
                         asyncio.run(view_alignment_log(page, token, s, user_id))
 
-                    log_button_disabled = sample["status"] != "Completed"
+                    sample_status = str(sample.get("status") or "").strip().lower()
+                    log_button_disabled = sample_status != "completed"
 
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
@@ -561,7 +562,7 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
             await log_message(page, f"Iniciando download do genoma {accession}...")
             response = await client.post(f"http://bioinfo-container:8000/genomes/download", params={"accession": accession}, headers=headers)
             if response.status_code == 200:
-                # Simplified - assuming immediate indexing after download starts
+                # Download endpoint only returns 200 after the genome files are ready.
                 await index_genome(page, token, accession, organism_name, int(sjdb_overhang), int(threads))
             else:
                 await log_message(page, f"Erro ao iniciar download: {response.text}")

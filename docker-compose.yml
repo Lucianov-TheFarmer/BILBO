@@ -79,7 +79,6 @@ services:
       - main-net
 
   ssh-server:
-    profiles: ["debug"]
     image: lscr.io/linuxserver/openssh-server:latest
     container_name: ssh-container
     environment:
@@ -135,11 +134,10 @@ services:
       - main-net
 
   pgadmin:
-    profiles: ["debug"]
     image: dpage/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_DEFAULT_EMAIL: "admin@admin.com"
+      PGADMIN_DEFAULT_PASSWORD: "admin"
     ports:
       - "8080:80"
     depends_on:

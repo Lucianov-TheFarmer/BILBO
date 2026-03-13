@@ -37,7 +37,7 @@ if [[ -f "$input_file_1" ]]; then
         is_paired=false
     fi
 else
-    echo "Arquivo $input_file_1 não encontrado." >> $log_file
+    echo "Arquivo $input_file_1 nÃƒÂ£o encontrado." >> $log_file
     exit 1
 fi
 

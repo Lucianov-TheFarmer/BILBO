@@ -1,13 +1,14 @@
 from pathlib import Path
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from ..core.settings import settings
 from ..db.database import get_db
-from ..db.models import SampleStage, User, Stage
+from ..db.models import PipelineJob, SampleStage, User, Stage
 from ..services.job_service import audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, get_current_user_compat
@@ -27,6 +28,33 @@ class SampleCreateRequest(BaseModel):
 class SampleStageCreateRequest(BaseModel):
     stage_id: int
     status: str
+
+
+def _latest_samples_download_job(db: Session, user_id: int, sra_code: str) -> Optional[PipelineJob]:
+    jobs = (
+        db.query(PipelineJob)
+        .filter(PipelineJob.user_id == user_id, PipelineJob.stage == "samples_download")
+        .order_by(PipelineJob.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    for job in jobs:
+        payload = job.payload or {}
+        if isinstance(payload, dict) and str(payload.get("sra_code")) == sra_code:
+            return job
+    return None
+
+
+def _is_stale_pending_job(job: PipelineJob, stale_seconds: int = 300) -> bool:
+    if job.status != "PENDING" or job.started_at is not None:
+        return False
+    if job.created_at is None:
+        return True
+    created = job.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return (now - created).total_seconds() >= stale_seconds
 
 def update_sample_status(db: Session, sra_code: str, status: str, user_id: int):
     """Update the status of a sample."""
@@ -159,12 +187,36 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
         SampleStage.stage_id == 1,
         SampleStage.user_id == current_user.id,
     ).first()
+
     if not pending_sample:
-        raise HTTPException(status_code=404, detail="No pending samples found")
+        running_sample = db.query(SampleStage).filter(
+            SampleStage.status == "RUNNING",
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == current_user.id,
+        ).first()
+        if not running_sample:
+            raise HTTPException(status_code=404, detail="No pending samples found")
+
+        latest_job = _latest_samples_download_job(db, current_user.id, running_sample.sra_code)
+        if latest_job and latest_job.status in ["PENDING", "RUNNING"]:
+            if latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
+                latest_job.status = "FAILED"
+                latest_job.error_message = "Marked as stale and requeued by /samples/download"
+                latest_job.finished_at = datetime.now(timezone.utc)
+                db.commit()
+            else:
+                return {
+                    "job_id": latest_job.id,
+                    "status": latest_job.status,
+                    "message": f"Download already queued/running for sample {running_sample.sra_code}",
+                    "sample_name": running_sample.sra_code,
+                }
+
+        running_sample.status = "PENDING"
+        db.commit()
+        pending_sample = running_sample
 
     sra_code = pending_sample.sra_code
-    pending_sample.status = "RUNNING"
-    db.commit()
 
     job = create_job(db, stage="samples_download", user_id=current_user.id, payload={"sra_code": sra_code})
     audit(
@@ -262,11 +314,25 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
 @router.get("/samples/pending_count")
 def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    pending_count = db.query(SampleStage).filter(
-        SampleStage.status.in_(["PENDING", "Pending", "Na fila"]),
+    rows = db.query(SampleStage).filter(
         SampleStage.stage_id == 1,
         SampleStage.user_id == current_user.id,
-    ).count()
+        SampleStage.status.in_(["PENDING", "Pending", "Na fila", "RUNNING"]),
+    ).all()
+
+    pending_count = 0
+    for row in rows:
+        normalized = normalize_status(row.status)
+        if normalized == "PENDING":
+            pending_count += 1
+            continue
+        if normalized == "RUNNING":
+            latest_job = _latest_samples_download_job(db, current_user.id, row.sra_code)
+            if latest_job is None:
+                pending_count += 1
+            elif latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
+                pending_count += 1
+
     return {"pending_count": pending_count}
 
 @router.post("/stages/")

@@ -179,12 +179,10 @@ async def run_deg_analysis(page, token, user_id):
             expand=True,
         ),
         actions=[
-            ft.IconButton(
-                icon="visibility",
-                tooltip="Visualizar",
-                on_click=lambda e, s=sheet: asyncio.run(
-                    show_deg_dropdown(page, token, user_id=user_id, sheet_name=s)
-                )
+            ft.TextButton(
+                "Iniciar DEG",
+                on_click=lambda e: asyncio.run(iniciar_deg(e)),
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
             ),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER,

@@ -237,7 +237,13 @@ def enqueue_pipeline_job(job_id: str) -> None:
 
 def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sra_code = ensure_safe_component(str(payload["sra_code"]), "sra_code")
-    rc, stdout, stderr = _run(["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000)
+    log_file = Path(f"/app/backend/logs/{sra_code}_download.log")
+
+    def _log_tail(max_chars: int = 4000) -> str:
+        try:
+            return log_file.read_text(encoding="utf-8", errors="replace")[-max_chars:]
+        except Exception:
+            return ""
 
     sample = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code,
@@ -245,10 +251,31 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
         SampleStage.user_id == user_id,
     ).first()
     if sample:
+        sample.status = "RUNNING"
+        db.commit()
+
+    try:
+        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000)
+    except Exception as exc:
+        if sample:
+            sample.status = "FAILED"
+            db.commit()
+        log_tail = _log_tail()
+        if log_tail:
+            raise RuntimeError(f"Samples download failed for {sra_code}. Log tail:\n{log_tail}") from exc
+        raise
+
+    if sample:
         sample.status = "COMPLETED" if rc == 0 else "FAILED"
         db.commit()
 
-    result = {"stdout": stdout[-10000:], "stderr": stderr[-10000:], "sra_code": sra_code}
+    log_tail = _log_tail()
+    result = {
+        "stdout": stdout[-10000:],
+        "stderr": stderr[-10000:],
+        "sra_code": sra_code,
+        "log_tail": log_tail,
+    }
     status = PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED
     _finalize_job(
         db,
@@ -257,7 +284,7 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
         user_id=user_id,
         status=status,
         result=result,
-        error_message=None if rc == 0 else stderr[-4000:],
+        error_message=None if rc == 0 else (log_tail or stderr[-4000:] or f"download_script failed with rc={rc}"),
         exit_code=rc,
     )
 
@@ -406,6 +433,16 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
             db.commit()
 
     failed = [x for x in outputs if x["rc"] != 0]
+    job_error: str | None = None
+    if failed:
+        for item in failed:
+            stderr_text = str(item.get("stderr") or "").strip()
+            if stderr_text:
+                job_error = f"Sample {item['sample']} failed: {stderr_text[-1200:]}"
+                break
+        if not job_error:
+            job_error = "Some samples failed"
+
     _finalize_job(
         db,
         job_id=job_id,
@@ -413,7 +450,7 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
         user_id=user_id,
         status=PipelineStatus.COMPLETED if not failed else PipelineStatus.FAILED,
         result={"runs": outputs},
-        error_message="Some samples failed" if failed else None,
+        error_message=job_error,
         exit_code=0 if not failed else 1,
     )
 
