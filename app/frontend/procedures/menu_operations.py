@@ -1,5 +1,8 @@
 import flet as ft
 import asyncio
+import base64
+import os
+from importlib import metadata as importlib_metadata
 
 from frontend.procedures.translations import t
 
@@ -22,6 +25,30 @@ from .results import (
 )
 from .upload import show_upload_fastq_modal
 
+
+def _get_image_64(path):
+    candidates = [
+        path,
+        os.path.join("/app/frontend", path),
+        os.path.join("/app", path),
+    ]
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            with open(candidate, "rb") as img_file:
+                return base64.b64encode(img_file.read()).decode("utf-8")
+    return ""
+
+
+FAVICON_BASE64 = _get_image_64("assets/favicon.png")
+
+
+def _resolve_software_version():
+    try:
+        return importlib_metadata.version("bilbo")
+    except Exception:
+        return "1.0.0"
+
 def create_menu_item(label, close_on_click=True, style=None, on_click=None):
     return ft.MenuItemButton(
         content=ft.Text(label),
@@ -39,30 +66,96 @@ async def mudar_tema(page):
 
 def create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id):
     lang = page.session.get("lang") or "pt"
+    version_value = _resolve_software_version()
+
+    about_text = {
+        "pt": {
+            "title": "Versão do Software",
+            "subtitle": "Bioinformatics Integration for Large-scale Biological Operations",
+            "footer": "Plataforma integrada para analise RNA-Seq com pipeline reprodutivel e assistencia por IA.",
+            "close": "Fechar",
+        },
+        "en": {
+            "title": "Software Version",
+            "subtitle": "Bioinformatics Integration for Large-scale Biological Operations",
+            "footer": "Integrated RNA-Seq platform with reproducible pipelines and AI-assisted interpretation.",
+            "close": "Close",
+        },
+        "es": {
+            "title": "Versión del Software",
+            "subtitle": "Bioinformatics Integration for Large-scale Biological Operations",
+            "footer": "Plataforma integrada de RNA-Seq con pipeline reproducible y asistencia por IA.",
+            "close": "Cerrar",
+        },
+    }.get(lang, {
+        "title": "Software Version",
+        "subtitle": "Bioinformatics Integration for Large-scale Biological Operations",
+        "footer": "Integrated RNA-Seq platform with reproducible pipelines and AI-assisted interpretation.",
+        "close": "Close",
+    })
+
+    def _open_version_modal(_):
+        def _close_modal(__):
+            dlg.open = False
+            page.update()
+
+        card = ft.Container(
+            padding=18,
+            border_radius=14,
+            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.PRIMARY),
+            content=ft.Column(
+                tight=True,
+                spacing=8,
+                controls=[
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        controls=[
+                            ft.Image(src_base64=FAVICON_BASE64, width=128, height=128, fit=ft.ImageFit.CONTAIN),
+                            ft.Text("BILBO", size=28, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                    ft.Text(
+                        f"v{version_value}",
+                        text_align=ft.TextAlign.CENTER,
+                        size=18,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    ft.Text(
+                        about_text["subtitle"],
+                        text_align=ft.TextAlign.CENTER,
+                        color=ft.Colors.with_opacity(0.9, ft.Colors.ON_SURFACE),
+                        size=13,
+                    ),
+                    ft.Divider(height=14),
+                    ft.Text(
+                        about_text["footer"],
+                        text_align=ft.TextAlign.CENTER,
+                        size=12,
+                        color=ft.Colors.with_opacity(0.8, ft.Colors.ON_SURFACE),
+                    ),
+                ],
+            ),
+        )
+
+        dlg = ft.AlertDialog(
+            title=ft.Text(about_text["title"], text_align=ft.TextAlign.CENTER),
+            content=ft.Container(width=520, content=card),
+            actions=[ft.TextButton(about_text["close"], on_click=_close_modal)],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        page.open(dlg)
+        page.update()
 
     return ft.MenuBar(
         controls=[
-            ft.SubmenuButton(
-                content=ft.Text(t("menu_file", lang)),
-                controls=[
-                    create_menu_item(t("menu_new", lang)),
-                    create_menu_item(t("menu_open", lang)),
-                    ft.Divider(),
-                    create_menu_item(t("menu_save", lang)),
-                    create_menu_item(t("menu_save_as", lang)),
-                    ft.Divider(),
-                    create_menu_item(t("menu_close", lang)),
-                    create_menu_item(t("menu_exit", lang)),
-                ],
-            ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_samples", lang)),
                 controls=[
                     create_menu_item(
                         t("menu_add_fastq", lang),
-                        on_click=lambda e: (print("DEBUG: Clique detectado no menu Adicionar FASTQ"), asyncio.run(show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)))[1]
+                        on_click=lambda e: asyncio.run(show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id))
                     ),
-                    create_menu_item(t("menu_add_url", lang)),
                     create_menu_item(
                         t("menu_add_sra", lang),
                         on_click=lambda e: asyncio.run(adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local))
@@ -153,31 +246,12 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
                 ],
             ),
             ft.SubmenuButton(
-                content=ft.Text(t("menu_downstream", lang)),
-                controls=[
-                    create_menu_item(t("menu_enrichment", lang)),
-                    create_menu_item(t("menu_go_terms", lang)),
-                    create_menu_item(t("menu_pathways", lang)),
-                ],
-            ),
-            ft.SubmenuButton(
-                content=ft.Text(t("menu_reports", lang)),
-                controls=[
-                    create_menu_item(t("menu_report_qc", lang)),
-                    create_menu_item(t("menu_report_alignment", lang)),
-                    create_menu_item(t("menu_report_expression", lang)),
-                    create_menu_item(t("menu_report_heatmaps", lang)),
-                    create_menu_item(t("menu_report_volcano", lang)),
-                    create_menu_item(t("menu_report_ma", lang)),
-                    create_menu_item(t("menu_report_profiles", lang)),
-                ],
-            ),
-            ft.SubmenuButton(
                 content=ft.Text(t("menu_about", lang)),
                 controls=[
-                    create_menu_item(t("menu_manual", lang)),
-                    create_menu_item(t("menu_license", lang)),
-                    create_menu_item(t("menu_version", lang)),
+                    create_menu_item(
+                        t("menu_version", lang),
+                        on_click=_open_version_modal,
+                    ),
                 ],
             ),
         ]

@@ -72,7 +72,6 @@ async def main(page: ft.Page):
                 else:
                     await show_snackbar("Login succeeded but server returned unexpected response.")
                     return
-                print(f"Token: {token}")
                 username = username_input.value
                 await show_bilbo_interface(page, logout, username, token, user_id)
             else:
@@ -106,11 +105,6 @@ async def main(page: ft.Page):
         except httpx.RequestError as ex:
             await show_snackbar(f"An error occurred: {ex}")
 
-    username_input = ft.TextField(value="admin")
-    password_input = ft.TextField(value="nebioinfo123")
-
-    await login(e=None)
-
-    # username_input = ft.TextField(label="Username", width=300)
-    # password_input = ft.TextField(label="Password", password=True, width=300)
-    # await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
+    username_input = ft.TextField(label="Username", width=300)
+    password_input = ft.TextField(label="Password", password=True, width=300)
+    await show_login_interface(page, login, register, toggle_theme, username_input, password_input)

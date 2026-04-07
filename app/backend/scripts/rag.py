@@ -6,6 +6,8 @@ from chromadb import EmbeddingFunction, Documents, Embeddings
 import ollama
 # from gene import cluster_pipeline
 
+# SCRIPT USADO APENAS PARA GERAR O BANCO DE DADOS VETORIAL, OBSOLETO, VERSÃO ATUALIZADA EM llm.py
+
 DIRETORIO_ARTIGOS = "./artigos"
 CAMINHO_BANCO_VETORIAL = "./chroma_db_arctic"
 NOME_COLECAO = "banco_literatura_bio"

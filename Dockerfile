@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     jq \
     unzip \
+    p7zip-full \
+    unrar-free \
     tmux \
     htop \
     libgtk-3-0 \

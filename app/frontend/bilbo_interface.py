@@ -19,7 +19,7 @@ import httpx
 import logging
 import os
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 httpx_logger = logging.getLogger("httpx")
@@ -29,7 +29,7 @@ uvicorn_access_logger = logging.getLogger("uvicorn.access")
 uvicorn_access_logger.setLevel(logging.WARNING)
 
 async def show_bilbo_interface(page, logout, username, token, user_id):
-    print("Entering show_bilbo_interface")
+    logger.debug("Initializing interface for user_id=%s", user_id)
 
     lang = page.session.get("lang") or "pt"
 
@@ -138,6 +138,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             return
         await excluir_quantificacao(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
 
+    async def refresh_stage_counts():
+        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
         await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
@@ -200,9 +203,9 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             # DEG stage: show DEG results in the actions area (container_amostras)
             await show_deg_results(page, token, user_id, container_amostras)
         elif stage_id == 9:
-            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao)
+            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
         elif stage_id == 10:
-            await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
+            await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
 
     container_menu_direita = ft.Container(
         expand=1 ,
@@ -563,7 +566,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     # If clustering finished, refresh clustering table when user is on that stage
                     if isinstance(message, str) and "Clustering completed" in message:
                         try:
-                            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao)
+                            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
                         except Exception as ex:
                             logger.warning(f"Failed to refresh clustering UI: {ex}")
                 except Exception:

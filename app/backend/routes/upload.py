@@ -17,11 +17,6 @@ from pydantic import BaseModel
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Models
-class DebugPrint(BaseModel):
-    filename: str
-    first_line: str
-
 class FileUpload(BaseModel):
     filename: str
     content: str  # conteúdo do arquivo em base64
@@ -120,14 +115,15 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), cur
         # Enviar mensagem para o terminal
         terminal_message = f"Upload da amostra {filename} concluído"
         await manager.broadcast(terminal_message, user_id=current_user.id)
-        
-        print("=" * 60)
-        print(f"ARQUIVO SALVO: {file_path}")
-        print(f"Tamanho: {file_size}")
-        print(f"Basename: {basename}")
-        print(f"Tipo: {sequencing_type}")
-        print(f"Adicionado ao banco de dados!")
-        print("=" * 60)
+
+        logger.info(
+            "FASTQ upload saved: user_id=%s basename=%s filename=%s size=%s sequencing_type=%s",
+            current_user.id,
+            basename,
+            filename,
+            file_size,
+            sequencing_type,
+        )
         
         return {
             "status": "saved", 
@@ -139,9 +135,9 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), cur
         }
         
     except Exception as e:
-        print(f"ERRO ao salvar arquivo: {e}")
-        logger.error(f"Erro ao salvar arquivo: {e}")
-        await manager.broadcast(f"❌ Erro no upload: {filename} - {str(e)}", user_id=current_user.id)
+        failing_filename = getattr(data, "filename", "unknown")
+        logger.exception("Erro ao salvar arquivo FASTQ: user_id=%s filename=%s", current_user.id, failing_filename)
+        await manager.broadcast(f"❌ Erro no upload: {failing_filename} - {str(e)}", user_id=current_user.id)
         return {"status": "error", "message": str(e)}
 
 @router.post("/upload/finalize")

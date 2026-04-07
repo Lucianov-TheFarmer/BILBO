@@ -9,31 +9,7 @@ from .utils import log_message
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
-    """
-    Exibe um modal para upload de arquivos FASTQ
-    """
-    
-    print("DEBUG: show_upload_fastq_modal foi chamada!")
-    logger.info("Abrindo modal de upload FASTQ")
-    
-    arquivo_selecionado_text = ft.Text(
-        "Nenhum arquivo selecionado",
-        color="grey_600"
-    )
-    
-    tipo_sequenciamento_text = ft.Text(
-        "Tipo: Não detectado",
-        color="grey_600",
-        weight=ft.FontWeight.BOLD
-    )
-    
-async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
-    """
-    Exibe um modal para upload de arquivos FASTQ
-    """
-    
+        
 async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     """
     Exibe um modal para upload de arquivos FASTQ usando webviewer

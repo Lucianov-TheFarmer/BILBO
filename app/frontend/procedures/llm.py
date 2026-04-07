@@ -6,12 +6,36 @@ from .jobs import wait_for_job
 from .utils import log_message
 
 
-async def show_llm(page, token, user_id, container_amostras, container_pre_visualizacao):
+def _collect_vector_bootstrap_messages(job_payload):
+    result = (job_payload or {}).get("result") or {}
+    per_sheet = result.get("results") or {}
+    messages = []
+    for sheet_name, sheet_result in per_sheet.items():
+        info = (sheet_result or {}).get("vector_db_bootstrap") or {}
+        if info.get("downloaded"):
+            messages.append(
+                f"Banco vetorial RAG baixado automaticamente do Zenodo para {sheet_name}."
+            )
+    return messages
+
+
+async def show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None):
     """List stage_id=10 entries (interpretacao_llm) and show action icons (md/json/delete).
     This is a frontend-only scaffold; backend/llm script will be wired later.
     """
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     files = []
+
+    async def _refresh_stage_counts_if_needed():
+        if refresh_stage_counts is None:
+            return
+        try:
+            maybe_result = refresh_stage_counts()
+            if asyncio.iscoroutine(maybe_result):
+                await maybe_result
+        except Exception:
+            pass
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"http://localhost:8000/samples/stages/10", headers=headers)
@@ -86,7 +110,8 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 )
             if resp.status_code == 200:
                 await log_message(page, f"LLM {sheet_name} excluído.")
-                await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
+                await _refresh_stage_counts_if_needed()
+                await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
             else:
                 await log_message(page, f"Erro ao excluir LLM {sheet_name}: {resp.status_code} - {resp.text}")
         except Exception as ex:
@@ -161,14 +186,21 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                             await log_message(page, f"Interpretação LLM enfileirada (job {job_id}).")
                             result = await wait_for_job(token, job_id)
                             status = result.get("status")
+                            bootstrap_messages = _collect_vector_bootstrap_messages(result)
                             if status == "COMPLETED":
+                                for msg in bootstrap_messages:
+                                    await log_message(page, msg)
                                 await log_message(page, "Interpretação LLM concluída com sucesso.")
                             else:
+                                error_message = result.get("error_message")
+                                if error_message:
+                                    await log_message(page, f"Detalhe do erro: {error_message}")
                                 await log_message(page, f"Interpretação LLM finalizada com status {status}.")
                         else:
                             await log_message(page, "Interpretação LLM iniciada.")
                         # refresh list
-                        await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao)
+                        await _refresh_stage_counts_if_needed()
+                        await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
                 except Exception as ex:
                     await log_message(page, f"Erro ao executar LLM: {ex}")
 

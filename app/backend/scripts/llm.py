@@ -1,17 +1,201 @@
 import os
 import json
 import glob
+import shutil
+import subprocess
+import tempfile
+import time
+import urllib.request
 import chromadb
 from chromadb import EmbeddingFunction, Documents, Embeddings
 import ollama
 
-# Fixed path to vector DB (as requested)
-CHROMA_DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "users", "rag_models", "chroma_db_BILBO_Plants"))
+# Vector DB bootstrap configuration
+ZENODO_CHROMA_DB_URL = os.getenv(
+    "BILBO_RAG_DB_URL",
+    "https://zenodo.org/records/19440155/files/chroma_db_BILBO_Plants.rar?download=1",
+)
+VECTOR_DB_ARCHIVE_NAME = "chroma_db_BILBO_Plants.rar"
+VECTOR_DB_DIRNAME = "chroma_db_BILBO_Plants"
+
+
+def _resolve_users_root():
+    configured = os.getenv("USERS_ROOT")
+    if configured:
+        return os.path.abspath(configured)
+    if os.path.isdir("/users"):
+        return "/users"
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "users"))
+
+
+USERS_ROOT = _resolve_users_root()
+RAG_MODELS_ROOT = os.path.join(USERS_ROOT, "rag_models")
+CHROMA_DB_PATH = os.path.join(RAG_MODELS_ROOT, VECTOR_DB_DIRNAME)
+VECTOR_DB_LOCK_PATH = CHROMA_DB_PATH + ".bootstrap.lock"
 COLLECTION_NAME = "banco_literatura_bio"
 
 # models (kept from rag.py)
 MODELO_LLM = os.getenv("BILBO_LLM_MODEL_OVERRIDE") or os.getenv("LLM_PRIMARY_MODEL", "qwen3:14b")
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
+
+
+def _vector_db_ready(path):
+    if not os.path.isdir(path):
+        return False
+    try:
+        return any(True for _ in os.scandir(path))
+    except OSError:
+        return False
+
+
+def _download_file(url, destination):
+    print(f"[llm.py] ChromaDB ausente. Baixando do Zenodo: {url}")
+    with urllib.request.urlopen(url, timeout=120) as response, open(destination, "wb") as output:
+        total = int(response.headers.get("Content-Length", "0") or 0)
+        downloaded = 0
+        last_progress = -1
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+            downloaded += len(chunk)
+            if total > 0:
+                progress = int((downloaded / total) * 100)
+                if progress // 10 != last_progress // 10:
+                    print(f"[llm.py] Download ChromaDB: {progress}%")
+                last_progress = progress
+    print(f"[llm.py] Download concluido: {destination}")
+
+
+def _extract_rar_archive(archive_path, extract_root):
+    commands = [
+        ["7z", "x", "-y", f"-o{extract_root}", archive_path],
+        ["unrar-free", "x", archive_path, extract_root],
+        ["unrar", "x", "-o+", "-y", archive_path, extract_root],
+        ["bsdtar", "-xf", archive_path, "-C", extract_root],
+    ]
+    failures = []
+    for command in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except FileNotFoundError:
+            failures.append(f"{command[0]}: comando nao encontrado")
+            continue
+
+        if result.returncode == 0:
+            print(f"[llm.py] Arquivo RAR extraido com: {command[0]}")
+            return command[0]
+
+        output = (result.stderr or result.stdout or "").strip()
+        failures.append(f"{command[0]} retornou {result.returncode}: {output[-500:]}")
+
+    raise RuntimeError(
+        "Falha ao extrair chroma_db_BILBO_Plants.rar. "
+        "Instale uma ferramenta de extracoes RAR (7z/unrar/bsdtar). "
+        f"Detalhes: {' | '.join(failures)}"
+    )
+
+
+def _find_extracted_vector_db(extract_root):
+    direct_candidate = os.path.join(extract_root, VECTOR_DB_DIRNAME)
+    if os.path.isdir(direct_candidate):
+        return direct_candidate
+
+    for root, dirs, _ in os.walk(extract_root):
+        if VECTOR_DB_DIRNAME in dirs:
+            return os.path.join(root, VECTOR_DB_DIRNAME)
+    return None
+
+
+def _acquire_lock(lock_path):
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as lock_file:
+            lock_file.write(str(os.getpid()))
+        return True
+    except FileExistsError:
+        return False
+
+
+def _release_lock(lock_path):
+    try:
+        os.unlink(lock_path)
+    except FileNotFoundError:
+        pass
+
+
+def _wait_for_external_bootstrap(timeout_seconds=3600, poll_seconds=2):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if _vector_db_ready(CHROMA_DB_PATH):
+            return True
+        if not os.path.exists(VECTOR_DB_LOCK_PATH):
+            return _vector_db_ready(CHROMA_DB_PATH)
+        time.sleep(poll_seconds)
+    return False
+
+
+def ensure_vector_db_available():
+    if _vector_db_ready(CHROMA_DB_PATH):
+        return {
+            "downloaded": False,
+            "path": CHROMA_DB_PATH,
+            "source": "local",
+            "source_url": ZENODO_CHROMA_DB_URL,
+        }
+
+    os.makedirs(RAG_MODELS_ROOT, exist_ok=True)
+    lock_acquired = _acquire_lock(VECTOR_DB_LOCK_PATH)
+
+    if not lock_acquired:
+        print("[llm.py] Aguardando inicializacao do ChromaDB por outro processo...")
+        if _wait_for_external_bootstrap():
+            return {
+                "downloaded": False,
+                "path": CHROMA_DB_PATH,
+                "source": "local_after_wait",
+                "source_url": ZENODO_CHROMA_DB_URL,
+            }
+        raise RuntimeError("Timeout ao aguardar inicializacao do banco vetorial ChromaDB")
+
+    temp_dir = tempfile.mkdtemp(prefix="bilbo_chromadb_")
+    archive_path = os.path.join(temp_dir, VECTOR_DB_ARCHIVE_NAME)
+    try:
+        if _vector_db_ready(CHROMA_DB_PATH):
+            return {
+                "downloaded": False,
+                "path": CHROMA_DB_PATH,
+                "source": "local",
+                "source_url": ZENODO_CHROMA_DB_URL,
+            }
+
+        _download_file(ZENODO_CHROMA_DB_URL, archive_path)
+        extractor = _extract_rar_archive(archive_path, temp_dir)
+        extracted_path = _find_extracted_vector_db(temp_dir)
+        if not extracted_path:
+            raise FileNotFoundError(
+                f"Pasta {VECTOR_DB_DIRNAME} nao encontrada apos extracao do arquivo {archive_path}"
+            )
+
+        if os.path.isdir(CHROMA_DB_PATH):
+            shutil.rmtree(CHROMA_DB_PATH, ignore_errors=True)
+        shutil.move(extracted_path, CHROMA_DB_PATH)
+
+        if not _vector_db_ready(CHROMA_DB_PATH):
+            raise RuntimeError("Bootstrap do ChromaDB concluido, mas o diretorio final esta vazio")
+
+        print(f"[llm.py] ChromaDB preparado em: {CHROMA_DB_PATH}")
+        return {
+            "downloaded": True,
+            "path": CHROMA_DB_PATH,
+            "source": "zenodo",
+            "source_url": ZENODO_CHROMA_DB_URL,
+            "extractor": extractor,
+        }
+    finally:
+        _release_lock(VECTOR_DB_LOCK_PATH)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 class FuncaoEmbedding(EmbeddingFunction):
@@ -25,11 +209,14 @@ class FuncaoEmbedding(EmbeddingFunction):
 
 
 def inicializar_banco_vetorial():
+    bootstrap_info = ensure_vector_db_available()
+    if bootstrap_info.get("downloaded"):
+        print("[llm.py] Banco vetorial baixado automaticamente no primeiro uso.")
     print(f"[llm.py] Conectando ao ChromaDB em: {CHROMA_DB_PATH}")
     cliente = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     funcao_embedding = FuncaoEmbedding()
     colecao = cliente.get_or_create_collection(name=COLLECTION_NAME, embedding_function=funcao_embedding)
-    return colecao
+    return colecao, bootstrap_info
 
 
 def analisar_descricao_cluster(colecao, lista_genes):
@@ -270,11 +457,12 @@ def run_llm(file_path, sheet_name=None, out_dir=None, user_id=None):
         clusters_dict = json.load(f)
 
     # load articles (if any) and connect to vector DB
-    colecao = inicializar_banco_vetorial()
+    colecao, bootstrap_info = inicializar_banco_vetorial()
 
     # execute pipeline and save results to out_dir
     relatorio = executar_pipeline_completo(colecao, clusters_dict, out_dir)
     saved = salvar_resultados(relatorio, out_dir)
+    saved["vector_db_bootstrap"] = bootstrap_info
     return saved
 
 

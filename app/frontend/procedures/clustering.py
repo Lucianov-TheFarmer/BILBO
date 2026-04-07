@@ -7,13 +7,24 @@ from ..components.general_components import create_button
 from .jobs import wait_for_job
 from .utils import log_message
 
-async def show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao):
+async def show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None):
     """Frontend-only: lista figuras de cluster já geradas em users/{user_id}/DEG
     e oferece botão placeholder para "Gerar Clusterização".
     """
     # Fetch clustering entries from backend DB (stage_id=9)
     files = []
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+
+    async def _refresh_stage_counts_if_needed():
+        if refresh_stage_counts is None:
+            return
+        try:
+            maybe_result = refresh_stage_counts()
+            if asyncio.iscoroutine(maybe_result):
+                await maybe_result
+        except Exception:
+            pass
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"http://localhost:8000/samples/stages/9", headers=headers)
@@ -103,6 +114,8 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                         await log_message(page, f"Clusterização finalizada com status {status}.")
                 else:
                     await log_message(page, "Clusterização iniciada.")
+                await _refresh_stage_counts_if_needed()
+                await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
             dlg.open = False
             page.update()
 
@@ -201,7 +214,8 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                         )
                     if resp.status_code == 200:
                         await log_message(page, f"Clusterização {sheet_name} excluída.")
-                        await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao)
+                        await _refresh_stage_counts_if_needed()
+                        await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
                     else:
                         await log_message(page, f"Erro ao excluir clusterização {sheet_name}: {resp.status_code} - {resp.text}")
                 except Exception as ex:
