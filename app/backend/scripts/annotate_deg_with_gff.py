@@ -4,11 +4,32 @@ import re
 import pandas as pd
 
 def parse_gff_attributes(attr_str):
+    """Parse attribute field from GFF or GTF lines into a dict.
+
+    Supports both GFF (key=value;key2=value2) and GTF (key "value"; key2 "value2";) formats.
+    """
     attrs = {}
-    for item in attr_str.split(";"):
+    if not attr_str:
+        return attrs
+    # Split by semicolon but be robust to trailing/leading spaces
+    parts = [p.strip() for p in attr_str.split(";") if p.strip()]
+    for item in parts:
+        # GFF style: key=value
         if "=" in item:
             key, val = item.split("=", 1)
-            attrs[key] = val
+            attrs[key.strip()] = val.strip().strip('"')
+            continue
+        # GTF style: key "value" (possibly with trailing semicolon already removed)
+        m = re.match(r'^(\S+)\s+"([^"]+)"', item)
+        if m:
+            key = m.group(1)
+            val = m.group(2)
+            attrs[key.strip()] = val.strip()
+            continue
+        # Fallback: split by whitespace
+        parts_ws = item.split()
+        if len(parts_ws) >= 2:
+            attrs[parts_ws[0].strip()] = parts_ws[1].strip().strip('"')
     return attrs
 
 
@@ -42,10 +63,13 @@ def load_gff_info(gff_path):
             feature_type = parts[2]
             attrs = parse_gff_attributes(parts[8])
             if feature_type in ("gene", "mRNA", "transcript"):
-                gene_id = attrs.get("ID")
-                name = attrs.get("Name")
-                product = attrs.get("Product")
-                note = attrs.get("Note")
+                # Normalize common attribute key names across GFF and GTF
+                gene_id = attrs.get("ID") or attrs.get("gene_id") or attrs.get("GeneID") or attrs.get("gene")
+                # Prefer explicit Name, then gene, then gene_id as display name
+                name = attrs.get("Name") or attrs.get("gene") or attrs.get("gene_name") or None
+                # Product/note can appear under several keys
+                product = attrs.get("Product") or attrs.get("product") or attrs.get("product_name") or attrs.get("description")
+                note = attrs.get("Note") or attrs.get("note") or attrs.get("description")
                 if gene_id:
                     # store using normalized ID for robust matching
                     norm = normalize_id(gene_id)

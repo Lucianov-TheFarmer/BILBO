@@ -2,6 +2,7 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import create_dropdown_menu, display_graph
 
@@ -47,16 +48,25 @@ async def update_quality_analysis_table(page, token, user_id):
                         page.launch_url(download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
+
+                    # Build actions: include 'view' and 'download' only when QC is completed
+                    actions = []
+                    try:
+                        status = (sample.get("status") or "").lower()
+                    except Exception:
+                        status = ""
+
+                    if status == "completed":
+                        actions.append(ft.IconButton(icon="visibility", on_click=view_sample_details_handler))
+                        actions.append(ft.IconButton(icon="download", on_click=download_handler))
+
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(sample["name"] or sample["sra_code"], size=12)),
                                 ft.DataCell(ft.Text(sample["status"], size=12)),
                                 ft.DataCell(ft.Checkbox()),
-                                ft.DataCell(ft.Row([
-                                    ft.IconButton(icon="visibility", on_click=view_sample_details_handler),
-                                    ft.IconButton(icon="download", on_click=download_handler),
-                                ])),
+                                ft.DataCell(ft.Row(actions)),
                             ],
                         )
                     )
@@ -70,13 +80,13 @@ async def update_quality_analysis_table(page, token, user_id):
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
-
+    # Find the preview container by key (container_preview) and update it
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                        if isinstance(container, ft.Container) and getattr(container, 'key', None) == "container_preview":
                             container.content.controls = [
                                 ft.Container(
                                     expand=True,
@@ -186,7 +196,14 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
-                if response.status_code == 200:
+                if response.status_code in (200, 202):
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"QC enfileirado (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        await log_message(page, f"QC finalizado com status {status}.")
                     logger.info(f"Análise de qualidade iniciada para {selected_samples} com sucesso!")
                     await update_quality_analysis_table(page, token, user_id)
                     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)

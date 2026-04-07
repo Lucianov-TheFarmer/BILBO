@@ -5,11 +5,22 @@ if (length(args) == 0) {
   stop("user_id deve ser passado como argumento para o script R.")
 }
 user_id <- args[1]
-setwd(file.path("..", "users", user_id, "preprocess"))
 
-if (!requireNamespace("httr", quietly = TRUE)) {
-  install.packages("httr", repos = "http://cran.us.r-project.org")
+# Determine script directory robustly even when invoked via Rscript from any cwd
+cmd_args <- commandArgs(trailingOnly = FALSE)
+file_arg <- grep("--file=", cmd_args, value = TRUE)
+if (length(file_arg) > 0) {
+  script_path <- sub("^--file=", "", file_arg[1])
+  script_dir <- normalizePath(dirname(script_path))
+  project_root <- normalizePath(file.path(script_dir, "..", "..", ".."))
+  target_preprocess_dir <- file.path(project_root, "users", user_id, "preprocess")
+} else {
+  # Fallback: assume current working directory is project root or similar
+  target_preprocess_dir <- file.path("..", "users", user_id, "preprocess")
 }
+
+setwd(target_preprocess_dir)
+
 library(httr)
 library(edgeR)
 library(ggplot2)
@@ -20,15 +31,92 @@ library(gplots)
 targets <- readTargets(fileEncoding="latin1")
 names <- targets$description
 
-matrix_input <- readDGE(targets, comment.char="!")
+# Debug prints: working dir and Targets.txt content
+cat("[DEBUG] Working directory:", getwd(), "\n")
+targets_path <- file.path(getwd(), "Targets.txt")
+cat("[DEBUG] Targets.txt path:", targets_path, "exists=", file.exists(targets_path), "\n")
+if (file.exists(targets_path)) {
+  cat("[DEBUG] Targets.txt content:\n")
+  try({
+    tlines <- readLines(targets_path, encoding = "UTF-8")
+    cat(paste0(tlines, collapse = "\n"), "\n")
+  }, silent = TRUE)
+}
 
-MetaTags <- grep("^__", rownames(matrix_input))
-matrix_input <- matrix_input[-MetaTags,]
+# Debug: list files and check existence
+if (!is.null(targets$files)) {
+  cat("[DEBUG] Targets files:\n")
+  print(as.character(targets$files))
+  cat("[DEBUG] Files exist?\n")
+  print(sapply(as.character(targets$files), function(f) file.exists(f)))
+}
+
+# Wrap readDGE with tryCatch to capture and print diagnostics on error
+matrix_input <- tryCatch({
+  readDGE(targets, comment.char="!")
+}, error = function(e) {
+  cat("[ERROR] readDGE failed:\n")
+  cat(conditionMessage(e), "\n")
+  cat("[DEBUG] targets object:\n")
+  try(print(targets), silent = TRUE)
+  cat("[DEBUG] files existence:\n")
+  try(print(sapply(as.character(targets$files), function(f) file.exists(f))), silent = TRUE)
+  stop(e)
+})
+
+cat("[DEBUG] readDGE succeeded. Class:", paste(class(matrix_input), collapse=","), "\n")
+if (!is.null(matrix_input$counts)) {
+  cat("[DEBUG] counts dim:", paste(dim(matrix_input$counts), collapse = " x "), "\n")
+} else {
+  cat("[DEBUG] matrix_input$counts is NULL\n")
+}
+
+## Safely remove meta-tag rows (rows starting with '__') if present.
+## Use rownames(matrix_input$counts) to avoid subsetting the DGEList incorrectly
+if (!is.null(matrix_input$counts)) {
+  rn <- rownames(matrix_input$counts)
+  if (!is.null(rn)) {
+    MetaTags <- grep("^__", rn)
+    if (length(MetaTags) > 0) {
+      keep <- setdiff(seq_len(nrow(matrix_input$counts)), MetaTags)
+      matrix_input$counts <- matrix_input$counts[keep, , drop = FALSE]
+      if (!is.null(matrix_input$genes)) {
+        # keep genes frame in sync if present
+        matrix_input$genes <- matrix_input$genes[keep, , drop = FALSE]
+      }
+      cat("[DEBUG] Removed", length(MetaTags), "MetaTags rows from counts\n")
+    } else {
+      cat("[DEBUG] No MetaTags rows found; skipping removal\n")
+    }
+  } else {
+    cat("[DEBUG] No rownames in matrix_input$counts; skipping MetaTags removal\n")
+  }
+} else {
+  cat("[DEBUG] matrix_input$counts is NULL; skipping MetaTags removal\n")
+}
 
 reads_before <- sum(matrix_input$counts)
 
 rnaseqmatrix <- matrix_input$counts
-rnaseqmatrix <- rnaseqmatrix[rowMeans(rnaseqmatrix) >= 10, ]
+
+# Compute row means and filter low-expression genes
+row_means <- tryCatch({
+  rowMeans(rnaseqmatrix)
+}, error = function(e) {
+  cat("[ERROR] rowMeans failed:", conditionMessage(e), "\n")
+  stop(e)
+})
+cat("[DEBUG] rowMeans summary:", paste(capture.output(summary(row_means)), collapse = " | "), "\n")
+keep <- which(row_means >= 10)
+cat("[DEBUG] number of genes before filter:", nrow(rnaseqmatrix), "\n")
+cat("[DEBUG] number of genes after >=10 filter:", length(keep), "\n")
+if (length(keep) == 0) {
+  cat("[WARN] Filtering removed all genes; falling back to unfiltered counts.\n")
+  rnaseqmatrix <- matrix_input$counts
+} else {
+  rnaseqmatrix <- rnaseqmatrix[keep, , drop = FALSE]
+}
+
 conditions = matrix_input$samples[,2]
 
 analysis_matrix <- DGEList(counts = rnaseqmatrix, group = conditions)

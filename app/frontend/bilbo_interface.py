@@ -11,11 +11,15 @@ from .procedures.alignment import show_alignment_modal, show_genomes_modal, crea
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
+from .procedures.deg import show_deg_results
+from .procedures.clustering import show_clustering
+from .procedures.llm import show_llm
 import websockets
 import httpx
 import logging
+import os
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 httpx_logger = logging.getLogger("httpx")
@@ -25,7 +29,7 @@ uvicorn_access_logger = logging.getLogger("uvicorn.access")
 uvicorn_access_logger.setLevel(logging.WARNING)
 
 async def show_bilbo_interface(page, logout, username, token, user_id):
-    print("Entering show_bilbo_interface")
+    logger.debug("Initializing interface for user_id=%s", user_id)
 
     lang = page.session.get("lang") or "pt"
 
@@ -33,7 +37,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         page.session.set("lang", new_lang)
         page.controls.clear()
         await show_bilbo_interface(page, logout, username, token, user_id)
-        await page.update_async()
+        page.update()
 
     async def set_pt(e): await change_language("pt")
     async def set_en(e): await change_language("en")
@@ -124,12 +128,18 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     async def iniciar_quantificacao_handler(e):
         await show_quantification_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
 
+    async def show_deg_results_handler(e):
+        await show_deg_results(page, token, user_id, container_amostras)
+
     async def excluir_quantificacao_handler(e):
         selected_samples = [row.cells[0].content.value for row in tabela_quantificacao.rows if row.cells[4].content.value]
         if not selected_samples:
             await log_message(page, t("no_data", lang))
             return
         await excluir_quantificacao(page, token, user_id, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela)
+
+    async def refresh_stage_counts():
+        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
@@ -189,6 +199,13 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     create_button(t("btn_delete", lang), excluir_quantificacao_handler, color="red", expand=True),
                 ]
             )
+        elif stage_id == 7:
+            # DEG stage: show DEG results in the actions area (container_amostras)
+            await show_deg_results(page, token, user_id, container_amostras)
+        elif stage_id == 9:
+            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+        elif stage_id == 10:
+            await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
 
     container_menu_direita = ft.Container(
         expand=1 ,
@@ -204,7 +221,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ft.DataTable(
                     heading_row_color="primary",
                     data_row_color="surface",
-                    border=ft.border.all(0.5,"#000000"),
+                    border=ft.border.all(0.5, "outline"),
                     columns=[
                         ft.DataColumn(ft.Text("Stage", weight=ft.FontWeight.BOLD)),
                         ft.DataColumn(ft.Text("Qty", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
@@ -288,92 +305,135 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                                 )),
                             ],
                         ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                            content=ft.Text(t("menu_deg", lang)),
+                                            on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=7)
+                                        )),
+                                        ft.DataCell(ft.Container(
+                                            content=ft.Text("0"),
+                                            alignment=ft.alignment.center,
+                                            on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=7)
+                                        )),
+                            ],
+                        ),
+                        # New pipeline stages (placeholders)
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Clusterização Semântica"),
+                                    on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=9)
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("-"),
+                                    alignment=ft.alignment.center,
+                                    on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=9)
+                                )),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("Interpretação por LLM"),
+                                    on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=10)
+                                )),
+                                ft.DataCell(ft.Container(
+                                    content=ft.Text("-"),
+                                    alignment=ft.alignment.center,
+                                    on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=10)
+                                )),
+                            ],
+                        ),
                     ],
                 )
             ]
         )
     )
 
-    chat_log = ft.ListView(
-        expand=True,
-        spacing=10,
-        controls=[ft.Text("Hello! How can I help you?" if lang=="en" else "Olá! Como posso ajudar?")]
-    )
+    # Chatbot UI temporarily disabled. If you want to re-enable it,
+    # uncomment the block below and its inclusion in the layout.
+    #
+    # chat_log = ft.ListView(
+    #     expand=True,
+    #     spacing=10,
+    #     controls=[ft.Text("Hello! How can I help you?" if lang=="en" else "Olá! Como posso ajudar?")]
+    # )
+    #
+    # async def enviar_mensagem_chat(e: ft.ControlEvent):
+    #     page = e.page
+    #     texto_usuario = e.control.value
+    #     if not texto_usuario:
+    #         return
+    #
+    #     chat_log.controls.append(ft.Text(f"User: {texto_usuario}", italic=True, weight=ft.FontWeight.BOLD))
+    #     e.control.value = ""
+    #
+    #     thinking_text = ft.Text("BILBO: Thinking..." if lang=="en" else "BILBO: Pensando...", selectable=True)
+    #     chat_log.controls.append(thinking_text)
+    #
+    #     page.update()
+    #
+    #     try:
+    #         headers = {
+    #             "Authorization": f"Bearer {token}",
+    #             "ngrok-skip-browser-warning": "true"
+    #         }
+    #         async with httpx.AsyncClient(timeout=60.0) as client:
+    #             response = await client.post(
+    #                 "http://localhost:8000/chat",
+    #                 json={"message": texto_usuario, "model": "qwen3:0.6b"},
+    #                 headers=headers
+    #             )
+    #
+    #         if response.status_code == 200:
+    #             data = response.json()
+    #             full_reply = data.get("content", "Error: Empty response.")
+    #             thinking_text.value = f"BILBO: {full_reply}"
+    #         else:
+    #             try:
+    #                 error_data = response.json()
+    #                 error_msg = error_data.get("error", response.text)
+    #                 thinking_text.value = f"BILBO: Backend Error ({response.status_code}): {error_msg}"
+    #             except Exception:
+    #                  thinking_text.value = f"BILBO: Error ({response.status_code}): {response.text}"
+    #             thinking_text.color = "red"
+    #
+    #     except httpx.RequestError as ex:
+    #         thinking_text.value = f"BILBO: Connection error. {ex}"
+    #         thinking_text.color = "red"
+    #     except Exception as ex:
+    #         thinking_text.value = f"BILBO: Unexpected error. {ex}"
+    #         thinking_text.color = "red"
+    #
+    #     page.update()
+    #
+    # chat_input = ft.TextField(
+    #     label=t("menu_about", lang) + " (Ask...)",
+    #     expand=True,
+    #     border_radius=ft.border_radius.all(20),
+    #     border_color="outline",
+    #     on_submit=enviar_mensagem_chat
+    # )
+    #
+    # container_chatbot = ft.Container(
+    #     expand=2,
+    #     bgcolor="surface",
+    #     border_radius=ft.border_radius.all(12),
+    #     shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
+    #     padding=ft.padding.all(12),
+    #     margin=ft.margin.only(0, 5, 0, 0),
+    #     content=ft.Column(
+    #         expand=True,
+    #         controls=[
+    #             ft.Text("BILBO AI Assistant", style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.BOLD),
+    #             chat_log,
+    #             ft.Row(controls=[chat_input])
+    #         ]
+    #     )
+    # )
 
-    async def enviar_mensagem_chat(e: ft.ControlEvent):
-        page = e.page
-        texto_usuario = e.control.value
-        if not texto_usuario:
-            return
-
-        chat_log.controls.append(ft.Text(f"User: {texto_usuario}", italic=True, weight=ft.FontWeight.BOLD))
-        e.control.value = ""
-
-        thinking_text = ft.Text("BILBO: Thinking..." if lang=="en" else "BILBO: Pensando...", selectable=True)
-        chat_log.controls.append(thinking_text)
-
-        page.update()
-
-        try:
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "ngrok-skip-browser-warning": "true"
-            }
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    "http://localhost:8000/chat",
-                    json={"message": texto_usuario, "model": "qwen3:0.6b"},
-                    headers=headers
-                )
-
-            if response.status_code == 200:
-                data = response.json()
-                full_reply = data.get("content", "Error: Empty response.")
-                thinking_text.value = f"BILBO: {full_reply}"
-            else:
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get("error", response.text)
-                    thinking_text.value = f"BILBO: Backend Error ({response.status_code}): {error_msg}"
-                except Exception:
-                     thinking_text.value = f"BILBO: Error ({response.status_code}): {response.text}"
-                thinking_text.color = "red"
-
-        except httpx.RequestError as ex:
-            thinking_text.value = f"BILBO: Connection error. {ex}"
-            thinking_text.color = "red"
-        except Exception as ex:
-            thinking_text.value = f"BILBO: Unexpected error. {ex}"
-            thinking_text.color = "red"
-
-        page.update()
-
-    chat_input = ft.TextField(
-        label=t("menu_about", lang) + " (Ask...)",
-        expand=True,
-        border_radius=ft.border_radius.all(20),
-        border_color="outline",
-        on_submit=enviar_mensagem_chat
-    )
-
-    container_chatbot = ft.Container(
-        expand=2,
-        bgcolor="surface",
-        border_radius=ft.border_radius.all(12),
-        shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
-        padding=ft.padding.all(12),
-        margin=ft.margin.only(0, 5, 0, 0),
-        content=ft.Column(
-            expand=True,
-            controls=[
-                ft.Text("BILBO AI Assistant", style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.BOLD),
-                chat_log,
-                ft.Row(controls=[chat_input])
-            ]
-        )
-    )
-
-    menubar_principal = create_menubar(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+    menubar_principal = create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id)
 
     container_terminal = ft.Container(
         expand=2,
@@ -398,10 +458,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
         margin=ft.margin.only(0, 5, 0, 0),
         padding=ft.padding.all(12),
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.top_center,
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.START,
             controls=[
                 ft.Container(expand=True)
             ]
@@ -457,7 +517,6 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                     expand=2,
                     controls=[
                         container_menu_direita,
-                        container_chatbot
                     ]
                 ),
                 ft.Column(
@@ -482,12 +541,36 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     async def connect_websocket():
-        async with websockets.connect("ws://bioinfo-container:8000/ws") as websocket:
+        async with websockets.connect(f"ws://bioinfo-container:8000/ws?token={token}") as websocket:
             while True:
                 message = await websocket.recv()
                 await log_message(page, message, container_terminal=container_terminal)
-                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                await update_quality_analysis_table(page, token, user_id)
+                # Update main tables when backend broadcasts events (start/completion)
+                try:
+                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                except Exception as e:
+                    logger.warning(f"Failed to atualizar_tabela from websocket event: {e}")
+                try:
+                    await update_quality_analysis_table(page, token, user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to update_quality_analysis_table from websocket event: {e}")
+                try:
+                    await update_trimmagem_table(page, token)
+                except Exception as e:
+                    logger.warning(f"Failed to update_trimmagem_table from websocket event: {e}")
+                try:
+                    await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to update post-trim quality table from websocket event: {e}")
+                try:
+                    # If clustering finished, refresh clustering table when user is on that stage
+                    if isinstance(message, str) and "Clustering completed" in message:
+                        try:
+                            await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+                        except Exception as ex:
+                            logger.warning(f"Failed to refresh clustering UI: {ex}")
+                except Exception:
+                    pass
                 page.update()
 
     page.run_task(connect_websocket)

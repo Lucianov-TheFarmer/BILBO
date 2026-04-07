@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
+from ..services.job_service import normalize_status
 from ..utils import get_current_user, manager
 import subprocess
 import os
@@ -67,6 +68,54 @@ def start_trimmagem(
         logger.info(f"Paired samples: {paired_samples}")
         logger.info(f"Single samples: {single_samples}")
 
+        # Create DB entries with status RUNNING for expected trimmed outputs
+        try:
+            for base_name in paired_samples:
+                for suffix in ["_1", "_2"]:
+                    trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
+                    exists = db.query(SampleStage).filter(
+                        SampleStage.name == trimmed_name,
+                        SampleStage.stage_id == 3,
+                        SampleStage.user_id == user_id
+                    ).first()
+                    if not exists:
+                        db_sample_stage_trimmed = SampleStage(
+                            stage_id=3,
+                            name=trimmed_name,
+                            sra_code=base_name,
+                            size=None,
+                            status="RUNNING",
+                            user_id=user_id,
+                        )
+                        db.add(db_sample_stage_trimmed)
+
+            for sample in single_samples:
+                sample_base = sample.replace('.fastq', '')
+                trimmed_name = f"{sample_base}_trimmed.fastq"
+                exists = db.query(SampleStage).filter(
+                    SampleStage.name == trimmed_name,
+                    SampleStage.stage_id == 3,
+                    SampleStage.user_id == user_id
+                ).first()
+                if not exists:
+                    db_sample_stage_trimmed = SampleStage(
+                        stage_id=3,
+                            name=trimmed_name,
+                            sra_code=sample_base.split('_')[0],
+                            size=None,
+                            status="RUNNING",
+                            user_id=user_id,
+                        )
+                    db.add(db_sample_stage_trimmed)
+
+            db.commit()
+            try:
+                asyncio.run(manager.broadcast(f"Trimmagem iniciada para: {paired_samples + single_samples}", user_id=user_id))
+            except Exception as e:
+                logger.warning(f"Não foi possível enviar broadcast de início de trimmagem: {e}")
+        except Exception as e:
+            logger.error(f"Erro ao criar entradas In Progress para trimmagem: {e}")
+
         # Handle custom adapter
         adapter_file = None
         if illumina_clip["Arquivo adaptadores"] == "Personalizado":
@@ -126,23 +175,42 @@ def start_trimmagem(
             # Criar registros no banco de dados para os resultados da trimmagem
             for suffix in ["_1", "_2"]:
                 trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
-                trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
-                db_sample_stage_trimmed = SampleStage(
-                    stage_id=3,  # ID do estágio de trimmagem
-                    name=trimmed_name,
-                    sra_code=base_name,
-                    size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
-                    status="Completed",
-                    user_id=user_id,
-                )
-                db.add(db_sample_stage_trimmed)
+                # Avoid duplicate entries: check if trimmed sample already exists
+                exists = db.query(SampleStage).filter(
+                    SampleStage.name == trimmed_name,
+                    SampleStage.stage_id == 3,
+                    SampleStage.user_id == user_id
+                ).first()
+                if exists:
+                    # Update existing RUNNING entry to COMPLETED and set size
+                    try:
+                        trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")
+                    except Exception:
+                        trimmed_size = 0
+                    exists.size = f"{trimmed_size / (1024 * 1024):.2f} MB"
+                    exists.status = "COMPLETED"
+                    db.add(exists)
+                else:
+                    try:
+                        trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
+                    except Exception:
+                        trimmed_size = 0
+                    db_sample_stage_trimmed = SampleStage(
+                        stage_id=3,  # ID do estágio de trimmagem
+                        name=trimmed_name,
+                        sra_code=base_name,
+                        size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
+                        status="COMPLETED",
+                        user_id=user_id,
+                    )
+                    db.add(db_sample_stage_trimmed)
             db.commit()
 
             logger.info(f"Trimmagem completed successfully for paired sample {base_name}.")
 
             # Enviar mensagem de conclusão via WebSocket
             try:
-                asyncio.run(manager.broadcast(f"Trimmagem concluída para {base_name}"))
+                asyncio.run(manager.broadcast(f"Trimmagem concluída para {base_name}", user_id=user_id))
             except Exception as e:
                 logger.warning(f"Não foi possível enviar mensagem WebSocket: {e}")
 
@@ -190,17 +258,37 @@ def start_trimmagem(
                 continue
 
             # Criar registro no banco de dados para o resultado da trimmagem
-            trimmed_name = f"{sample}_trimmed.fastq"
-            trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
-            db_sample_stage_trimmed = SampleStage(
-                stage_id=3,  # ID do estágio de trimmagem
-                name=trimmed_name,
-                sra_code=sample.split("_")[0],
-                size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
-                status="Completed",
-                user_id=user_id,
-            )
-            db.add(db_sample_stage_trimmed)
+            # sample may include the suffix like '_1.fastq' - normalize base name
+            sample_base = sample.replace('.fastq', '')
+            trimmed_name = f"{sample_base}_trimmed.fastq"
+            # Update existing RUNNING entry to COMPLETED or insert new
+            exists = db.query(SampleStage).filter(
+                SampleStage.name == trimmed_name,
+                SampleStage.stage_id == 3,
+                SampleStage.user_id == user_id
+            ).first()
+            if exists:
+                try:
+                    trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")
+                except Exception:
+                    trimmed_size = 0
+                exists.size = f"{trimmed_size / (1024 * 1024):.2f} MB"
+                exists.status = "COMPLETED"
+                db.add(exists)
+            else:
+                try:
+                    trimmed_size = os.path.getsize(f"{trimmed_path}/{trimmed_name}")  # Obter o tamanho do arquivo
+                except Exception:
+                    trimmed_size = 0
+                db_sample_stage_trimmed = SampleStage(
+                    stage_id=3,  # ID do estágio de trimmagem
+                    name=trimmed_name,
+                    sra_code=sample_base.split("_")[0],
+                    size=f"{trimmed_size / (1024 * 1024):.2f} MB",  # Converter para MB
+                    status="COMPLETED",
+                    user_id=user_id,
+                )
+                db.add(db_sample_stage_trimmed)
         db.commit()
 
         logger.info(f"Trimmagem completed successfully for single sample {sample}.")
@@ -225,14 +313,29 @@ def start_trimmagem(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
 
 @router.post("/trimmagem/update_status")
-async def update_trimmagem_status(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 3).first()
+async def update_trimmagem_status(
+    sra_code: str = Form(...),
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code,
+        SampleStage.stage_id == 3,
+        SampleStage.user_id == current_user.id,
+    ).first()
     if not db_sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
-    db_sample_stage.status = status
+    normalized = normalize_status(status)
+    db_sample_stage.status = normalized
     db.commit()
+    # Broadcast update to frontend so UI can refresh
+    try:
+        await manager.broadcast(f"Trimmagem {sra_code} status: {normalized}", user_id=current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to broadcast trimmagem status: {e}")
 
-    return {"message": f"Trimmagem status for {sra_code} updated to {status}"}
+    return {"message": f"Trimmagem status for {sra_code} updated to {normalized}"}
 
 @router.delete("/trimmagem/{sample_name}")
 async def delete_trimmed_sample(sample_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

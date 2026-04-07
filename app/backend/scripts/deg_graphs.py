@@ -104,7 +104,7 @@ def plot_deg_graphs(sheet_name, df, output_dir):
     for cat, col in go_cols.items():
         if col in df.columns:
             # Conta frequência de cada termo (pode ser separado por ; ou |)
-            terms = df[col].dropna().astype(str).str.split(';|,|\|').explode().str.strip()
+            terms = df[col].dropna().astype(str).str.split(r";|,|\|").explode().str.strip()
             terms = terms[terms != ""]
             top_terms = terms.value_counts().head(15)
             for term, count in top_terms.items():

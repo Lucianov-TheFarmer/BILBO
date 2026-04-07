@@ -3,20 +3,51 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from ..db.database import get_db
 from ..db.models import SampleStage, User
-from ..utils import get_current_user, manager
-import subprocess
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user
 import logging
 import os
+import re
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _normalize_selected_genome(raw_value: Optional[str]) -> Optional[str]:
+    if not raw_value:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    # Accept formats like "GCF_..." or "Organism Name (GCF_...)".
+    candidates: list[str] = [value]
+    match = re.search(r"\(([^()]+)\)\s*$", value)
+    if match:
+        accession = match.group(1).strip()
+        if accession:
+            candidates.insert(0, accession)
+
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return candidate
+
+        ref_dir = os.path.join("/users/ref_genomes", candidate)
+        if os.path.isdir(ref_dir):
+            return candidate
+
+    return None
+
 class QuantificationRequest(BaseModel):
     samples: list[str]
     feature_type: str
     id_attribute: str
+    selected_genome: Optional[str] = None
 
 @router.post("/quantification/add_to_queue")
 def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -38,7 +69,7 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
             name=f"{sample_name.replace('.bam', '.txt')}",
             sra_code=db_sample_stage.sra_code,
             size=None,
-            status="Na fila",  # Status inicial
+            status="PENDING",
             user_id=user_id,
         )
         db.add(new_sample_stage)
@@ -46,14 +77,44 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
 
     return {"message": "Amostras adicionadas à fila com sucesso"}
 
-@router.post("/quantification/start_processing")
+@router.post("/quantification/start_processing", status_code=status.HTTP_202_ACCEPTED)
 async def start_processing(
     request: QuantificationRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Processa as amostras de quantificação uma por uma."""
+    """Enfileira a quantificação em job assíncrono."""
     user_id = current_user.id
+    selected_genome = None
+
+    # Prefer explicit genome selected in the quantification modal.
+    if request.selected_genome:
+        selected_genome = _normalize_selected_genome(request.selected_genome)
+        if selected_genome is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected reference genome is invalid or not available.",
+            )
+
+    # Backward-compatible fallback for legacy clients that do not send selected_genome.
+    if selected_genome is None:
+        preprocess_dir = os.path.join("/users", str(user_id), "preprocess")
+        selected_genome_path = os.path.join(preprocess_dir, "selected_genome.txt")
+        try:
+            if os.path.exists(selected_genome_path):
+                with open(selected_genome_path, "r", encoding="utf-8") as f:
+                    line = f.readline().strip()
+                    if line:
+                        selected_genome = _normalize_selected_genome(line)
+                        if selected_genome is None:
+                            logger.warning(
+                                "Ignoring stale selected_genome '%s' for user %s",
+                                line,
+                                user_id,
+                            )
+        except Exception:
+            selected_genome = None
+
     for sample_name in request.samples:
         sample_stage = db.query(SampleStage).filter(
             SampleStage.name == f"{sample_name.replace('.bam', '.txt')}",
@@ -64,34 +125,30 @@ async def start_processing(
         if not sample_stage:
             raise HTTPException(status_code=404, detail=f"Sample {sample_name} not found in queue")
 
-        # Atualizar status para "counting" durante o processamento
-        sample_stage.status = "counting"
+        sample_stage.status = "PENDING"
         db.commit()
 
-        # Executar o script de quantificação
-        command = f"bash /app/backend/scripts/quantification.sh {sample_name} {user_id} {request.feature_type} {request.id_attribute}"
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
-
-        if process.returncode != 0:
-            logger.error(f"Erro ao executar quantificação para {sample_name}: {stderr}")
-            sample_stage.status = "Erro"
-            db.commit()
-            continue
-
-        # Calcular o tamanho do arquivo de quantificação
-        quantification_path = f"../users/{user_id}/quantification/{sample_name.replace('.bam', '.txt')}"
-        if os.path.exists(quantification_path):
-            quantification_size = os.path.getsize(quantification_path)
-            quantification_size_kb = f"{quantification_size / 1024:.2f} KB"
-            sample_stage.size = quantification_size_kb
-            sample_stage.status = "completed"
-            db.commit()
-
-        # Emitir mensagem para o frontend
-        # await manager.broadcast(f"Quantificação concluída para {sample_name}")
-
-    return {"message": "Processamento de quantificação iniciado"}
+    job = create_job(
+        db,
+        stage="quantification",
+        user_id=user_id,
+        payload={
+            "samples": request.samples,
+            "feature_type": request.feature_type,
+            "id_attribute": request.id_attribute,
+            "selected_genome": selected_genome,
+        },
+    )
+    audit(
+        db,
+        action="quantification_enqueued",
+        user_id=user_id,
+        stage="quantification",
+        job_id=job.id,
+        metadata_json={"samples": request.samples},
+    )
+    enqueue_pipeline_job(job.id)
+    return {"job_id": job.id, "status": "PENDING", "message": "Quantification job enqueued"}
 
 @router.get("/quantification/")
 def get_quantification_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -131,7 +188,7 @@ async def update_quantification_status(
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    sample_stage.status = status
+    sample_stage.status = normalize_status(status)
     sample_stage.size = quantification_size_kb
     db.commit()
 

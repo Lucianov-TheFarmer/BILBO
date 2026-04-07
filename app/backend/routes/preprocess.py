@@ -35,11 +35,11 @@ async def start_preprocess(
     if not contrasts:
         raise HTTPException(status_code=404, detail="Contrastes não encontrados.")
 
-    # Buscar todos os arquivos de quantificação do usuário (stage_id=6, status="Completed")
+    # Buscar todos os arquivos de quantificação do usuário (stage_id=6, status completed)
     quant_samples = db.query(SampleStage).filter(
         SampleStage.stage_id == 6,
         SampleStage.user_id == user_id,
-        SampleStage.status == "Completed"
+        SampleStage.status.in_(["COMPLETED", "Completed"])
     ).all()
     sra_to_filename = {s.sra_code: s.name for s in quant_samples}
 
@@ -128,7 +128,8 @@ async def start_preprocess(
     # Execute o script R em background, passando user_id como argumento
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R"))
     try:
-        subprocess.Popen(["Rscript", script_path, str(user_id)])
+        # Execute Rscript with working directory set to the user's preprocess directory
+        subprocess.Popen(["Rscript", script_path, str(user_id)], cwd=base_dir)
     except Exception as e:
         # Logue o erro, mas não interrompa a resposta
         print(f"Erro ao executar o script R: {e}")

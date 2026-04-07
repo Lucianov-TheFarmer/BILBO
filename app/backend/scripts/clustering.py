@@ -1,27 +1,27 @@
 import pandas as pd
 import numpy as np
+import os
 import umap
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.colors as mcolors
+import json
+from scipy import sparse
+from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min, silhouette_score
 from adjustText import adjust_text
 import re
 from unidecode import unidecode
 from nltk.stem import SnowballStemmer
 
-FILE_PATH = 'artigos/RNAseq_example.xlsx'
-IMG_FINAL = 'Cluster.png'
-IMG_METRICS = 'Otimizacao_K.png'
 SEED = 42
-
 K_RANGE = range(2, 21)
-
-COL_ID = 'Name GFF'
-COL_LFC = 'log2FoldChange'
-COL_PADJ = 'padj'
+COL_ID = 'Product GFF'
+COL_LFC = 'logFC'
+COL_PADJ = 'FDR'
 COLS_TXT = ['Uniprot Function', 'Uniprot BP', 'Uniprot CC', 'Uniprot MF']
+
 
 def clean_text(text):
     if not isinstance(text, str): return ""
@@ -34,9 +34,11 @@ def clean_text(text):
     stemmer = SnowballStemmer("english")
     return " ".join([stemmer.stem(t) for t in text.split() if len(t) > 2])
 
-def load_and_process_data(path):
+
+def load_and_process_data(path, sheet_name=None):
     print(">>> [1/5] Carregando e limpando dados...")
-    df = pd.read_excel(path)
+    # If sheet_name is provided, read only that sheet (contrast-specific)
+    df = pd.read_excel(path, sheet_name=sheet_name) if sheet_name else pd.read_excel(path)
     df = df.dropna(subset=[COL_LFC, COL_PADJ, COL_ID])
 
     for col in COLS_TXT:
@@ -49,65 +51,100 @@ def load_and_process_data(path):
 
     return df
 
+
 def vectorize_text(df):
     print(">>> [2/5] Vetorizando texto (TF-IDF)...")
     vectorizer = TfidfVectorizer(stop_words='english', min_df=3, max_features=300)
-    matrix = vectorizer.fit_transform(df['text']).toarray()
+    try:
+        matrix = vectorizer.fit_transform(df['text'])
+    except ValueError:
+        # Fallback for very small datasets where min_df=3 is too restrictive
+        vectorizer = TfidfVectorizer(stop_words='english', min_df=1, max_features=300)
+        matrix = vectorizer.fit_transform(df['text'])
     return matrix, vectorizer
 
-def find_optimal_k(coords):
+
+def _build_kmeans(k: int, sample_count: int):
+    if sample_count > 2000:
+        return MiniBatchKMeans(n_clusters=k, random_state=SEED, batch_size=512, n_init="auto")
+    return KMeans(n_clusters=k, init='k-means++', random_state=SEED, n_init=20)
+
+
+def find_optimal_k(coords, img_metrics_path):
     print(">>> [3/5] Buscando número ideal de clusters (K)...")
     inertias = []
     silhouettes = []
+    sample_count = coords.shape[0]
+    k_max = max(2, min(20, sample_count - 1))
+    k_values = list(range(2, k_max + 1))
+    if len(k_values) < 2:
+        return 2
 
-    for k in K_RANGE:
-        km = KMeans(n_clusters=k, init='k-means++', random_state=SEED, n_init=100)
+    for k in k_values:
+        km = _build_kmeans(k, sample_count)
         labels = km.fit_predict(coords)
 
         inertias.append(km.inertia_)
-        silhouettes.append(silhouette_score(coords, labels))
+        if sample_count > 5000:
+            rng = np.random.default_rng(SEED)
+            sample_idx = rng.choice(sample_count, size=5000, replace=False)
+            silhouettes.append(silhouette_score(coords[sample_idx], labels[sample_idx]))
+        else:
+            silhouettes.append(silhouette_score(coords, labels))
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-    ax1.plot(K_RANGE, inertias, 'bo-', markersize=8)
+    ax1.plot(k_values, inertias, 'bo-', markersize=8)
     ax1.set_title('Elbow Method')
     ax1.set_xlabel('Clusters number (K)')
-    ax1.set_xticks(K_RANGE)
+    ax1.set_xticks(k_values)
     ax1.grid(True)
 
-    ax2.plot(K_RANGE, silhouettes, 'go-', markersize=8)
+    ax2.plot(k_values, silhouettes, 'go-', markersize=8)
     ax2.set_title('Silhouette Score')
     ax2.set_xlabel('Clusters number (K)')
-    ax2.set_xticks(K_RANGE)
+    ax2.set_xticks(k_values)
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig(IMG_METRICS, dpi=300)
-    print(f"    -> Gráfico de métricas salvo: {IMG_METRICS}")
+    plt.savefig(img_metrics_path, dpi=300)
+    print(f"    -> Gráfico de métricas salvo: {img_metrics_path}")
 
-    best_k = K_RANGE[np.argmax(silhouettes)]
+    best_k = k_values[int(np.argmax(silhouettes))]
     print(f"    -> Melhor K encontrado: {best_k} (Score: {max(silhouettes):.3f})")
 
     return best_k
 
+
 def analyze_clusters(df, matrix, vectorizer, reps):
     print(f"\n{' ANÁLISE DE CONTEÚDO ':*^50}")
 
-    term_df = pd.DataFrame(matrix, columns=vectorizer.get_feature_names_out())
-    term_df['cluster'] = df['cluster'].values
-    means = term_df.groupby('cluster').mean()
+    features = vectorizer.get_feature_names_out()
+    labels = df['cluster'].to_numpy()
+    cluster_ids = sorted(df['cluster'].unique())
 
-    for c_id in sorted(means.index):
-        top_terms = means.loc[c_id].nlargest(10)
-        terms_str = ", ".join([f"{t}" for t, _ in top_terms.items()])
+    for c_id in cluster_ids:
+        idx = np.where(labels == c_id)[0]
+        if idx.size == 0:
+            continue
 
-        rep_name = reps.iloc[c_id][COL_ID]
+        if sparse.issparse(matrix):
+            centroid = np.asarray(matrix[idx].mean(axis=0)).ravel()
+        else:
+            centroid = matrix[idx].mean(axis=0)
+
+        top_idx = np.argsort(centroid)[::-1][:10]
+        top_terms = [features[i] for i in top_idx if centroid[i] > 0]
+
+        rep_rows = reps[reps['cluster'] == c_id]
+        rep_name = rep_rows.iloc[0][COL_ID] if not rep_rows.empty else "N/A"
 
         print(f"Cluster {c_id} | Rep: {rep_name}")
-        print(f"   Termos: {terms_str}\n")
+        print(f"   Termos: {', '.join(top_terms)}\n")
     print("*"*50)
 
-def plot_final_map(df, reps, score, k):
+
+def plot_final_map(df, reps, score, k, img_final_path):
     print(">>> [5/5] Gerando mapa...")
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=1.3)
@@ -117,14 +154,16 @@ def plot_final_map(df, reps, score, k):
     sorted_clusters = sorted(df['cluster'].unique())
     hue_order = [f"C{i}" for i in sorted_clusters]
 
-    palette = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf",
-    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896",
-    "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7",
-    "dbdb8d"
-    ]
+    # Build a contrasting palette with enough distinct colors for all clusters
+    n_colors = len(sorted_clusters)
+    if n_colors <= 20:
+        pal = sns.color_palette("tab20", n_colors=n_colors)
+    else:
+        # use HLS for larger numbers to get evenly spaced hues
+        pal = sns.color_palette("hls", n_colors=n_colors)
+
+    # Convert to hex strings to avoid invalid RGBA arguments
+    palette = [mcolors.to_hex(c) for c in pal]
 
     sns.scatterplot(
         data=df, x='x', y='y',
@@ -162,11 +201,14 @@ def plot_final_map(df, reps, score, k):
     plt.ylabel("UMAP Dimension 2")
 
     plt.tight_layout()
-    plt.savefig(IMG_FINAL, dpi=300)
-    print(f"    -> Gráfico salvo: {IMG_FINAL}")
+    plt.savefig(img_final_path, dpi=300)
+    print(f"    -> Gráfico salvo: {img_final_path}")
 
-def cluster_pipeline():
-    df = load_and_process_data(FILE_PATH)
+
+def cluster_pipeline(file_path, sheet_name=None, img_final_path='Cluster.png', img_metrics_path='Otimizacao_K.png', clusters_json_path=None):
+    df = load_and_process_data(file_path, sheet_name=sheet_name)
+    if df.shape[0] < 3:
+        raise ValueError("Dados insuficientes para clustering (mínimo 3 linhas válidas).")
     matrix, vec = vectorize_text(df)
 
     print(">>> [3/5] Projetando dados (UMAP)...")
@@ -174,10 +216,10 @@ def cluster_pipeline():
     coords = umap_model.fit_transform(matrix)
     df['x'], df['y'] = coords[:, 0], coords[:, 1]
 
-    best_k = find_optimal_k(coords)
+    best_k = find_optimal_k(coords, img_metrics_path)
 
     print(f">>> [4/5] Aplicando KMeans (K={best_k})...")
-    kmeans = KMeans(n_clusters=best_k, init='k-means++', random_state=SEED, n_init=100)
+    kmeans = _build_kmeans(best_k, coords.shape[0])
     labels = kmeans.fit_predict(coords)
 
     df['cluster'] = labels
@@ -189,7 +231,7 @@ def cluster_pipeline():
     reps = df.iloc[closest].copy()
 
     analyze_clusters(df, matrix, vec, reps)
-    plot_final_map(df, reps, final_score, best_k)
+    plot_final_map(df, reps, final_score, best_k, img_final_path)
 
     dados_estruturados = {}
 
@@ -203,6 +245,30 @@ def cluster_pipeline():
         }
 
     print(f">>> Pipeline Finalizada. Dados estruturados para {len(dados_estruturados)} clusters.")
-    return dados_estruturados
+
+    # Determine clusters_json_path if not provided: save next to img_final_path
+    try:
+        if clusters_json_path is None:
+            img_dir = os.path.dirname(os.path.abspath(img_final_path)) or os.getcwd()
+            clusters_json_path = os.path.join(img_dir, 'clusters.json')
+
+        with open(clusters_json_path, 'w', encoding='utf-8') as jf:
+            json.dump(dados_estruturados, jf, indent=2, ensure_ascii=False)
+        print(f"    -> Clusters JSON salvo: {clusters_json_path}")
+    except Exception as e:
+        print(f"    [!] Erro ao salvar clusters JSON: {e}")
+
+    return {
+        "clusters": dados_estruturados,
+        "img_final": img_final_path,
+        "img_metrics": img_metrics_path,
+        "clusters_json": clusters_json_path,
+        "score": float(final_score),
+        "k": int(best_k)
+    }
+
+
 if __name__ == "__main__":
-    cluster_pipeline()
+    import sys
+    path = sys.argv[1]
+    cluster_pipeline(path)

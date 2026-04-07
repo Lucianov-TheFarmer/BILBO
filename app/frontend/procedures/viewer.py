@@ -26,16 +26,23 @@ graph_type_to_image = {
 }
 
 async def display_graph(page, token, graph_type, sample_name, user_id, analysis_type):
-    # Extract the sample code from the sample name
+    # Extract the sample code from the sample name (e.g. 'SRR11196539_1.fastq' -> 'SRR11196539_1')
     sample_code = sample_name.split('.')[0]
+    # Derive the base SRA code without _1/_2 suffix (folder name used in QC)
+    sra_base = re.sub(r'(_[12])$', '', sample_code)
 
     # Define the path to the zip file and the image inside it based on analysis_type
     if analysis_type == "QC":
-        zip_path = f"../users/{user_id}/QC/{sample_code}.fastq/{sample_code}_fastqc.zip"
+        # fastqc output is stored under ../users/<user>/QC/<sra_base>/<sample_code>_fastqc.zip
+        zip_path = f"../users/{user_id}/QC/{sra_base}/{sample_code}_fastqc.zip"
         image_path = f"{sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     elif analysis_type == "QC_PostTrim":
+        # sample_code example: SRR11196539_1_post_trim -> trimmed_sample_code: SRR11196539_1_trimmed
         trimmed_sample_code = sample_code.replace("_post_trim", "_trimmed")
-        zip_path = f"../users/{user_id}/QC_PostTrim/{trimmed_sample_code}.fastq/{trimmed_sample_code}_fastqc.zip"
+        # Remove trailing _trimmed then remove _1/_2 to get folder base (same convention as pre-trim QC)
+        tmp_base = re.sub(r'_trimmed$', '', trimmed_sample_code)
+        sra_base_trimmed = re.sub(r'(_[12])$', '', tmp_base)
+        zip_path = f"../users/{user_id}/QC_PostTrim/{sra_base_trimmed}/{trimmed_sample_code}_fastqc.zip"
         image_path = f"{trimmed_sample_code}_fastqc/Images/{graph_type_to_image[graph_type]}"
     else:
         logger.error(f"Unsupported analysis type: {analysis_type}")
@@ -95,6 +102,28 @@ async def display_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        # Prefer the explicit preview container if present
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and getattr(container, "key", None) == "container_preview":
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,
+                                        ),
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return
+
+        # Fallback: previous heuristic based on expand==2
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:
@@ -128,6 +157,28 @@ async def display_quantification_log(page, log_content):
         )
 
 
+        # Prefer explicit preview container
+        for control in page.controls:
+            if isinstance(control, ft.Row):
+                for column in control.controls:
+                    if isinstance(column, ft.Column):
+                        for container in column.controls:
+                            if isinstance(container, ft.Container) and getattr(container, "key", None) == "container_preview":
+                                container.content.controls = [
+                                    ft.Container(
+                                        expand=True,
+                                        content=ft.ListView(
+                                            controls=[log_control],
+                                            spacing=10,
+                                            expand=True,
+                                        ),
+                                        padding=ft.padding.all(10),
+                                    )
+                                ]
+                                page.update()
+                                return
+
+        # Fallback heuristic
         for control in page.controls:
             if isinstance(control, ft.Row):
                 for column in control.controls:

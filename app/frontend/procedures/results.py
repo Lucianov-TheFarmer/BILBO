@@ -1,12 +1,12 @@
 import flet as ft
 import httpx
 import asyncio
+from .jobs import wait_for_job
 
 async def fetch_deg_sheets(token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    params = {"user_id": user_id}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/results/deg_sheets", headers=headers, params=params)
+        response = await client.get("http://localhost:8000/results/deg_sheets", headers=headers)
         response.raise_for_status()
         return response.json().get("sheets", [])
 
@@ -14,7 +14,6 @@ async def fetch_barplot_files(token, user_id):
     async with httpx.AsyncClient() as client:
         response = await client.get(
             "http://localhost:8000/results/barplot_files",
-            params={"user_id": user_id},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -24,7 +23,7 @@ async def create_barplot_file(token, user_id, title, contrasts):
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "http://localhost:8000/results/create_barplot_file",
-            json={"user_id": user_id, "title": title, "contrasts": contrasts},
+            json={"title": title, "contrasts": contrasts},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -34,7 +33,6 @@ async def fetch_venn_files(token, user_id):
     async with httpx.AsyncClient() as client:
         response = await client.get(
             "http://localhost:8000/results/venn_files",
-            params={"user_id": user_id},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -44,7 +42,7 @@ async def create_venn_file(token, user_id, title, contrasts):
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "http://localhost:8000/results/create_venn_file",
-            json={"user_id": user_id, "title": title, "contrasts": contrasts},
+            json={"title": title, "contrasts": contrasts},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -54,7 +52,7 @@ async def delete_venn_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
         response = await client.delete(
             "http://localhost:8000/results/delete_venn_file",
-            params={"user_id": user_id, "filename": filename},
+            params={"filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -64,7 +62,7 @@ async def delete_barplot_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
         response = await client.delete(
             "http://localhost:8000/results/delete_barplot_file",
-            params={"user_id": user_id, "filename": filename},
+            params={"filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -99,6 +97,11 @@ async def show_barplots_table(page, token, user_id, container_amostras):
                         on_click=lambda e, filename=f: asyncio.run(view_barplot_image(page, token, user_id, filename))
                     ),
                     ft.IconButton(
+                        icon="file_download",
+                        tooltip="Baixar barplot",
+                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                    ),
+                    ft.IconButton(
                         icon="delete",
                         icon_color="red",
                         tooltip="Excluir barplot",
@@ -114,7 +117,13 @@ async def show_barplots_table(page, token, user_id, container_amostras):
         icon="add",
         on_click=lambda e: asyncio.run(show_barplots_modal(page, token, user_id, container_amostras)),
     )
-    container_amostras.content.controls = [table, btn]
+    # Replace container content entirely with the results (remove previous stage table)
+    results_wrapper = ft.Container(
+        content=ft.Column(controls=[table, btn]),
+        padding=ft.padding.all(6),
+    )
+
+    container_amostras.content.controls = [results_wrapper]
     page.update()
 
 async def show_venn_table(page, token, user_id, container_amostras):
@@ -146,6 +155,11 @@ async def show_venn_table(page, token, user_id, container_amostras):
                         on_click=lambda e, filename=f: asyncio.run(view_venn_image(page, token, user_id, filename))
                     ),
                     ft.IconButton(
+                        icon="file_download",
+                        tooltip="Baixar diagrama de Venn",
+                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                    ),
+                    ft.IconButton(
                         icon="delete",
                         icon_color="red",
                         tooltip="Excluir diagrama de Venn",
@@ -161,7 +175,13 @@ async def show_venn_table(page, token, user_id, container_amostras):
         icon="add",
         on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id, container_amostras)),
     )
-    container_amostras.content.controls = [table, btn]
+    # Replace container content entirely with the results (remove previous stage table)
+    results_wrapper = ft.Container(
+        content=ft.Column(controls=[table, btn]),
+        padding=ft.padding.all(6),
+    )
+
+    container_amostras.content.controls = [results_wrapper]
     page.update()
 
 async def show_deg_modal(page, token, user_id, title, max_select=None, show_select_all=False, on_confirm=None):
@@ -262,7 +282,10 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
             dlg_modal.title = ft.Text("Título obrigatório!", color="red")
             page.update()
             return
-        await create_barplot_file(token, user_id, title, contrasts)
+        result = await create_barplot_file(token, user_id, title, contrasts)
+        job_id = result.get("job_id")
+        if job_id:
+            await wait_for_job(token, job_id)
         dlg_modal.open = False
         page.update()
         await show_barplots_table(page, token, user_id, container_amostras)
@@ -287,7 +310,10 @@ async def show_venn_modal(page, token, user_id, container_amostras):
             dlg_modal.title = ft.Text("Selecione entre 2 e 4 contrastes!", color="red")
             page.update()
             return
-        await create_venn_file(token, user_id, title, contrasts)
+        result = await create_venn_file(token, user_id, title, contrasts)
+        job_id = result.get("job_id")
+        if job_id:
+            await wait_for_job(token, job_id)
         dlg_modal.open = False
         page.update()
         await show_venn_table(page, token, user_id, container_amostras)
@@ -310,11 +336,9 @@ async def show_heatmap_modal(page, token, user_id, container_amostras):
             dlg_modal.open = False
             page.update()
             
-            # Chama a API para criar o heatmap
             data = {
                 "title": title,
                 "selected_contrasts": selected_contrasts,
-                "user_id": user_id,
             }
             
             async with httpx.AsyncClient() as client:
@@ -325,14 +349,11 @@ async def show_heatmap_modal(page, token, user_id, container_amostras):
                     timeout=120.0,
                 )
 
-            if response.status_code == 200:
+            if response.status_code in (200, 202):
                 result = response.json()
-                # aguarda um curto período para garantir que o arquivo esteja disponível
-                try:
-                    await asyncio.sleep(0.5)
-                except Exception:
-                    pass
-                # Atualiza a tabela se estivermos na tela de heatmaps
+                job_id = result.get("job_id")
+                if job_id:
+                    await wait_for_job(token, job_id)
                 await show_heatmaps_table(page, token, user_id, container_amostras)
             else:
                 try:
@@ -361,7 +382,6 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "http://localhost:8000/results/heatmap_files",
-                params={"user_id": user_id},
                 headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                 timeout=30.0,
             )
@@ -380,11 +400,11 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         # Função para excluir heatmap (sem diálogo) - segue o padrão usado para barplot/venn
         async def delete_heatmap_request(filename):
             try:
-                print(f"[frontend] Enviando DELETE /results/delete_heatmap_file user_id={user_id} filename={filename}")
+                print(f"[frontend] Enviando DELETE /results/delete_heatmap_file filename={filename}")
                 async with httpx.AsyncClient() as client:
                     response = await client.delete(
                         "http://localhost:8000/results/delete_heatmap_file",
-                        params={"user_id": user_id, "filename": filename},
+                        params={"filename": filename},
                         headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                         timeout=30.0,
                     )
@@ -438,12 +458,18 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
                 tooltip="Excluir",
                 on_click=on_delete_click
             )
+
+            download_button = ft.IconButton(
+                icon="file_download",
+                tooltip="Baixar heatmap",
+                on_click=lambda e, fname=filename: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
+            )
             
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(display_name)),
                     ft.DataCell(
-                        ft.Row([view_button, delete_button], tight=True)
+                        ft.Row([view_button, download_button, delete_button], tight=True)
                     ),
                 ]
             )

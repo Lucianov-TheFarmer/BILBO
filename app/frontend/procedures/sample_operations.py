@@ -2,7 +2,7 @@ import flet as ft
 import httpx
 import logging
 import asyncio
-import websockets
+from .jobs import wait_for_job
 from .utils import log_message
 from .quality_analysis import update_quality_analysis_table
 from ..components.general_components import create_table  # Import reusable table
@@ -147,6 +147,18 @@ async def make_request(method, url, headers=None, json=None, params=None):
         logger.error(f"An error occurred: {e}")
         raise
 
+
+def _get_terminal_listview(page):
+    container_terminal = getattr(page, "container_terminal", None)
+    if container_terminal is None:
+        return None
+    if isinstance(container_terminal, ft.ListView):
+        return container_terminal
+    content = getattr(container_terminal, "content", None)
+    if isinstance(content, ft.ListView):
+        return content
+    return None
+
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -176,6 +188,20 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                 logger.error(f"Erro no download de {sample_name}: {e}")
                 await log_message(page, f"Erro no download de {sample_name}: {str(e)}")
         
+        # Show download button only when sample status is Completed
+        actions = []
+        try:
+            status = (sample.get("status") or "").lower()
+        except Exception:
+            status = ""
+
+        if status == "completed":
+            actions.append(ft.IconButton(
+                icon="download",
+                tooltip="Baixar arquivo da amostra",
+                on_click=download_sample_file
+            ))
+
         tabela_amostras_local.rows.append(
             ft.DataRow(
                 cells=[
@@ -183,22 +209,46 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                     ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
-                    ft.DataCell(ft.IconButton(
-                        icon="download",
-                        tooltip="Baixar arquivo da amostra",
-                        on_click=download_sample_file
-                    )),
+                    ft.DataCell(ft.Row(actions)),
                 ],
             )
         )
 
     stage_counts = {}
-    for stage_id in range(1, 7):
-        response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
-        stage_counts[stage_id] = len(response.json())
+    # Fetch counts for stages 1..10
+    for stage_id in range(1, 11):
+        try:
+            response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+            stage_counts[stage_id] = len(response.json())
+        except Exception:
+            stage_counts[stage_id] = 0
 
+    # Fetch contrasts count to represent DEG results (stage_id 8)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("http://bioinfo-container:8000/contrasts/", headers=headers)
+            if resp.status_code == 200:
+                contrasts = resp.json()
+                # DEG results are represented at stage_id 7 in the UI
+                stage_counts[7] = len(contrasts)
+            else:
+                stage_counts[7] = 0
+    except Exception:
+        stage_counts[7] = 0
+
+    # Map table rows order to corresponding stage ids. If UI order changes, update this map accordingly.
+    stage_map = [1, 2, 3, 4, 5, 6, 7, 9, 10]
     for i, row in enumerate(container_menu_direita.content.controls[0].rows):
-        row.cells[1].content.content.value = str(stage_counts.get(i + 1, 0))
+        mapped_stage = stage_map[i] if i < len(stage_map) else (i + 1)
+        # update the quantity cell (row.cells[1].content.content holds the Text)
+        try:
+            row.cells[1].content.content.value = str(stage_counts.get(mapped_stage, 0))
+        except Exception:
+            # fallback if structure differs
+            try:
+                row.cells[1].content.value = str(stage_counts.get(mapped_stage, 0))
+            except Exception:
+                pass
 
     page.update()
 
@@ -228,11 +278,8 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                             ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
                             ft.DataCell(ft.Checkbox()),
-                            ft.DataCell(ft.IconButton(
-                                icon="download",
-                                tooltip="Baixar arquivo da amostra",
-                                on_click=download_sample_file
-                            )),
+                            # Show download button only when sample status is Completed
+                            (ft.DataCell(ft.Row([ft.IconButton(icon="download", tooltip="Baixar arquivo da amostra", on_click=download_sample_file)])) if ((sample.get("status") or "").lower() == "completed") else ft.DataCell(ft.Row([]))),
                         ],
                     )
                 )
@@ -255,21 +302,80 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                     return
                 for _ in range(pending_count):
                     response = await client.post("http://bioinfo-container:8000/samples/download", headers=headers)
-                    if response.status_code == 200:
-                        logger.info("Download iniciado!")
-                        sample_name = response.json().get("sample_name", "Unknown")
+                    if response.status_code in (200, 202):
+                        logger.info("Download enfileirado!")
+                        body = response.json()
+                        sample_name = body.get("sample_name", "Unknown")
+                        job_id = body.get("job_id")
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
+
+                        terminal_listview = _get_terminal_listview(page)
+                        progress_bar = ft.ProgressBar(value=0, width=260, color="green")
+                        progress_title = ft.Text(f"Download {sample_name}: 0%")
+                        progress_detail = ft.Text("Aguardando início do download...", size=11, color="black54")
+                        progress_container = ft.Container(
+                            border=ft.border.all(1, "black12"),
+                            border_radius=8,
+                            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                            content=ft.Column(
+                                spacing=4,
+                                controls=[progress_title, progress_bar, progress_detail],
+                            ),
+                        )
+                        progress_visible = terminal_listview is not None
+                        if progress_visible:
+                            terminal_listview.controls.append(progress_container)
+
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
-                        async with websockets.connect("ws://bioinfo-container:8000/ws") as ws:
-                            while True:
-                                message = await ws.recv()
-                                await log_message(page, message)
-                                if "Download da amostra" in message and "concluído" in message:
-                                    await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
-                                    break
-                                else:
-                                    logger.info("Mensagem recebida não é de conclusão de download. Aguardando próxima mensagem.")
+
+                        async def update_download_progress(job_payload):
+                            if not progress_visible:
+                                return
+
+                            status = str(job_payload.get("status") or "")
+                            result_payload = job_payload.get("result") or {}
+                            progress_percent = result_payload.get("progress_percent")
+                            progress_message = str(result_payload.get("progress_message") or "").strip()
+                            error_message = str(job_payload.get("error_message") or "").strip()
+
+                            try:
+                                percent = float(progress_percent)
+                            except (TypeError, ValueError):
+                                percent = (progress_bar.value or 0.0) * 100.0
+
+                            percent = max(0.0, min(percent, 100.0))
+                            if status == "RUNNING" and percent >= 100.0:
+                                percent = 99.0
+
+                            if status == "COMPLETED":
+                                percent = 100.0
+                                progress_bar.color = "green"
+                            elif status in {"FAILED", "CANCELED"}:
+                                progress_bar.color = "red"
+
+                            progress_bar.value = percent / 100.0
+                            progress_title.value = f"Download {sample_name}: {percent:.1f}%"
+
+                            if progress_message:
+                                progress_detail.value = progress_message
+                            elif status == "RUNNING":
+                                progress_detail.value = "Baixando..."
+                            elif status == "COMPLETED":
+                                progress_detail.value = "Download concluído."
+                            elif status == "FAILED":
+                                progress_detail.value = error_message or "Download falhou."
+                            elif status == "CANCELED":
+                                progress_detail.value = "Download cancelado."
+
+                            page.update()
+
+                        if job_id:
+                            result = await wait_for_job(token, job_id, on_update=update_download_progress)
+                            final_status = result.get("status")
+                            await log_message(page, f"Download da amostra {sample_name} finalizado com status {final_status}.")
+                            if final_status == "COMPLETED":
+                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()

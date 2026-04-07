@@ -1,8 +1,10 @@
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pandas as pd
 import requests
-import time
-import threading
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 def is_plant(lineage, organism=None):
     # Se lineage está vazio, tenta usar o nome do organismo como fallback
@@ -29,7 +31,16 @@ def is_plant(lineage, organism=None):
     ]
     return any(term in lineage for term in plant_terms)
 
-def fetch_uniprot_info(query):
+def _build_session():
+    session = requests.Session()
+    retries = Retry(total=4, connect=4, read=4, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def fetch_uniprot_info(query, session):
     url = (
         "https://rest.uniprot.org/uniprotkb/search"
         f"?query={requests.utils.quote(query)}"
@@ -38,7 +49,7 @@ def fetch_uniprot_info(query):
         "&format=tsv"
     )
     try:
-        resp = requests.get(url, timeout=10)
+        resp = session.get(url, timeout=10)
         if resp.status_code == 400:
             return {}
         if resp.status_code != 200 or not resp.text.strip():
@@ -104,20 +115,19 @@ def annotate_deg_with_uniprot(deg_xlsx_path, write_path=None):
         return
 
     updated = {}
-    # cache results across the entire workbook to avoid duplicate UniProt queries
     uniprot_cache = {}
+    session = _build_session()
 
     try:
+        all_queries = set()
+        sheet_query_map = {}
         for sheet, df in sheets.items():
-            # Ensure df is a DataFrame
             if df is None or df.shape[0] == 0:
-                updated[sheet] = df
+                sheet_query_map[sheet] = (df, None)
                 continue
-
-            # Determine query column: prefer Note/Product/Name GFF if they contain any non-empty values.
             query_col = None
+
             def col_has_value(c):
-                # treat empty strings as missing by stripping and replacing with NA
                 return (c in df.columns) and (df[c].astype(str).str.strip().replace('', pd.NA).notna().any())
 
             if col_has_value("Note GFF"):
@@ -127,10 +137,41 @@ def annotate_deg_with_uniprot(deg_xlsx_path, write_path=None):
             elif col_has_value("Name GFF"):
                 query_col = "Name GFF"
             else:
-                # fallback to the first column (commonly the gene ID column like 'Unnamed: 0')
-                first_col = df.columns[0]
-                print(f"[INFO] No GFF columns with values found in sheet '{sheet}', falling back to first column '{first_col}' for queries.")
-                query_col = first_col
+                query_col = df.columns[0]
+                print(f"[INFO] No GFF columns with values found in sheet '{sheet}', falling back to first column '{query_col}' for queries.")
+
+            sheet_query_map[sheet] = (df, query_col)
+            values = (
+                df[query_col]
+                .astype(str)
+                .str.strip()
+                .replace("nan", "")
+                .replace("", pd.NA)
+                .dropna()
+                .unique()
+                .tolist()
+            )
+            all_queries.update(values)
+
+        if all_queries:
+            print(f"[INFO] Fetching UniProt annotations for {len(all_queries)} unique queries...")
+
+            def _worker(q):
+                return q, fetch_uniprot_info(q, session)
+
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                futures = [executor.submit(_worker, q) for q in all_queries]
+                for future in as_completed(futures):
+                    q, info = future.result()
+                    uniprot_cache[q] = info
+
+        for sheet, df in sheets.items():
+            # Ensure df is a DataFrame
+            if df is None or df.shape[0] == 0:
+                updated[sheet] = df
+                continue
+
+            query_col = sheet_query_map[sheet][1]
 
             # Prepare target columns
             for col in [
@@ -146,18 +187,7 @@ def annotate_deg_with_uniprot(deg_xlsx_path, write_path=None):
                 query_value = str(row[query_col]).strip()
                 if not query_value or query_value == "nan":
                     continue
-                # reuse cached result when available
-                if query_value in uniprot_cache:
-                    info = uniprot_cache[query_value]
-                else:
-                    if count < 5:
-                        print(f"\n[DEBUG] Querying Uniprot for: '{query_value}'")
-                    info = fetch_uniprot_info(query_value)
-                    uniprot_cache[query_value] = info
-                    if count < 5:
-                        print(f"[DEBUG] Result: {info}")
-                    # be polite with UniProt; small delay
-                    time.sleep(0.2)
+                info = uniprot_cache.get(query_value, {})
                 for col in info:
                     df.at[idx, col] = str(info[col]) if info[col] is not None else ""
                 count += 1

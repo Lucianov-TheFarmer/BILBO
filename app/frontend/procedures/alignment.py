@@ -3,7 +3,7 @@ import httpx
 import logging
 import asyncio
 import json
-import websockets
+from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import view_alignment_log
 
@@ -52,7 +52,8 @@ async def update_tabela_alinhamento(page, token, user_id):
                     def view_log_handler(e, s=sample["name"]):
                         asyncio.run(view_alignment_log(page, token, s, user_id))
 
-                    log_button_disabled = sample["status"] != "Completed"
+                    sample_status = str(sample.get("status") or "").strip().lower()
+                    log_button_disabled = sample_status != "completed"
 
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
@@ -104,21 +105,25 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
             for basename in basenames:
                 response = await client.post(
                     "http://bioinfo-container:8000/alignment/start",
-                    data={"sample": basename, "genome": genome, "token": token},
+                    data={"sample": basename, "genome": genome},
                     params={"threads": params["threads"]},
                     headers=headers,
                 )
-                if response.status_code == 200:
+                if response.status_code in (200, 202):
                     await update_tabela_alinhamento(page, token, user_id)
                     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-
-                    async with websockets.connect(f"ws://bioinfo-container:8000/ws?token={token}") as websocket:
-                        async for message in websocket:
-                            if f"Alinhamento concluído para {basename}" in message:
-                                await log_message(page, message)
-                                await update_tabela_alinhamento(page, token, user_id)
-                                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                                break
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"Alinhamento enfileirado para {basename} (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        if status == "COMPLETED":
+                            await log_message(page, f"Alinhamento concluído para {basename}.")
+                        else:
+                            await log_message(page, f"Alinhamento de {basename} finalizado com status {status}.")
+                        await update_tabela_alinhamento(page, token, user_id)
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                 else:
                     await log_message(page, f"Erro ao iniciar alinhamento para {basename}: {response.text}")
     except Exception as e:
@@ -557,7 +562,7 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
             await log_message(page, f"Iniciando download do genoma {accession}...")
             response = await client.post(f"http://bioinfo-container:8000/genomes/download", params={"accession": accession}, headers=headers)
             if response.status_code == 200:
-                # Simplified - assuming immediate indexing after download starts
+                # Download endpoint only returns 200 after the genome files are ready.
                 await index_genome(page, token, accession, organism_name, int(sjdb_overhang), int(threads))
             else:
                 await log_message(page, f"Erro ao iniciar download: {response.text}")

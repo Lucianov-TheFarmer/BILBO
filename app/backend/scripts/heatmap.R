@@ -85,14 +85,15 @@ hc <- hclust(dist(t(mat)))
 # # Ajusta tamanho do PNG
 ncols <- max(1, ncol(mat))
 nrows <- max(1, nrow(mat))
-width_px <- max(800, ncols * 150)
-height_px <- max(600, min(3000, nrows * 6))
+width_px <- 800
+height_px <- 800
 
 # # Gera heatmap usando ComplexHeatmap
 png(filename = output_png_path, width = width_px, height = height_px, res = 150)
 
 Heatmap(mat,
               show_row_names = FALSE,
+              cluster_rows = FALSE,
               cluster_columns = hc,
               column_names_gp = grid::gpar(fontsize = 8),
               column_title_rot = 90,

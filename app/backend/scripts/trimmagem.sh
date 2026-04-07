@@ -15,18 +15,16 @@ avgqual=${12}
 base_path=${13}
 trimmed_path=${14}
 
+
 log_file="/tmp/${sra_code}_trimmagem.log"
-session_name="trimmagem_${sra_code}"
+
 
 # Caminho absoluto para os adaptadores
 adapters_dir="/app/backend/scripts/adapters"
 
-# Verifique se o tmux está instalado, caso contrário, instale-o
-if ! command -v tmux &> /dev/null; then
-    echo "tmux não está instalado. Instalando tmux..." >> $log_file
-    apt-get update >> $log_file 2>&1
-    apt-get install -y tmux >> $log_file 2>&1
-fi
+set -u
+set -o pipefail
+
 
 # Determine if the sample is PE or SE
 input_file_1="$base_path/$sra_code/${sra_code}_1.fastq"
@@ -39,7 +37,7 @@ if [[ -f "$input_file_1" ]]; then
         is_paired=false
     fi
 else
-    echo "Arquivo $input_file_1 não encontrado." >> $log_file
+    echo "Arquivo $input_file_1 nÃƒÂ£o encontrado." >> $log_file
     exit 1
 fi
 
@@ -64,8 +62,12 @@ threshold_palindrome=$(echo "$illumina_clip" | jq -r '.["Threshold palindromo"]'
 threshold_simple=$(echo "$illumina_clip" | jq -r '.["Threshold simples"]')
 min_adapter_length=$(echo "$illumina_clip" | jq -r '.["Comprimento minimo adaptador"]')
 
-# Use the absolute path for the adapter file
-adapter_file="$adapters_dir/$adapter_file"
+# Use the absolute path for the adapter file. If adapter_file is already an absolute path, keep it.
+if [[ "$adapter_file" = /* ]]; then
+    adapter_file="$adapter_file"
+else
+    adapter_file="$adapters_dir/$adapter_file"
+fi
 
 # Validate parsed values
 if [[ -z "$adapter_file" || -z "$seed_mismatches" || -z "$threshold_palindrome" || -z "$threshold_simple" || -z "$min_adapter_length" ]]; then
@@ -108,39 +110,21 @@ fi
 [[ -n "$headcrop" ]] && command+=("HEADCROP:$headcrop")
 [[ -n "$avgqual" ]] && command+=("AVGQUAL:$avgqual")
 
-# Start tmux session and run the command
-echo "Starting tmux session for trimmagem: $session_name" >> $log_file
-tmux new-session -d -s "$session_name" "
-    echo 'Executing: ${command[*]}' >> $log_file;
-    ${command[*]} >> $log_file 2>&1;
-    exit_code=\$?;
-    if [ \$exit_code -eq 0 ]; then
-        echo 'Trimmagem completed successfully' >> $log_file;
-    else
-        echo 'Trimmagem failed with exit code \$exit_code' >> $log_file;
-    fi;
-    tmux wait-for -S trimmagem_done
-"
-
-# Wait for the tmux session to finish
-echo "Waiting for tmux session to finish" >> $log_file
-tmux wait-for trimmagem_done
-
-# Clean up the tmux session
-if tmux has-session -t "$session_name" 2>/dev/null; then
-    echo "Cleaning up tmux session" >> $log_file
-    tmux kill-session -t "$session_name"
-fi
-
-# Print the log file content for debugging
-echo "Log file content:" >> $log_file
-cat $log_file
-
-# Ensure the correct exit code is returned
-if grep -q "Trimmagem completed successfully" "$log_file"; then
-    echo "Trimmagem completed successfully" >> $log_file
-    exit 0
+# Execute the command directly (avoid tmux). Use timeout if available to prevent hangs.
+echo "Executing trimming command: ${command[*]}" >> "$log_file"
+if command -v timeout >/dev/null 2>&1; then
+    RUN_CMD=(timeout 60m "${command[0]}" "${command[@]:1}")
 else
-    echo "Trimmagem failed" >> $log_file
-    exit 1
+    RUN_CMD=("${command[@]}")
 fi
+
+"${RUN_CMD[@]}" >> "$log_file" 2>&1 || true
+exit_code=$?
+
+if [ $exit_code -eq 0 ]; then
+    echo "Trimmagem completed successfully" >> "$log_file"
+else
+    echo "Trimmagem failed with exit code $exit_code" >> "$log_file"
+fi
+
+exit $exit_code

@@ -1,19 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form, Query
+from pathlib import Path
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+
+from ..core.settings import settings
 from ..db.database import get_db
-from ..db.models import SampleStage, User, Stage
-from ..utils import get_current_user, manager
+from ..db.models import PipelineJob, SampleStage, User, Stage
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..utils import get_current_user, get_current_user_compat
+from ..utils_paths import safe_resolve_user_path
 from pydantic import BaseModel
 import subprocess
-import asyncio
-import sys
-import threading
 import os
 import logging
-from jose import jwt, JWTError
-from ..utils import SECRET_KEY, ALGORITHM
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,12 +29,43 @@ class SampleStageCreateRequest(BaseModel):
     stage_id: int
     status: str
 
-def update_sample_status(db: Session, sra_code: str, status: str):
+
+def _latest_samples_download_job(db: Session, user_id: int, sra_code: str) -> Optional[PipelineJob]:
+    jobs = (
+        db.query(PipelineJob)
+        .filter(PipelineJob.user_id == user_id, PipelineJob.stage == "samples_download")
+        .order_by(PipelineJob.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    for job in jobs:
+        payload = job.payload or {}
+        if isinstance(payload, dict) and str(payload.get("sra_code")) == sra_code:
+            return job
+    return None
+
+
+def _is_stale_pending_job(job: PipelineJob, stale_seconds: int = 300) -> bool:
+    if job.status != "PENDING" or job.started_at is not None:
+        return False
+    if job.created_at is None:
+        return True
+    created = job.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return (now - created).total_seconds() >= stale_seconds
+
+def update_sample_status(db: Session, sra_code: str, status: str, user_id: int):
     """Update the status of a sample."""
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1).first()
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code,
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == user_id,
+    ).first()
     if not db_sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
-    db_sample_stage.status = status
+    db_sample_stage.status = normalize_status(status)
     db.commit()
     return db_sample_stage
 
@@ -53,7 +87,7 @@ def create_samples(request: SampleCreateRequest, db: Session = Depends(get_db), 
             name=f"{sra_code}",
             sra_code=sra_code,
             size=request.size,
-            status="Pending",
+            status="PENDING",
             user_id=current_user.id,
         )
         db.add(db_sample_stage)
@@ -130,6 +164,13 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
     except Exception as e:
         logger.warning(f"Não foi possível remover diretório {sample_dir}: {e}")
 
+    audit(
+        db,
+        action="sample_deleted",
+        user_id=current_user.id,
+        stage="samples",
+        metadata_json={"sra_code": sra_code_basename},
+    )
     return {"message": "Sample and associated files deleted successfully"}
 
 @router.get("/samples/status/{sra_code}")
@@ -139,58 +180,78 @@ def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user
         raise HTTPException(status_code=404, detail="Sample not found")
     return {"status": db_sample_stage.status}
 
-@router.post("/samples/download")
+@router.post("/samples/download", status_code=status.HTTP_202_ACCEPTED)
 def download_pending_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    logger.info("Iniciando download_pending_samples endpoint")
-    pending_sample = db.query(SampleStage).filter(SampleStage.status == "Pending", SampleStage.stage_id == 1).first()
+    pending_sample = db.query(SampleStage).filter(
+        SampleStage.status.in_(["PENDING", "Pending", "Na fila"]),
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id,
+    ).first()
+
     if not pending_sample:
-        logger.warning("Nenhuma amostra pendente encontrada para download")
-        raise HTTPException(status_code=404, detail="No pending samples found")
+        running_sample = db.query(SampleStage).filter(
+            SampleStage.status == "RUNNING",
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == current_user.id,
+        ).first()
+        if not running_sample:
+            raise HTTPException(status_code=404, detail="No pending samples found")
+
+        latest_job = _latest_samples_download_job(db, current_user.id, running_sample.sra_code)
+        if latest_job and latest_job.status in ["PENDING", "RUNNING"]:
+            if latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
+                latest_job.status = "FAILED"
+                latest_job.error_message = "Marked as stale and requeued by /samples/download"
+                latest_job.finished_at = datetime.now(timezone.utc)
+                db.commit()
+            else:
+                return {
+                    "job_id": latest_job.id,
+                    "status": latest_job.status,
+                    "message": f"Download already queued/running for sample {running_sample.sra_code}",
+                    "sample_name": running_sample.sra_code,
+                }
+
+        running_sample.status = "PENDING"
+        db.commit()
+        pending_sample = running_sample
 
     sra_code = pending_sample.sra_code
-    user_id = current_user.id
-    logger.info(f"Marcando amostra {sra_code} como 'In Progress' para o usuário {user_id}")
-    pending_sample.status = "In Progress"
-    db.commit()
 
-    command = f"bash /app/backend/scripts/download_script.sh {sra_code} {user_id}"
-    logger.info(f"Executando comando: {command}")
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    job = create_job(db, stage="samples_download", user_id=current_user.id, payload={"sra_code": sra_code})
+    audit(
+        db,
+        action="download_enqueued",
+        user_id=current_user.id,
+        stage="samples_download",
+        job_id=job.id,
+        metadata_json={"sra_code": sra_code},
+    )
+    enqueue_pipeline_job(job.id)
 
-    def update_status():
-        try:
-            logger.info(f"Aguardando término do processo de download para {sra_code}")
-            stdout, _ = process.communicate()
-            logger.info(f"Saída do script de download para {sra_code}:\n{stdout}")
-            db_sample = db.query(SampleStage).filter(SampleStage.sra_code == sra_code).first()
-            if process.returncode == 0:
-                logger.info(f"Download da amostra {sra_code} concluído com sucesso. Atualizando status para 'Completed'.")
-                db_sample.status = "Completed"
-                db.commit()
-                asyncio.run(manager.broadcast(f"Download da amostra {sra_code} concluído."))
-                return
-            else:
-                logger.error(f"Download da amostra {sra_code} falhou com código {process.returncode}")
-        except Exception as e:
-            logger.error(f"Erro ao atualizar status da amostra {sra_code}: {e}")
-            db_sample.status = "Failed"
-            db.commit()
-        finally:
-            process.terminate()
-
-    threading.Thread(target=update_status).start()
-
-    return {"message": f"Download started for sample {sra_code}", "sample_name": sra_code}
+    return {
+        "job_id": job.id,
+        "status": "PENDING",
+        "message": f"Download job enqueued for sample {sra_code}",
+        "sample_name": sra_code,
+    }
 
 @router.post("/samples/update_status")
-async def update_sample_status_endpoint(sra_code: str = Form(...), status: str = Form(...), db: Session = Depends(get_db)):
-    db_sample_stage = update_sample_status(db, sra_code, status)
+async def update_sample_status_endpoint(
+    sra_code: str = Form(...),
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db_sample_stage = update_sample_status(db, sra_code, status, current_user.id)
+    normalized = normalize_status(status)
 
-    if status == "Completed":
+    if normalized == "COMPLETED":
         db_sample_stage.name = f"{sra_code}.fastq"
+        db_sample_stage.status = normalized
         db.commit()
 
-    return {"message": f"Sample {sra_code} status updated to {status}"}
+    return {"message": f"Sample {sra_code} status updated to {normalized}"}
 
 @router.post("/samples/calculate_size")
 async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -198,15 +259,15 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
     ).first()
-    if db_sample_stage is None or db_sample_stage.status != "Completed":
+    if db_sample_stage is None or normalize_status(db_sample_stage.status) != "COMPLETED":
         logger.warning(f"Amostra {sra_code} não encontrada ou não está 'Completed'")
         raise HTTPException(status_code=404, detail="Sample not found or not completed")
 
     user_id = current_user.id
 
-    command = f"python3 /app/backend/scripts/calculate_size.py {sra_code} {user_id}"
-    logger.info(f"Executando comando para calcular tamanho: {command}")
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    command = ["python3", "/app/backend/scripts/calculate_size.py", sra_code, str(user_id)]
+    logger.info("Executando comando para calcular tamanho: %s", " ".join(command))
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout, stderr = process.communicate()
 
     logger.info(f"Saída do cálculo de tamanho para {sra_code}: {stdout}")
@@ -232,7 +293,7 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
         name=f"{sra_code_basename}_1.fastq",
         sra_code=sra_code_basename,
         size=size_1,
-        status="Completed",
+        status="COMPLETED",
         user_id=current_user.id,
     )
     db_sample_stage_2 = SampleStage(
@@ -240,7 +301,7 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
         name=f"{sra_code_basename}_2.fastq",
         sra_code=sra_code_basename,
         size=size_2,
-        status="Completed",
+        status="COMPLETED",
         user_id=current_user.id,
     )
     db.add(db_sample_stage_1)
@@ -253,11 +314,29 @@ async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_u
 
 @router.get("/samples/pending_count")
 def get_pending_samples_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    pending_count = db.query(SampleStage).filter(SampleStage.status == "Pending", SampleStage.stage_id == 1, SampleStage.user_id == current_user.id).count()
+    rows = db.query(SampleStage).filter(
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id,
+        SampleStage.status.in_(["PENDING", "Pending", "Na fila", "RUNNING"]),
+    ).all()
+
+    pending_count = 0
+    for row in rows:
+        normalized = normalize_status(row.status)
+        if normalized == "PENDING":
+            pending_count += 1
+            continue
+        if normalized == "RUNNING":
+            latest_job = _latest_samples_download_job(db, current_user.id, row.sra_code)
+            if latest_job is None:
+                pending_count += 1
+            elif latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
+                pending_count += 1
+
     return {"pending_count": pending_count}
 
 @router.post("/stages/")
-def create_stages(db: Session = Depends(get_db)):
+def create_stages(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     stages = [
         {"id": 1, "name": "obtencao"},
         {"id": 2, "name": "qualidade1"},
@@ -266,7 +345,9 @@ def create_stages(db: Session = Depends(get_db)):
         {"id": 5, "name": "alinhamento"},
         {"id": 6, "name": "quantificacao"},
         {"id": 7, "name": "referencia"},
-        {"id": 8, "name": "contraste"}
+        {"id": 8, "name": "contraste"},
+        {"id": 9, "name": "clustering_semantico"},
+        {"id": 10, "name": "interpretacao_llm"}
 
     ]
     for stage in stages:
@@ -278,24 +359,47 @@ def create_stages(db: Session = Depends(get_db)):
     return {"message": "Stages created successfully"}
 
 @router.post("/samples/{sample_id}/stages/")
-def create_sample_stage(sample_id: int, request: SampleStageCreateRequest, db: Session = Depends(get_db)):
-    db_sample_stage = SampleStage(stage_id=request.stage_id)
+def create_sample_stage(sample_id: int, request: SampleStageCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    source_sample = db.query(SampleStage).filter(SampleStage.id == sample_id, SampleStage.user_id == current_user.id).first()
+    if not source_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    db_sample_stage = SampleStage(
+        stage_id=request.stage_id,
+        name=source_sample.name,
+        sra_code=source_sample.sra_code,
+        size=source_sample.size,
+        status=normalize_status(request.status),
+        user_id=current_user.id,
+    )
     db.add(db_sample_stage)
     db.commit()
     db.refresh(db_sample_stage)
     return db_sample_stage
 
 @router.get("/samples/{sample_id}/stages/")
-def get_sample_stages(sample_id: int, db: Session = Depends(get_db)):
-    sample_stages = db.query(SampleStage).all()
+def get_sample_stages(sample_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    source_sample = db.query(SampleStage).filter(SampleStage.id == sample_id, SampleStage.user_id == current_user.id).first()
+    if not source_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    sample_stages = db.query(SampleStage).filter(
+        SampleStage.user_id == current_user.id,
+        SampleStage.sra_code == source_sample.sra_code,
+    ).all()
     return sample_stages
 
 @router.put("/samples/{sample_id}/stages/{stage_id}")
-def update_sample_stage(sample_id: int, stage_id: int, status: str, db: Session = Depends(get_db)):
-    db_sample_stage = db.query(SampleStage).filter(SampleStage.stage_id == stage_id).first()
+def update_sample_stage(sample_id: int, stage_id: int, status: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    source_sample = db.query(SampleStage).filter(SampleStage.id == sample_id, SampleStage.user_id == current_user.id).first()
+    if not source_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    db_sample_stage = db.query(SampleStage).filter(
+        SampleStage.stage_id == stage_id,
+        SampleStage.user_id == current_user.id,
+        SampleStage.sra_code == source_sample.sra_code,
+    ).first()
     if not db_sample_stage:
         raise HTTPException(status_code=404, detail="Sample stage not found")
-    db_sample_stage.status = status
+    db_sample_stage.status = normalize_status(status)
     db.commit()
     db.refresh(db_sample_stage)
     return db_sample_stage
@@ -315,46 +419,62 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
     return samples
 
 @router.get("/download/{stage_name}/{file_name}")
-def download_file(stage_name: str, file_name: str, token: str = Query(...), db: Session = Depends(get_db)):
-    """Download a file from any stage with token authentication."""
-    
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    
-    user = db.query(User).filter(User.username == username).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
-    
-    user_id = user.id
+def download_file(
+    stage_name: str,
+    file_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_compat),
+):
+    """Download a file from any stage with bearer auth (legacy query token accepted)."""
+    user_id = current_user.id
 
-    # Get sra_code from the database
     sample_stage = db.query(SampleStage).filter(SampleStage.name == file_name, SampleStage.user_id == user_id).first()
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found in database")
-    
-    sra_code = sample_stage.sra_code
 
+    users_root = Path(settings.users_root)
+    sra_code = sample_stage.sra_code
     path_map = {
-        "obtencao": f"../users/{user_id}/samples/{sra_code}/{file_name}",
-        "qualidade1": f"../users/{user_id}/QC/{file_name.replace('.html', '.fastq')}/{file_name.replace('.html', '_fastqc.zip')}",
-        "trimagem": f"../users/{user_id}/trimmed/{file_name}",
-        "qualidade2": f"../users/{user_id}/QC_PostTrim/{file_name.replace('_post_trim.html', '_trimmed.fastq')}/{file_name.replace('_post_trim.html', '_trimmed_fastqc.zip')}",
-        "alinhamento": f"../users/{user_id}/alignment/{sra_code}/{file_name}",
-        "quantificacao": f"../users/{user_id}/quantification/{file_name}",
+        "obtencao": safe_resolve_user_path(str(users_root), user_id, "samples", sra_code, file_name),
+        "qualidade1": safe_resolve_user_path(
+            str(users_root),
+            user_id,
+            "QC",
+            file_name.replace(".html", ".fastq"),
+            file_name.replace(".html", "_fastqc.zip"),
+        ),
+        "trimagem": safe_resolve_user_path(str(users_root), user_id, "trimmed", file_name),
+        "qualidade2": safe_resolve_user_path(
+            str(users_root),
+            user_id,
+            "QC_PostTrim",
+            file_name.replace("_post_trim.html", "_trimmed.fastq"),
+            file_name.replace("_post_trim.html", "_trimmed_fastqc.zip"),
+        ),
+        "alinhamento": safe_resolve_user_path(str(users_root), user_id, "alignment", sra_code, file_name),
+        "quantificacao": safe_resolve_user_path(str(users_root), user_id, "quantification", file_name),
     }
 
     file_path = path_map.get(stage_name)
 
-    if not file_path or not os.path.exists(file_path):
+    if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
+    headers = {}
+    if not request.headers.get("Authorization") and request.query_params.get("token"):
+        headers["X-Auth-Deprecated"] = "Use Authorization: Bearer <token>; query token support will be removed."
+
+    audit(
+        db,
+        action="stage_file_download",
+        user_id=current_user.id,
+        stage=stage_name,
+        metadata_json={"filename": file_path.name},
+    )
     return FileResponse(
-        path=file_path,
-        filename=os.path.basename(file_path),
-        media_type="application/octet-stream"
+        path=str(file_path),
+        filename=file_path.name,
+        media_type="application/octet-stream",
+        headers=headers,
     )

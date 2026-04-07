@@ -4,7 +4,9 @@ import asyncio
 import logging
 import pandas as pd
 from .utils import log_message
+from .jobs import wait_for_job
 import os
+from ..components.general_components import create_table
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,15 +122,25 @@ async def run_deg_analysis(page, token, user_id):
                 response = await client.post(
                     "http://localhost:8000/deg/run",
                     json={
-                        "user_id": user_id,
                         "contrast_ids": list(selected_ids),
                         "genome_accession": genome_accession,
                     },
                     headers=headers,
-                    timeout=600,
+                    timeout=120,
                 )
-                if response.status_code == 200:
-                    await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
+                if response.status_code in (200, 202):
+                    body = response.json()
+                    job_id = body.get("job_id")
+                    if job_id:
+                        await log_message(page, f"DEG enfileirado (job {job_id}).")
+                        result = await wait_for_job(token, job_id)
+                        status = result.get("status")
+                        if status == "COMPLETED":
+                            await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
+                        else:
+                            await log_message(page, f"DEG finalizado com status {status}.")
+                    else:
+                        await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
                 else:
                     await log_message(page, f"Erro na análise DEG: {response.text}")
         except Exception as ex:
@@ -171,8 +183,6 @@ async def run_deg_analysis(page, token, user_id):
                 "Iniciar DEG",
                 on_click=lambda e: asyncio.run(iniciar_deg(e)),
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
-                width=200,
-                height=40,
             ),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER,
@@ -182,7 +192,7 @@ async def run_deg_analysis(page, token, user_id):
 
 async def fetch_sheet_data(token, user_id, sheet_name):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    params = {"user_id": user_id, "sheet": sheet_name}
+    params = {"sheet": sheet_name}
     async with httpx.AsyncClient() as client:
         response = await client.get("http://localhost:8000/deg/sheet_data", headers=headers, params=params)
         response.raise_for_status()
@@ -488,7 +498,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
         print(f"[LOG] Erro ao exibir planilha: {ex}")
         await log_message(page, f"Erro ao exibir planilha: {ex}")
 
-async def show_deg_dropdown(page, user_id=None, sheet_name=None):
+async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
     # Caminho base dos gráficos DEG
     deg_dir = f"../users/{user_id}/DEG"
     # Opções do dropdown e nomes dos arquivos correspondentes
@@ -505,13 +515,16 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
             for column in control.controls:
                 if isinstance(column, ft.Column):
                     for container in column.controls:
-                        if isinstance(container, ft.Container) and container.expand == 2 and isinstance(container.content, ft.Column):
+                        # Prefer explicit key 'container_preview' to avoid matching the chatbot container
+                        if isinstance(container, ft.Container) and getattr(container, 'key', None) == "container_preview" and isinstance(container.content, ft.Column):
                             dropdown = ft.Dropdown(
                                 options=[ft.dropdown.Option(title) for title, _ in DEG_GRAPHS],
                                 width=350,
                                 value=DEG_GRAPHS[0][0],
                             )
                             img_placeholder = ft.Container(expand=True, alignment=ft.alignment.center)
+
+                            current_filename = None
 
                             async def display_deg_graph(selected_title):
                                 # Busca o arquivo correspondente ao título selecionado
@@ -538,6 +551,9 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
                                         content=image_control,
                                         constrained=True
                                     )
+                                    # store current filename for download button
+                                    nonlocal current_filename
+                                    current_filename = filename
                                     return interactive_viewer
                                 except Exception as e:
                                     return ft.Text(f"Erro ao carregar imagem: {e}", color="red")
@@ -550,6 +566,20 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
 
                             dropdown.on_change = on_dropdown_change
 
+                            async def download_current_image(e):
+                                try:
+                                    if not current_filename:
+                                        await log_message(page, "Nenhuma figura selecionada para download.")
+                                        return
+                                    import urllib.parse
+                                    fname_enc = urllib.parse.quote(current_filename, safe='')
+                                    download_url = f"http://localhost:8000/results/download_image?filename={fname_enc}&token={token}"
+                                    page.launch_url(download_url)
+                                except Exception as ex:
+                                    await log_message(page, f"Erro ao iniciar download da figura: {ex}")
+
+                            download_icon_btn = ft.IconButton(icon="file_download", tooltip="Baixar figura", on_click=download_current_image)
+
                             # Exibe o primeiro gráfico por padrão
                             img_placeholder.content = await display_deg_graph(DEG_GRAPHS[0][0])
 
@@ -559,7 +589,7 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
                                     content=ft.Column(
                                         controls=[
                                             ft.Container(height=10),
-                                            ft.Row([dropdown], alignment=ft.MainAxisAlignment.CENTER),
+                                            ft.Row([dropdown, ft.Container(width=8), download_icon_btn], alignment=ft.MainAxisAlignment.CENTER),
                                             img_placeholder
                                         ],
                                         alignment=ft.MainAxisAlignment.CENTER,
@@ -572,64 +602,117 @@ async def show_deg_dropdown(page, user_id=None, sheet_name=None):
 
 async def show_deg_results(page, token, user_id, container_amostras):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-    params = {"user_id": user_id}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:8000/deg/sheets", headers=headers, params=params)
+            response = await client.get("http://localhost:8000/deg/sheets", headers=headers)
             if response.status_code == 200:
                 sheets = response.json().get("sheets", [])
                 if not sheets:
                     await log_message(page, "Nenhuma aba encontrada em DEG.xlsx.")
                 else:
-                    table = ft.DataTable(
+                    # Build table with a selectable checkbox column and actions, styled like QC tables
+                    async def toggle_select_all(e):
+                        checked = e.control.value
+                        for row in tabela.rows:
+                            try:
+                                if isinstance(row.cells[1].content, ft.Checkbox):
+                                    row.cells[1].content.value = checked
+                            except Exception:
+                                continue
+                        page.update()
+
+                    tabela = ft.DataTable(
+                        heading_row_color="primary",
+                        data_row_color="surface",
+                        border=ft.border.all(0.5, "#000000"),
+                        column_spacing=12,
+                        divider_thickness=0.5,
                         columns=[
-                            ft.DataColumn(
-                                ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD),
-                            ),
-                            ft.DataColumn(ft.Text(""))
+                            ft.DataColumn(ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD, width=160)),
+                            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
+                            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
                         ],
-                        heading_row_color="black12",
-                        rows=[
+                        rows=[],
+                        expand=True,
+                    )
+
+                    for sheet in sheets:
+                        checkbox = ft.Checkbox(data=sheet)
+                        tabela.rows.append(
                             ft.DataRow(
                                 cells=[
+                                    ft.DataCell(ft.Text(sheet, size=12)),
+                                    ft.DataCell(checkbox),
                                     ft.DataCell(
-                                        ft.Container(
-                                            content=ft.Text(sheet, text_align=ft.TextAlign.CENTER),
-                                            width=270,
-                                            alignment=ft.alignment.center_left
-                                        )
-                                    ),
-                                    ft.DataCell(
-                                        ft.Container(
-                                            content=ft.Row(
-                                                controls=[
-                                                    ft.IconButton(
-                                                        icon="table_chart",
-                                                        icon_color="green",
-                                                        tooltip="Abrir planilha",
-                                                        on_click=lambda e, s=sheet: asyncio.run(
-                                                            show_sheet_as_table(page, token, user_id, s)
-                                                        )
-                                                    ),
-                                                    ft.IconButton(
-                                                        icon="visibility",
-                                                        tooltip="Visualizar",
-                                                        # Corrigido: passa o nome da aba (sheet) para show_deg_dropdown
-                                                        on_click=lambda e, s=sheet: asyncio.run(
-                                                            show_deg_dropdown(page, user_id=user_id, sheet_name=s)
-                                                        )
-                                                    ),
-                                                ],
-                                                spacing=5,
-                                            ),
-                                            alignment=ft.alignment.center_right,
+                                        ft.Row(
+                                            controls=[
+                                                ft.IconButton(
+                                                    icon="table_chart",
+                                                    icon_color="green",
+                                                    tooltip="Abrir planilha",
+                                                    on_click=lambda e, s=sheet: asyncio.run(
+                                                        show_sheet_as_table(page, token, user_id, s)
+                                                    )
+                                                ),
+                                                ft.IconButton(
+                                                    icon="visibility",
+                                                    tooltip="Visualizar",
+                                                    on_click=lambda e, s=sheet: asyncio.run(
+                                                        show_deg_dropdown(page, token, user_id=user_id, sheet_name=s)
+                                                    )
+                                                ),
+                                            ],
+                                            spacing=6,
                                         )
                                     ),
                                 ]
-                            ) for sheet in sheets
-                        ],
+                            )
+                        )
+
+                    # Scrollable wrapper for visual parity and full width
+                    tabela_com_scroll = ft.Row(
+                        controls=[ft.Container(content=tabela, expand=True)],
+                        scroll=ft.ScrollMode.ALWAYS,
+                        expand=True
                     )
-                    container_amostras.content.controls = [table]
+
+                    # Download button to fetch selected sheets as a single XLSX
+                    async def download_selected(e):
+                        selected = []
+                        for row in tabela.rows:
+                            try:
+                                cb = row.cells[1].content
+                                if isinstance(cb, ft.Checkbox) and cb.value:
+                                    # sheet name is in first cell
+                                    sheet_name = row.cells[0].content.value
+                                    selected.append(sheet_name)
+                            except Exception:
+                                continue
+
+                        if not selected:
+                            await log_message(page, "Selecione ao menos uma aba para baixar.")
+                            return
+
+                        import urllib.parse
+                        sheets_param = urllib.parse.quote(",".join(selected), safe='')
+                        download_url = f"http://localhost:8000/results/download_deg_sheets?sheets={sheets_param}&token={token}"
+                        page.launch_url(download_url)
+
+                    from ..components.general_components import create_button
+                    btn_download = create_button("Baixar abas selecionadas", download_selected, color="green", expand=True)
+
+                    # Place table + centered, full-width button in the actions area
+                    container_amostras.content.controls = [
+                        ft.Column(
+                            controls=[
+                                tabela_com_scroll,
+                                ft.Container(height=8),
+                                ft.Row([btn_download], alignment=ft.MainAxisAlignment.CENTER, expand=True),
+                            ],
+                            expand=True,
+                        )
+                    ]
+
                     page.update()
             else:
                 await log_message(page, f"Erro ao buscar abas: {response.text}")

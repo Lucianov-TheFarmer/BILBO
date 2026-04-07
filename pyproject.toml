@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bilbo"
+version = "1.0.0"
+description = "Bioinformatics Integration for Large-scale Biological Operations in RNA-seq Analysis"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Vitor Luciano" },
+  { name = "Joao Vitor Reis Alvarenga" },
+]
+license = { text = "MIT" }
+dependencies = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+exclude = ["users", "app/backend/db/alembic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = "app/backend/db/alembic"

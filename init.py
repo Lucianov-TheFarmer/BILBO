@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 CONFIG = {
-    'build': True,
+    'build': False,
+    'debug_profile': False,
     'ssh': {
         'port': 2222,
         'user': 'bilbo',
@@ -86,6 +87,11 @@ load_config()
 
 BUILD = CONFIG['build']
 
+
+def compose_prefix():
+    profile = " --profile debug" if CONFIG.get("debug_profile") else ""
+    return f"docker compose{profile}"
+
 def run_command(command):
     logger.debug(f"Running command: {command}")
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -106,7 +112,7 @@ def run_command_dynamic_output(command):
 
 def stop_containers():
     logger.info("Stopping Docker containers...")
-    down_process = run_command("docker-compose down")
+    down_process = run_command(f"{compose_prefix()} down")
     down_process.wait()
 
 def signal_handler(sig, frame):
@@ -337,14 +343,14 @@ def main():
     try:
         if BUILD:
             logger.info("\n🔨 Building Docker containers...\n")
-            build_rc = run_command_dynamic_output("docker-compose build")
+            build_rc = run_command_dynamic_output(f"{compose_prefix()} build")
             if build_rc != 0:
                 logger.error("❌ Docker build failed.")
                 stop_containers()
                 sys.exit(1)
 
         logger.info("🚀 Starting Docker containers...")
-        up_process = run_command("docker-compose up -d")
+        up_process = run_command(f"{compose_prefix()} up -d")
         up_process.wait()
         logger.info("✅ Docker containers started!")
 
@@ -352,18 +358,17 @@ def main():
         if not wait_for_backend_ready():
             return
 
-        # Wait for SSH server to be ready
-        if wait_for_ssh_ready():
-            logger.info("✅ SSH server is ready!")
-            
-            # Mostrar informações de conexão
-            display_ssh_connection_info()
-            
-            # Aguardar indefinidamente
-            while True:
-                time.sleep(1)
+        if CONFIG.get("debug_profile"):
+            if wait_for_ssh_ready():
+                logger.info("✅ SSH server is ready!")
+                display_ssh_connection_info()
+            else:
+                logger.error("❌ SSH server failed to start")
         else:
-            logger.error("❌ SSH server failed to start")
+            logger.info("ℹ️ Debug profile desabilitado. Acesse diretamente: http://localhost:8000/frontend")
+
+        while True:
+            time.sleep(1)
 
     except Exception as e:
         logger.error(f"❌ An error occurred: {e}")

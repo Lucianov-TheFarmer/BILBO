@@ -1,123 +1,160 @@
-# 🧙‍♂️ BILBO: BIoinformatics and RNA-Seq LaB Online
+# BILBO: Bioinformatics Integration for Large-scale Biological Operations
 
 [![Docker](https://img.shields.io/badge/Docker-Enabled-blue?logo=docker)](https://www.docker.com/)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow?logo=python)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Flet](https://img.shields.io/badge/Frontend-Flet-orange)](https://flet.dev/)
 
-> **BILBO** é uma plataforma integrada e "dockerizada" projetada para simplificar o complexo pipeline de análise de RNA-Seq. Combinando ferramentas de bioinformática consagradas com uma interface moderna e assistência de IA, o BILBO transforma dados brutos em insights biológicos de forma intuitiva.
+## Overview
 
----
+BILBO is a containerized, end-to-end RNA-Seq analysis platform designed to improve reproducibility, reduce operational overhead, and accelerate biological interpretation. The system integrates established bioinformatics tools, asynchronous job orchestration, and retrieval-augmented language modeling in a single user-facing environment.
 
-## 📋 Sobre o Projeto
+The core objective is to keep researchers focused on biological inference rather than infrastructure setup, dependency conflicts, and command-line pipeline management.
 
-A análise de transcriptômica (RNA-Seq) envolve o uso de diversas ferramentas de linha de comando, gerenciamento de dependências e scripts complexos em R e Python. O **BILBO** (Bioinformatics and RNA-Seq Lab Online) nasce para eliminar essa barreira, oferecendo um ambiente pronto para uso onde o foco do pesquisador permanece na **biologia**, não na configuração do servidor.
+## Scientific Motivation
 
-Seja você um estudante aprendendo bioinformática ou um pesquisador processando amostras reais, o BILBO oferece as ferramentas necessárias dentro de uma infraestrutura escalável e isolada.
+RNA-Seq workflows are typically fragmented across heterogeneous tools, scripting languages, and execution environments. This fragmentation introduces variability in execution and increases the cost of technical maintenance. BILBO addresses this challenge by providing:
 
----
+1. A standardized computational environment (Docker-based).
+2. A stage-oriented analytical workflow from raw reads to interpretation.
+3. Traceable asynchronous execution with explicit job states.
+4. Integrated RAG-assisted interpretation of cluster and DEG-derived results.
 
-## ✨ Funcionalidades Principais
+## Core Capabilities
 
-O BILBO cobre todo o fluxo de trabalho de RNA-Seq:
+BILBO covers the complete RNA-Seq processing and interpretation lifecycle:
 
-* **🧬 Gestão de Genomas:** Busca automatizada e download de genomas e arquivos de anotação (GFF/GTF).
-* **📥 Download de SRA:** Integração com o *SRA Toolkit* para baixar amostras diretamente do NCBI.
-* **🛠️ Controle de Qualidade e Trimming:** * Análise de qualidade pré e pós-processamento (FastQC/MultiQC).
-    * Limpeza de adaptadores e filtros de qualidade via *Trimmomatic*.
-* **🎯 Alinhamento e Mapeamento:** Indexação de genomas e alinhamento de reads utilizando o *STAR* (Spliced Transcripts Alignment to a Reference).
-* **📊 Expressão Diferencial (DEG):** * Quantificação de abundância com *featureCounts*.
-    * Análises estatísticas robustas usando *EdgeR* em R.
-* **🎨 Visualização de Dados:** Geração automática de Heatmaps, Diagramas de Venn e Gráficos de Barras para genes diferencialmente expressos.
-* **🤖 Assistência via IA (RAG):** Integração com *Ollama* para permitir conversas inteligentes sobre os seus resultados de bioinformática.
-* **🖥️ Interface Unificada:** Frontend amigável construído em *Flet*, permitindo operar ferramentas complexas sem digitar uma única linha de código Bash.
+1. Genome and annotation handling.
+2. Automated SRA acquisition through SRA Toolkit.
+3. Pre- and post-trimming quality control (FastQC-based steps).
+4. Adapter trimming and quality filtering (Trimmomatic).
+5. Reference indexing and read alignment (STAR).
+6. Quantification and count matrix generation (featureCounts).
+7. Differential expression analysis (EdgeR in R).
+8. Scientific visual outputs (heatmaps, Venn diagrams, barplots, DEG artifacts).
+9. Semantic clustering for downstream biological grouping.
+10. LLM-assisted interpretation using local RAG infrastructure.
 
-## 🛠️ Stack Tecnológica
+## Technical Architecture
 
-O BILBO é construído sobre uma arquitetura robusta para garantir reprodutibilidade e desempenho:
+### Languages and Runtime
 
-* **Linguagens:** Python 3.9+ (Backend e Interface), R (Análises Estatísticas), Bash (Automação de Ferramentas).
-* **Interface (GUI):** [Flet](https://flet.dev/) - Uma interface moderna e responsiva baseada em Flutter.
-* **Backend & API:** [FastAPI](https://fastapi.tiangolo.com/) com Uvicorn.
-* **Banco de Dados:** PostgreSQL (armazenamento de metadados de amostras e estágios do pipeline).
-* **Containerização:** Docker & Docker Compose (Isolamento total do ambiente).
-* **Ferramentas de Bioinformática:**
-    * `SRA Toolkit` (Download de dados)
-    * `STAR` (Alinhamento de alta performance)
-    * `Trimmomatic` (Limpeza de reads)
-    * `EdgeR` (Análise de expressão diferencial)
-    * `FastQC` / `MultiQC` (Relatórios de qualidade)
+1. Python 3.9+ (backend services and frontend logic).
+2. R (statistical modeling and plotting workflows).
+3. Bash (pipeline orchestration scripts for external tools).
 
----
+### Application Stack
 
-## 🚀 Como Começar
+1. Frontend: Flet.
+2. Backend API: FastAPI + Uvicorn.
+3. Persistence: PostgreSQL (sample metadata, stage status, jobs, artifacts).
+4. Task queue: Celery + Redis (asynchronous execution with job tracking).
+5. Containerization: Docker + Docker Compose.
 
-O BILBO foi projetado para ser "Plug and Play". Siga os passos abaixo para preparar seu laboratório virtual.
+## AI and RAG Layer
 
-### 1. Pré-requisitos
-Certifique-se de ter instalado em sua máquina:
-* [Docker](https://docs.docker.com/get-docker/)
-* [Docker Compose](https://docs.docker.com/compose/install/)
-* [Python 3](https://www.python.org/downloads/) (apenas para rodar o script de inicialização automática)
+BILBO includes local LLM support via Ollama and a retrieval-augmented generation workflow backed by a persistent ChromaDB vector database.
 
-### 2. Instalação e Inicialização
-Clone o repositório e utilize o script `init.py` que automatiza todo o processo de build e configuração de rede:
+### First-use vector database bootstrap
 
-### 2. Instalação e Inicialização
+If the vector database directory is not present at first LLM execution, BILBO automatically downloads the archive from Zenodo and initializes the local vector store before continuing the normal LLM pipeline.
 
-O BILBO utiliza um script inteligente que prepara todo o ambiente para você. Siga os comandos abaixo:
+Default source URL:
+
+https://zenodo.org/records/19440155/files/chroma_db_BILBO_Plants.rar?download=1
+
+This behavior can be overridden with the environment variable BILBO_RAG_DB_URL.
+
+## Environment Variables
+
+Configure the following variables for secure and predictable operation:
+
+1. SECRET_KEY (required in production).
+2. DATABASE_URL, or POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+3. CORS_ORIGINS.
+4. CELERY_BROKER_URL.
+5. CELERY_RESULT_BACKEND.
+6. LLM_PRIMARY_MODEL (default: qwen3:14b).
+7. LLM_FALLBACK_MODELS (default: qwen3:8b,qwen3:0.6b).
+8. ARTIFACT_RETENTION_DAYS.
+9. LOG_RETENTION_DAYS.
+10. AUDIT_RETENTION_DAYS.
+
+## Getting Started
+
+### Prerequisites
+
+1. Docker.
+2. Docker Compose.
+3. Python 3 (only required for the optional initialization helper script).
+
+### Installation and startup
 
 ```bash
-# 1. Clone o repositório
-git clone [https://github.com/seu-usuario/bilbo.git](https://github.com/seu-usuario/bilbo.git)
+# Clone repository
+git clone https://github.com/Lucianov-TheFarmer/BILBO.git
 
-# 2. Entre na pasta do projeto
-cd bilbo
+# Enter project directory
+cd BILBO
 
-# 3. Execute o inicializador automático
+# Optional helper bootstrap
 python init.py
 
-
-
-# organização dos arquivos
-bilbo/
-├── app/
-│   ├── backend/       # API FastAPI, Banco de Dados e Scripts (R/Bash)
-│   ├── frontend/      # Interface Flet e componentes de UI
-│   └── assets/        # Identidade visual (ícones e logotipos)
-├── config/            # Definições de ambiente (Conda/YML)
-├── Dockerfile         # Receita da imagem principal (Ferramentas de Bioinfo)
-├── docker-compose.yml # Orquestração multi-container
-└── init.py            # Orquestrador de inicialização do sistema
+# Or run services directly
+docker compose up -d bioinfo worker db redis ollama
 ```
 
+## Repository Organization
 
-## 🧬 Fluxo de Trabalho (Pipeline)
+```text
+BILBO/
+├── app/
+│   ├── backend/       # FastAPI, Database and R/Bash/Python scripts
+│   ├── frontend/      # Flet interface and UI procedures
+│   └── assets/        # Icons and visual identity assets
+├── config/            # Conda and runtime configuration
+├── Dockerfile         # Main execution image
+├── docker-compose.yml # Multi-container orchestration
+└── init.py            # Optional startup bootstrap
+```
 
-O BILBO organiza a análise de RNA-Seq em etapas lógicas, acessíveis pelo menu lateral da interface:
+## Job API
 
-1.  **Upload & Samples:** Importe seus arquivos `.fastq` ou utilize o buscador integrado para baixar dados diretamente do SRA (NCBI).
-2.  **Pre-processing:** Realize o controle de qualidade (FastQC) e a limpeza de adaptadores (Trimmomatic).
-3.  **Alignment:** Mapeie suas sequências contra um genoma de referência utilizando o alinhador *STAR*.
-4.  **Quantification:** Gere a matriz de contagem de genes com o *featureCounts*.
-5.  **Differential Expression (DEG):** Execute a análise estatística com *EdgeR* para identificar genes super ou subexpressos.
-6.  **Results & Plots:** Visualize Heatmaps, Volcano Plots e Diagramas de Venn prontos para publicação.
+Long-running operations are asynchronous and return HTTP 202 with a job descriptor.
 
----
+Main endpoints:
 
-## 🤖 Assistência Inteligente (RAG + Ollama)
+1. POST /jobs/{stage}/enqueue
+2. GET /jobs/{job_id}
+3. GET /jobs?stage=&status=
+4. POST /jobs/{job_id}/cancel
+5. GET /jobs/{job_id}/artifacts
 
-Um diferencial exclusivo do BILBO é a integração com o **Ollama**.
-A plataforma utiliza uma técnica chamada **RAG (Retrieval-Augmented Generation)** para conectar os resultados da sua análise (como a lista de genes diferencialmente expressos) a um modelo de linguagem local.
+## Reproducibility and Traceability
 
-* **Interpretação de Genes:** Pergunte à IA sobre a função biológica dos genes encontrados.
-* **Insights Científicos:** Peça resumos sobre as vias metabólicas afetadas em seu experimento.
-* **Privacidade:** Todo o processamento da IA ocorre localmente dentro do container, sem enviar seus dados para a nuvem.
+BILBO was designed to improve methodological consistency by combining:
 
----
+1. Fixed execution environments.
+2. Stage-level status persistence in the database.
+3. Artifact tracking per job.
+4. Auditable asynchronous job lifecycle.
 
-## 👨‍🔬 Autores
+## Authors
 
-Desenvolvido por **[Vitor Luciano e João Vitor Reis Alvarenga]** no Laboratório de Fisiologia Molecular de Plantas (**LFMP/UFLA**).
+Developed by Vitor Luciano and Joao Vitor Reis Alvarenga, with support from Manoel Viana Linhares-Neto, Muhammad Noman, and Antonio Chalfun Junior, at the Plant Molecular Physiology Laboratory (LFMP/UFLA).
 
-> "Simplicidade é o último grau de sofisticação aplicado à Bioinformática."
+<div style="display: flex; gap: 20px; align-items: center; justify-content: center">
+  <img src="app/assets/src/UFLA.png" alt="Logo UFLA" style="width: 150px; height: auto;">
+  <img src="app/assets/src/LFMP.png" alt="Logo LFMP" style="width: 150px; height: auto;">
+</div>
+
+<br>
+
+<div style="text-align: right;">
+<i>"Unite intelligence with effort, you will work less and achieve more."</i>
+</div>
+
+<div style="text-align: right;">
+    - Carlos Bernardo Gonzalez Pecotche
+</div>
+

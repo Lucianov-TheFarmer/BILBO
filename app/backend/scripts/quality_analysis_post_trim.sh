@@ -1,32 +1,37 @@
 #!/bin/bash
 
-sra_code=$1
-user_id=$2
-token=$3  # Adicionado para receber o token como argumento
-output_dir="../users/${user_id}/QC_PostTrim/$sra_code"
+set -euo pipefail
+
+sra_code="$1"
+user_id="$2"
+sra_code_base=$(echo "$sra_code" | sed -E 's/(_1|_2|_trimmed)?\.fastq$//')
+sra_base=$(echo "$sra_code_base" | sed -E 's/(_[12])$//')
+output_dir="/users/${user_id}/QC_PostTrim/${sra_base}"
 log_file="/tmp/${sra_code}_quality_analysis_post_trim.log"
 
-if ! command -v tmux &> /dev/null; then
-    echo "tmux não está instalado. Instalando tmux..." >> $log_file
-    apt-get update >> $log_file 2>&1
-    apt-get install -y tmux >> $log_file 2>&1
+mkdir -p "$output_dir"
+input_file="/users/${user_id}/trimmed/${sra_code}"
+
+if [ ! -f "$input_file" ]; then
+  echo "Input file not found: $input_file" > "$log_file"
+  exit 2
 fi
 
-sra_code_base=${sra_code%_[12].fastq}
+sample_basename=$(basename "$sra_code" .fastq)
 
-echo "Criando diretório para análise de qualidade pós-trimmagem: $output_dir" >> $log_file
-mkdir -p $output_dir
+if command -v timeout >/dev/null 2>&1; then
+  timeout 30m fastqc -t 4 -o "$output_dir" "$input_file" > "$log_file" 2>&1
+else
+  fastqc -t 4 -o "$output_dir" "$input_file" > "$log_file" 2>&1
+fi
 
-echo "Iniciando sessão tmux para fastqc pós-trimmagem" >> $log_file
-tmux new-session -d -s QC_PostTrim_$user_id "fastqc -o $output_dir ../users/$user_id/trimmed/$sra_code >> $log_file 2>&1; exit_code=\$?; if [ \$exit_code -eq 0 ]; then echo 'Análise de qualidade pós-trimmagem concluída com sucesso' >> $log_file; curl -X POST http://bioinfo-container:8000/quality_analysis_post_trim/update_status -H 'Content-Type: application/x-www-form-urlencoded' -H \"Authorization: Bearer $token\" -d \"sra_code=$sra_code_base&status=Completed\" >> $log_file 2>&1; else echo 'Análise de qualidade pós-trimmagem falhou com código de saída \$exit_code' >> $log_file; fi; tmux wait-for -S quality_analysis_post_trim_done"
+exit_code=$?
+expected_zip="$output_dir/${sample_basename}_fastqc.zip"
 
-echo "Aguardando finalização da sessão tmux" >> $log_file
-tmux wait-for quality_analysis_post_trim_done
+if [ "$exit_code" -eq 0 ] && [ -f "$expected_zip" ]; then
+  echo "Post-trim quality analysis completed successfully." >> "$log_file"
+else
+  echo "Post-trim quality analysis failed or zip missing (exit_code=${exit_code})." >> "$log_file"
+fi
 
-echo "Encerrando sessão tmux" >> $log_file
-tmux kill-session -t QC_PostTrim_$user_id
-
-echo "Conteúdo do arquivo de log:" >> $log_file
-cat $log_file
-
-exit $exit_code
+exit "$exit_code"

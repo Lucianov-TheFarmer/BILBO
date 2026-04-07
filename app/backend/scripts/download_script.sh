@@ -1,42 +1,87 @@
 #!/bin/bash
 
-sra_code=$1
-user_id=$2
-output_dir="../users/${user_id}/samples/${sra_code}"
-log_file="/app/backend/logs/${sra_code}_download.log"
+set -euo pipefail
 
-# Garante que o diretório de logs exista
-mkdir -p /app/backend/logs
-
-echo "Script iniciado para $sra_code (user $user_id)" >> $log_file
-
-# Verifique se o tmux está instalado, caso contrário, instale-o
-if ! command -v tmux &> /dev/null; then
-    echo "tmux não está instalado. Instalando tmux..." >> $log_file
-    apt-get update
-    apt-get install -y tmux
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 <sra_code> <user_id>" >&2
+  exit 1
 fi
 
-# Create a new directory for the sample
-echo "Criando diretório de saída: $output_dir" >> $log_file
+sra_code="$1"
+user_id="$2"
+output_dir="/users/${user_id}/samples/${sra_code}"
+log_file="/app/backend/logs/${sra_code}_download.log"
+temp_dir="${output_dir}/tmp"
+max_download_attempts="${FASTERQ_MAX_ATTEMPTS:-3}"
+
+mkdir -p /app/backend/logs
 mkdir -p "$output_dir"
+mkdir -p "$temp_dir"
 
-# Create a new tmux session and run fasterq-dump inside it
-echo "Iniciando sessão tmux para fasterq-dump" >> $log_file
-tmux new-session -d -s download_${user_id}_${sra_code} "fasterq-dump --progress $sra_code -O $output_dir >> $log_file 2>&1; exit_code=\$?; if [ \$exit_code -eq 0 ]; then echo 'Download completed successfully' >> $log_file; curl -X POST http://bioinfo-container:8000/samples/update_status -H 'Content-Type: application/x-www-form-urlencoded' -d 'sra_code=$sra_code&status=Completed'; else echo 'Download failed with exit code \$exit_code' >> $log_file; fi; tmux wait-for -S download_done_${user_id}_${sra_code}"
+resolve_bin() {
+  local name="$1"
+  shift
 
-# Wait for the tmux session to finish
-echo "Aguardando término da sessão tmux" >> $log_file
-tmux wait-for download_done_${user_id}_${sra_code}
+  if command -v "$name" >/dev/null 2>&1; then
+    command -v "$name"
+    return 0
+  fi
 
-# Clean up the tmux session
-echo "Finalizando sessão tmux" >> $log_file
-tmux kill-session -t download_${user_id}_${sra_code}
+  for candidate in "$@"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
 
-# Print the log file content for debugging
-echo "Conteúdo do log:" >> $log_file
-cat $log_file
+  return 1
+}
 
-# Exit with the correct status code
-echo "Saindo com status code $exit_code" >> $log_file
-exit $exit_code
+FASTERQ_BIN="$(resolve_bin fasterq-dump "/usr/local/sratoolkit/bin/fasterq-dump" "/opt/conda/envs/bioinfo/bin/fasterq-dump" "/opt/conda/bin/fasterq-dump")" || {
+  echo "[download] Error: fasterq-dump command not found." > "$log_file"
+  exit 1
+}
+
+run_fasterq_once() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 6h "$FASTERQ_BIN" --progress --split-files --skip-technical -t "$temp_dir" -O "$output_dir" "$sra_code"
+  else
+    "$FASTERQ_BIN" --progress --split-files --skip-technical -t "$temp_dir" -O "$output_dir" "$sra_code"
+  fi
+}
+
+echo "[download] Starting download for ${sra_code} (user ${user_id})" > "$log_file"
+echo "[download] Using fasterq-dump binary: ${FASTERQ_BIN}" >> "$log_file"
+
+last_exit_code=1
+for attempt in $(seq 1 "$max_download_attempts"); do
+  echo "[download] Attempt ${attempt}/${max_download_attempts}: direct fasterq-dump" >> "$log_file"
+
+  rm -f "$output_dir/${sra_code}_1.fastq" "$output_dir/${sra_code}_2.fastq"
+  rm -rf "$temp_dir"
+  mkdir -p "$temp_dir"
+
+  if run_fasterq_once >> "$log_file" 2>&1; then
+    if [ -s "$output_dir/${sra_code}_1.fastq" ] && [ -s "$output_dir/${sra_code}_2.fastq" ]; then
+      echo "[download] Completed successfully" >> "$log_file"
+      exit 0
+    fi
+
+    echo "[download] Attempt ${attempt} produced incomplete FASTQ pair." >> "$log_file"
+    ls -lah "$output_dir" >> "$log_file" 2>&1 || true
+    last_exit_code=4
+  else
+    last_exit_code=$?
+    echo "[download] Attempt ${attempt} failed with exit code ${last_exit_code}." >> "$log_file"
+  fi
+
+  sleep 3
+done
+
+echo "[download] Failed with exit code ${last_exit_code}" >> "$log_file"
+
+if grep -q "missing the QUALITY-column" "$log_file"; then
+  echo "[download] Hint: accession appears to be SRA Lite/no-quality for this path or with remote validation issue." >> "$log_file"
+fi
+
+exit "$last_exit_code"

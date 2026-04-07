@@ -2,16 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import SampleStage, User
+from ..services.job_service import audit, create_job, normalize_status
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager  # Atualizado para incluir manager
+from ..utils_paths import ensure_safe_component
 import subprocess
 import os
 import logging
-import time
 import json
 import shutil
 from pydantic import BaseModel, Field
 from typing import Optional
-import asyncio
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -31,6 +32,19 @@ def calculate_directory_size(directory: str) -> str:
         for filename in filenames
     )
     return f"{size_in_bytes / (1024 * 1024):.2f} MB"
+
+
+def tail_text_file(path: str, max_chars: int = 2000) -> str:
+    """Read the last chunk of a text log file safely."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 16384), os.SEEK_SET)
+            data = handle.read().decode("utf-8", errors="replace")
+        return data[-max_chars:].strip()
+    except Exception:
+        return ""
 
 # ----------------------------------------
 # Pydantic Models
@@ -102,7 +116,7 @@ def add_samples(
             stage_id=5,
             name=f"{basename}.bam",
             sra_code=basename,
-            status="Pending",
+            status="PENDING",
             user_id=user_id,
         )
         db.add(new_stage)
@@ -110,13 +124,12 @@ def add_samples(
     db.commit()
     return {"message": "Samples added successfully."}
 
-@router.post("/alignment/start")
+@router.post("/alignment/start", status_code=status.HTTP_202_ACCEPTED)
 async def start_alignment(
     sample: str = Form(...),
     genome: str = Form(...),
     threads: int = Query(..., description="Número de threads para o STAR"),
     additional_params: AdditionalParams = Depends(),
-    token: str = Form(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -139,7 +152,7 @@ async def start_alignment(
             detail=f"Genome index not found at {genome_dir}. Ensure the genome is indexed correctly.",
         )
 
-    basename = sample.split('_')[0]
+    basename = ensure_safe_component(sample.split('_')[0], "sample")
     sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
     sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
 
@@ -159,34 +172,40 @@ async def start_alignment(
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    if sample_stage.status != "Pending":
+    if normalize_status(sample_stage.status) != "PENDING":
         raise HTTPException(status_code=400, detail="Sample is already being processed or completed")
 
-    sample_stage.status = "Aligning"
+    sample_stage.status = "RUNNING"
     db.commit()
 
-    # Prepare command for alignment
-    command = [
-        "bash",
-        "/app/backend/scripts/alignment.sh",
-        basename,
-        str(user_id),
-        alignment_path,
-        genome_dir,
-        str(threads),
-        token,
-    ]
-
+    extra_params: list[str] = []
     if additional_params:
         for key, value in additional_params.dict().items():
             if value is not None and key != "threads":
-                command.append(f"--{key}={value}")
+                extra_params.append(f"--{key}={value}")
 
-    # Execute alignment
-    logger.info(f"Executing alignment command: {' '.join(command)}")
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    job = create_job(
+        db,
+        stage="alignment",
+        user_id=user_id,
+        payload={
+            "sample": basename,
+            "genome_dir": genome_dir,
+            "threads": threads,
+            "additional": extra_params,
+        },
+    )
+    audit(
+        db,
+        action="alignment_enqueued",
+        user_id=user_id,
+        stage="alignment",
+        job_id=job.id,
+        metadata_json={"sample": basename, "genome": accession},
+    )
+    enqueue_pipeline_job(job.id)
 
-    return {"message": f"Alignment started for {basename}"}
+    return {"job_id": job.id, "status": "PENDING", "message": f"Alignment job enqueued for {basename}"}
 
 @router.post("/alignment/update_status")
 async def update_alignment_status(
@@ -217,12 +236,12 @@ async def update_alignment_status(
     if not sample_stage:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    sample_stage.status = status
+    sample_stage.status = normalize_status(status)
     sample_stage.size = bam_size_mb
     db.commit()
 
     # Emitir mensagem para o frontend
-    await manager.broadcast(f"Alinhamento concluído para {sra_code}")
+    await manager.broadcast(f"Alinhamento concluído para {sra_code}", user_id=user_id)
 
     return {"message": f"Status atualizado para {sra_code}", "size": bam_size_mb}
 
@@ -264,10 +283,10 @@ def delete_alignment_result(sample_name: str, db: Session = Depends(get_db), cur
         raise HTTPException(status_code=500, detail="Erro ao excluir alinhamento do banco de dados.")
 
 @router.post("/ws/")
-async def broadcast_message(message: str = Form(...)):
+async def broadcast_message(message: str = Form(...), current_user: User = Depends(get_current_user)):
     """Broadcast a message to all WebSocket clients."""
     try:
-        await manager.broadcast(message)
+        await manager.broadcast(message, user_id=current_user.id)
         return {"message": "Broadcast sent successfully"}
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem de broadcast: {e}")
@@ -319,30 +338,47 @@ def download_genome(
 ):
     """Download a genome and prepare it for indexing."""
     try:
-        script_path = "/app/backend/scripts/download_genome.sh"
-        download_command = ["bash", script_path, accession]
-        download_process = subprocess.Popen(download_command)
         logger.info(f"Iniciando download do genoma {accession}...")
+        script_path = "/app/backend/scripts/download_genome.sh"
+        log_file_path = f"/app/backend/logs/download_genome_{accession}.log"
+        download_command = ["bash", script_path, accession]
+        download_result = subprocess.run(download_command, capture_output=True, text=True)
 
-        log_file_path = "/app/backend/logs/download_genome.log"
-        success_message = f"Genoma de referência {accession} baixado, descompactado, renomeado e limpo com sucesso."
+        if download_result.returncode != 0:
+            log_tail = tail_text_file(log_file_path)
+            logger.error(
+                f"Erro ao baixar o genoma {accession}. rc={download_result.returncode} stdout={download_result.stdout.strip()} stderr={download_result.stderr.strip()} log_tail={log_tail}"
+            )
+            detail = f"Erro ao baixar o genoma {accession}. Verifique o log em {log_file_path}."
+            if log_tail:
+                detail = f"{detail} Ultimas linhas do log: {log_tail}"
+            raise HTTPException(
+                status_code=500,
+                detail=detail,
+            )
 
-        while True:
-            if os.path.exists(log_file_path):
-                with open(log_file_path, "r") as log_file:
-                    if success_message in log_file.read():
-                        logger.info(f"Download do genoma {accession} concluído com sucesso.")
-                        break
-            if download_process.poll() is not None and download_process.returncode != 0:
-                raise HTTPException(status_code=500, detail="Erro ao baixar o genoma.")
+        genome_fasta_path = f"/users/ref_genomes/{accession}/genomic.fa"
+        if not os.path.exists(genome_fasta_path):
+            log_tail = tail_text_file(log_file_path)
+            detail = f"Download finalizado, mas o arquivo FASTA não foi encontrado em {genome_fasta_path}."
+            if log_tail:
+                detail = f"{detail} Ultimas linhas do log: {log_tail}"
+            raise HTTPException(
+                status_code=500,
+                detail=detail,
+            )
+
+        logger.info(f"Download do genoma {accession} concluído com sucesso.")
 
         return {"message": f"Download do genoma {accession} concluído com sucesso."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro ao baixar genoma: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao baixar genoma: {e}")
 
 @router.get("/genomes/{accession}/analyze")
-def analyze_gff(accession: str):
+def analyze_gff(accession: str, current_user: User = Depends(get_current_user)):
     """Executa o script analyze_gff.py para o genoma especificado e retorna o resultado."""
     gff_file = f"../users/ref_genomes/{accession}/genomic.gff"
     command = ["python", "backend/scripts/analyze_gff.py", gff_file]
@@ -374,7 +410,7 @@ def index_genome(
         initial_stage = SampleStage(
             name=genome_name,
             size=None,
-            status="Indexing",
+            status="RUNNING",
             stage_id=7,
             user_id=current_user.id,
         )
@@ -382,8 +418,34 @@ def index_genome(
         db.commit()
 
         star_script_path = "/app/backend/scripts/index_genome_star.sh"
-        star_command = ["bash", star_script_path, genome_dir, str(sjdb_overhang), str(threads)]
-        logger.info(f"Iniciando indexação do genoma {genome_name} com STAR...")
+
+        # Tentar calcular um limite de memória baseado em MemTotal (80% do total)
+        def _calculate_ram_limit():
+            try:
+                with open('/proc/meminfo', 'r') as mf:
+                    for line in mf:
+                        if line.startswith('MemTotal:'):
+                            parts = line.split()
+                            mem_kb = int(parts[1])
+                            # usar 80% da memória total como limite (em bytes)
+                            return int(mem_kb * 1024 * 0.8)
+            except Exception:
+                return None
+
+        limit_ram = _calculate_ram_limit()
+        if limit_ram is None:
+            # fallback para 50GB caso não seja possível ler /proc/meminfo
+            limit_ram = 50 * 1024 ** 3
+
+        star_command = [
+            "bash",
+            star_script_path,
+            genome_dir,
+            str(sjdb_overhang),
+            str(threads),
+            str(limit_ram),
+        ]
+        logger.info(f"Iniciando indexação do genoma {genome_name} com STAR... (limitGenomeGenerateRAM={limit_ram})")
         process = subprocess.Popen(star_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
 
@@ -398,7 +460,7 @@ def index_genome(
             SampleStage.stage_id == 7,
         ).first()
         if genome_stage:
-            genome_stage.status = "Completed"
+            genome_stage.status = "COMPLETED"
             genome_stage.size = genome_size
             db.commit()
 
@@ -428,16 +490,18 @@ def delete_reference_genome(accession: str, db: Session = Depends(get_db), curre
         else:
             logger.warning(f"Diretório do genoma {accession} não encontrado.")
 
-        # Caminho do arquivo de log
-        log_file_path = "/app/backend/logs/download_genome.log"
-
-        # Excluir o arquivo de log, se existir
-        if os.path.exists(log_file_path):
-            try:
-                os.remove(log_file_path)
-                logger.info(f"Arquivo de log {log_file_path} excluído com sucesso.")
-            except Exception as e:
-                logger.warning(f"Erro ao excluir o arquivo de log {log_file_path}: {e}")
+        # Excluir logs de download relacionados ao accession
+        download_log_paths = [
+            f"/app/backend/logs/download_genome_{accession}.log",
+            "/app/backend/logs/download_genome.log",
+        ]
+        for log_file_path in download_log_paths:
+            if os.path.exists(log_file_path):
+                try:
+                    os.remove(log_file_path)
+                    logger.info(f"Arquivo de log {log_file_path} excluído com sucesso.")
+                except Exception as e:
+                    logger.warning(f"Erro ao excluir o arquivo de log {log_file_path}: {e}")
 
         db.delete(genome_stage)
         db.commit()
