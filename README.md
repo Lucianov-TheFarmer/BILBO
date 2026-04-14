@@ -141,20 +141,20 @@ BILBO was designed to improve methodological consistency by combining:
 
 ## Authors
 
-Developed by Vitor Luciano and Joao Vitor Reis Alvarenga, with support from Manoel Viana Linhares-Neto, Muhammad Noman, and Antonio Chalfun Junior, at the Plant Molecular Physiology Laboratory (LFMP/UFLA).
+Developed by Vitor Luciano Costa da Silva and Joao Vitor Reis Alvarenga, with support from Manoel Viana Linhares-Neto, Muhammad Noman, and Antonio Chalfun-Junior, at the Plant Molecular Physiology Laboratory (LFMP/UFLA).
 
-<div style="display: flex; gap: 20px; align-items: center; justify-content: center">
+<div align="center" style="display: flex; gap: 20px; justify-content: center; background-color: white;">
   <img src="app/assets/src/UFLA.png" alt="Logo UFLA" style="width: 150px; height: auto;">
   <img src="app/assets/src/LFMP.png" alt="Logo LFMP" style="width: 150px; height: auto;">
 </div>
 
 <br>
 
-<div style="text-align: right;">
-<i>"Unite intelligence with effort, you will work less and achieve more."</i>
+<div align="right">
+<i>"Happiness is either shared or lost, because no one can be happy alone."</i>
 </div>
 
-<div style="text-align: right;">
+<div align="right">
     - Carlos Bernardo Gonzalez Pecotche
 </div>
 
