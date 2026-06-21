@@ -1,0 +1,14 @@
+.wy-nav-content {
+  max-width: 1080px;
+}
+
+.rst-content table.docutils td,
+.rst-content table.docutils th {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.admonition.warning,
+.admonition.caution {
+  border-left-width: 6px;
+}
