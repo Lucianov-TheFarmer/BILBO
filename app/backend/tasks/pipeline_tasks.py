@@ -501,7 +501,17 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
                 clusters_json_path=str(cluster_json),
             )
             results[safe_sheet] = res
-            for artifact in [img_final, img_metrics, cluster_json]:
+            artifact_paths = [img_final, img_metrics, cluster_json]
+            for key in ["metrics", "prioritized_genes", "input_normalized"]:
+                value = res.get(key)
+                if value:
+                    artifact_paths.append(Path(value))
+            for key in ["features_dir", "clusters_dir"]:
+                value = res.get(key)
+                if value:
+                    artifact_paths.extend(Path(value).glob("**/*.csv"))
+
+            for artifact in artifact_paths:
                 if artifact.exists():
                     kind = artifact.suffix.replace(".", "") or "file"
                     add_artifact(db, job_id=job_id, user_id=user_id, kind=kind, path=str(artifact))
@@ -513,7 +523,8 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
             if row:
                 row.status = "COMPLETED"
                 db.commit()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Clustering failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
             row = db.query(SampleStage).filter(
                 SampleStage.user_id == user_id,

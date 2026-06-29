@@ -35,11 +35,11 @@ RUN conda env create -f /app/config/environment.yml && conda clean -afy
 SHELL ["conda", "run", "--no-capture-output", "-n", "bioinfo", "/bin/bash", "-c"]
 
 COPY requirements/base.txt /app/requirements/base.txt
-RUN pip install --no-cache-dir -r /app/requirements/base.txt
+RUN /opt/conda/envs/bioinfo/bin/python -m pip install --no-cache-dir -r /app/requirements/base.txt
 
 RUN Rscript -e "options(repos='https://cloud.r-project.org'); pkgs <- c('ggplot2','pheatmap','gplots','openxlsx','reshape2','httr','zip','Rcpp'); install.packages(pkgs)" && \
     Rscript -e "if (!require('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')" && \
-    Rscript -e "BiocManager::install(c('edgeR','limma','ComplexHeatmap'), ask=FALSE, update=FALSE)"
+    Rscript -e "BiocManager::install(c('edgeR','limma','ComplexHeatmap','GOSemSim','GO.db','AnnotationDbi'), ask=FALSE, update=FALSE)"
 
 COPY app /app
 

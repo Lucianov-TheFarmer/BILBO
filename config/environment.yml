@@ -4,6 +4,7 @@ channels:
   - bioconda
 dependencies:
   - python=3.9
+  - pip
   - libgcc-ng
   - htslib=1.21
   - fastqc=0.12.1
@@ -22,3 +23,6 @@ dependencies:
   - r-httr
   - r-data.table
   - r-tidyverse
+  - bioconductor-gosemsim
+  - bioconductor-go.db
+  - bioconductor-annotationdbi

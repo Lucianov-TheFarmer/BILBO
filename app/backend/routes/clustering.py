@@ -1,4 +1,5 @@
 import logging
+import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -119,16 +120,7 @@ def delete_clustering_sheet(sheet: str, db: Session = Depends(get_db), current_u
     # remove files and directory
     try:
         if out_dir.exists():
-            for f in out_dir.iterdir():
-                try:
-                    if f.is_file():
-                        f.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            try:
-                out_dir.rmdir()
-            except Exception:
-                pass
+            shutil.rmtree(out_dir)
     except Exception as ex:
         logger.warning(f"Erro ao excluir arquivos de clustering: {ex}")
 
