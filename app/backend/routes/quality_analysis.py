@@ -36,9 +36,13 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
 
-        suffix = "_1" if "_1.fastq" in name else "_2"
+        sample_stem = name
+        for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+            if sample_stem.endswith(extension):
+                sample_stem = sample_stem[:-len(extension)]
+                break
 
-        output_name = f"{db_sample_stage.sra_code}{suffix}.html"
+        output_name = f"{sample_stem}.html"
         exists = db.query(SampleStage).filter(
             SampleStage.name == output_name,
             SampleStage.stage_id == 2,

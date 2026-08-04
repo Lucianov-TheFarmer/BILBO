@@ -17,9 +17,34 @@ from pydantic import BaseModel
 import subprocess
 import os
 import logging
+import shutil
+import re
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _posttrim_zip_path(users_root: Path, user_id: int, file_name: str) -> Path:
+    result_base = str(file_name)
+
+    if result_base.endswith("_post_trim.html"):
+        result_base = result_base[:-len("_post_trim.html")]
+
+    sample_base = result_base
+
+    if sample_base.endswith(("_1", "_2")):
+        sample_base = sample_base[:-2]
+    elif sample_base.endswith(("_R1", "_R2")):
+        sample_base = sample_base[:-3]
+
+    return safe_resolve_user_path(
+        str(users_root),
+        user_id,
+        "QC_PostTrim",
+        sample_base,
+        f"{result_base}_trimmed_fastqc.zip",
+    )
+
 
 class SampleCreateRequest(BaseModel):
     sra_codes: List[str]
@@ -113,56 +138,55 @@ def update_sample(sample_id: int, status: str, db: Session = Depends(get_db), cu
     return db_sample
 
 @router.delete("/samples/{sra_code}")
-def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    sra_code_basename = sra_code.replace("_1.fastq", "").replace("_2.fastq", "").replace(".fastq", "")
+def delete_sample(
+    sra_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    requested_name = str(sra_code)
+
+    # Quando o frontend envia o nome exato do arquivo, recuperar o sra_code
+    # diretamente do registro evita truncar nomes que contêm underscores.
+    source_sample = db.query(SampleStage).filter(
+        SampleStage.name == requested_name,
+        SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id,
+    ).first()
+
+    if source_sample:
+        sra_code_basename = source_sample.sra_code
+    else:
+        sra_code_basename = re.sub(
+            r"(?:_R?[12])?\.(?:fastq|fq)(?:\.gz)?$",
+            "",
+            requested_name,
+            flags=re.IGNORECASE,
+        )
 
     all_samples = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code_basename,
         SampleStage.stage_id == 1,
-        SampleStage.user_id == current_user.id
+        SampleStage.user_id == current_user.id,
     ).all()
 
     if not all_samples:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    user_id = current_user.id
-
-    sample_names = [sample.name for sample in all_samples]
-    is_paired_end = any("_1.fastq" in name or "_2.fastq" in name for name in sample_names)
+    sample_dir = safe_resolve_user_path(
+        settings.users_root,
+        current_user.id,
+        "samples",
+        sra_code_basename,
+    )
 
     for sample in all_samples:
         db.delete(sample)
+
     db.commit()
 
-    if is_paired_end:
-        for suffix in ["_1.fastq", "_2.fastq"]:
-            file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}{suffix}"
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
-                except Exception as e:
-                    logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
-            else:
-                logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
-    else:
-        file_path = f"../users/{user_id}/samples/{sra_code_basename}/{sra_code_basename}.fastq"
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
-            except Exception as e:
-                logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
-        else:
-            logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
-
-    sample_dir = f"../users/{user_id}/samples/{sra_code_basename}"
-    try:
-        if os.path.exists(sample_dir) and not os.listdir(sample_dir):
-            os.rmdir(sample_dir)
-            logger.info(f"Diretório {sample_dir} removido com sucesso.")
-    except Exception as e:
-        logger.warning(f"Não foi possível remover diretório {sample_dir}: {e}")
+    if sample_dir.exists():
+        shutil.rmtree(sample_dir, ignore_errors=False)
+        logger.info("Diretório de amostra removido: %s", sample_dir)
 
     audit(
         db,
@@ -171,7 +195,9 @@ def delete_sample(sra_code: str, db: Session = Depends(get_db), current_user: Us
         stage="samples",
         metadata_json={"sra_code": sra_code_basename},
     )
+
     return {"message": "Sample and associated files deleted successfully"}
+
 
 @router.get("/samples/status/{sra_code}")
 def get_sample_status(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -445,13 +471,7 @@ def download_file(
             file_name.replace(".html", "_fastqc.zip"),
         ),
         "trimagem": safe_resolve_user_path(str(users_root), user_id, "trimmed", file_name),
-        "qualidade2": safe_resolve_user_path(
-            str(users_root),
-            user_id,
-            "QC_PostTrim",
-            file_name.replace("_post_trim.html", "_trimmed.fastq"),
-            file_name.replace("_post_trim.html", "_trimmed_fastqc.zip"),
-        ),
+        "qualidade2": _posttrim_zip_path(users_root, user_id, file_name),
         "alinhamento": safe_resolve_user_path(str(users_root), user_id, "alignment", sra_code, file_name),
         "quantificacao": safe_resolve_user_path(str(users_root), user_id, "quantification", file_name),
     }

@@ -35,7 +35,7 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://bioinfo-container:8000/samples/",
+                    "http://bioinfo-container:8890/samples/",
                     json={"sra_codes": sra_codes, "size": "Unknown"},
                     headers=headers,
                 )
@@ -96,7 +96,7 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
         try:
             async with httpx.AsyncClient() as client:
                 for sra_code in amostras_selecionadas_para_exclusao:
-                    response = await client.delete(f"http://bioinfo-container:8000/samples/{sra_code}", headers=headers)
+                    response = await client.delete(f"http://bioinfo-container:8890/samples/{sra_code}", headers=headers)
                     if response.status_code == 200:
                         logger.info(f"Amostra {sra_code} excluída com sucesso!")
                         await log_message(page, f"Amostra {sra_code} excluída com sucesso!")
@@ -163,10 +163,10 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     if not first_check_done:
-        await make_request("POST", "http://bioinfo-container:8000/stages/", headers=headers)
+        await make_request("POST", "http://bioinfo-container:8890/stages/", headers=headers)
         first_check_done = True
 
-    response = await make_request("GET", "http://bioinfo-container:8000/samples/", headers=headers)
+    response = await make_request("GET", "http://bioinfo-container:8890/samples/", headers=headers)
     samples = response.json()
 
     async def toggle_select_all(e):
@@ -180,7 +180,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         
         async def download_sample_file(e, sample_name=sample["name"]):
             try:
-                download_url = f"http://localhost:8000/download/obtencao/{sample_name}?token={token}"
+                download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
                 page.launch_url(download_url)
                 await log_message(page, f"Download iniciado para {sample_name}")
                 
@@ -218,26 +218,30 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     # Fetch counts for stages 1..10
     for stage_id in range(1, 11):
         try:
-            response = await make_request("GET", f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+            response = await make_request("GET", f"http://bioinfo-container:8890/samples/stages/{stage_id}", headers=headers)
             stage_counts[stage_id] = len(response.json())
         except Exception:
             stage_counts[stage_id] = 0
 
-    # Fetch contrasts count to represent DEG results (stage_id 8)
+
+
+    # Análise Diferencial: contar resultados realmente produzidos.
+    # Cada aba de DEG.xlsx corresponde a um resultado de contraste.
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get("http://bioinfo-container:8000/contrasts/", headers=headers)
+            resp = await client.get(
+                "http://bioinfo-container:8890/results/deg_sheets",
+                headers=headers,
+            )
             if resp.status_code == 200:
-                contrasts = resp.json()
-                # DEG results are represented at stage_id 7 in the UI
-                stage_counts[7] = len(contrasts)
+                stage_counts[7] = len(resp.json().get("sheets", []))
             else:
                 stage_counts[7] = 0
     except Exception:
         stage_counts[7] = 0
 
     # Map table rows order to corresponding stage ids. If UI order changes, update this map accordingly.
-    stage_map = [1, 2, 3, 4, 5, 6, 7, 9, 10]
+    stage_map = [1, 2, 3, 4, 5, 6, 8, 7, 9, 10]
     for i, row in enumerate(container_menu_direita.content.controls[0].rows):
         mapped_stage = stage_map[i] if i < len(stage_map) else (i + 1)
         # update the quantity cell (row.cells[1].content.content holds the Text)
@@ -255,7 +259,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
 async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get(f"http://bioinfo-container:8000/samples/stages/{stage_id}", headers=headers)
+        response = await client.get(f"http://bioinfo-container:8890/samples/stages/{stage_id}", headers=headers)
         if response.status_code == 200:
             samples = response.json()
             tabela_amostras_local.rows.clear()
@@ -263,7 +267,7 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                 
                 async def download_sample_file(e, sample_name=sample["name"]):
                     try:
-                        download_url = f"http://localhost:8000/download/obtencao/{sample_name}?token={token}"
+                        download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
                         page.launch_url(download_url)
                         await log_message(page, f"Download iniciado para {sample_name}")
                         
@@ -293,7 +297,7 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/samples/pending_count", headers=headers)
+            response = await client.get("http://bioinfo-container:8890/samples/pending_count", headers=headers)
             if response.status_code == 200:
                 pending_count = response.json().get("pending_count", 0)
                 if pending_count == 0:
@@ -301,7 +305,7 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                     await log_message(page, "No pending samples to download.")
                     return
                 for _ in range(pending_count):
-                    response = await client.post("http://bioinfo-container:8000/samples/download", headers=headers)
+                    response = await client.post("http://bioinfo-container:8890/samples/download", headers=headers)
                     if response.status_code in (200, 202):
                         logger.info("Download enfileirado!")
                         body = response.json()
@@ -394,7 +398,7 @@ async def atualizar_tamanho_amostras(page, token, sra_code, container_menu_direi
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("http://bioinfo-container:8000/samples/calculate_size", params={"sra_code": sra_code}, headers=headers)
+            response = await client.post("http://bioinfo-container:8890/samples/calculate_size", params={"sra_code": sra_code}, headers=headers)
             if response.status_code == 200:
                 logger.info("Tamanho das amostras atualizado com sucesso!")
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras)

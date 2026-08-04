@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _strip_trimmed_fastq_suffix(name: str) -> str:
+    for suffix in (
+        "_trimmed.fastq.gz",
+        "_trimmed.fq.gz",
+        "_trimmed.fastq",
+        "_trimmed.fq",
+    ):
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
 class QualityAnalysisPostTrimRequest(BaseModel):
     samples: list[str]
 
@@ -35,7 +48,7 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
 
-        basename = db_sample_stage.name.replace("_trimmed.fastq", "")
+        basename = _strip_trimmed_fastq_suffix(db_sample_stage.name)
 
         # Verificar se já existe uma entrada para evitar duplicação
         existing_entry = db.query(SampleStage).filter(
@@ -120,9 +133,32 @@ def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), cur
     db.delete(db_sample_stage)
     db.commit()
 
-    basename = name.replace("_post_trim.html", "_trimmed.fastq")
-    output_dir = safe_resolve_user_path(settings.users_root, current_user.id, "QC_PostTrim", basename)
-    if output_dir.exists():
-        shutil.rmtree(output_dir, ignore_errors=True)
+    result_base = name
+    if result_base.endswith("_post_trim.html"):
+        result_base = result_base[:-len("_post_trim.html")]
+
+    sample_base = result_base
+    if sample_base.endswith("_1") or sample_base.endswith("_2"):
+        sample_base = sample_base[:-2]
+    elif sample_base.endswith("_R1") or sample_base.endswith("_R2"):
+        sample_base = sample_base[:-3]
+
+    output_dir = safe_resolve_user_path(
+        settings.users_root,
+        current_user.id,
+        "QC_PostTrim",
+        sample_base,
+    )
+
+    for suffix in ("_fastqc.html", "_fastqc.zip"):
+        output_file = output_dir / f"{result_base}_trimmed{suffix}"
+        if output_file.exists():
+            output_file.unlink()
+
+    try:
+        if output_dir.exists() and not any(output_dir.iterdir()):
+            output_dir.rmdir()
+    except OSError:
+        pass
 
     return {"message": f"Quality analysis result {name} deleted successfully"}

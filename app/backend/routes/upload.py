@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from ..core.settings import settings
@@ -24,7 +24,7 @@ class FileUpload(BaseModel):
 def calculate_file_size(file_path: str) -> str:
     """Calculate file size and return in appropriate units"""
     try:
-        size_bytes = os.path.getsize(file_path)
+        size_bytes = sum(p.stat().st_size for p in Path(file_path).iterdir() if p.is_file()) if os.path.isdir(file_path) else os.path.getsize(file_path)
         if size_bytes < 1024:
             return f"{size_bytes} B"
         elif size_bytes < 1024**2:
@@ -58,11 +58,11 @@ def detect_sequencing_type(filename: str) -> str:
     return "Single-End"
 
 @router.post("/upload/fastq")
-async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def upload_fastq_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Endpoint para salvar arquivos FASTQ e adicionar ao banco de dados"""
     try:
         # Determinar basename e tipo de sequenciamento
-        filename = data.filename
+        filename = file.filename or "upload.fastq"
         basename = extract_basename_from_filename(filename)
         sequencing_type = detect_sequencing_type(filename)
         
@@ -73,18 +73,20 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), cur
         # Salvar arquivo
         file_path = user_dir / Path(filename).name
         
-        # Decodificar conteúdo base64
-        file_content = base64.b64decode(data.content)
-        
-        with open(file_path, 'wb') as f:
-            f.write(file_content)
+        # Salvar o arquivo em blocos, sem carregá-lo inteiro na memória
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
         
         # Calcular tamanho do arquivo
         file_size = calculate_file_size(file_path)
         
         # Verificar se já existe entrada no banco para este basename e usuário
         existing_sample = db.query(SampleStage).filter(
-            SampleStage.sra_code == basename,
+            SampleStage.name == filename,
             SampleStage.stage_id == 1,
             SampleStage.user_id == current_user.id
         ).first()
@@ -135,7 +137,7 @@ async def upload_fastq_file(data: FileUpload, db: Session = Depends(get_db), cur
         }
         
     except Exception as e:
-        failing_filename = getattr(data, "filename", "unknown")
+        failing_filename = getattr(file, "filename", "unknown")
         logger.exception("Erro ao salvar arquivo FASTQ: user_id=%s filename=%s", current_user.id, failing_filename)
         await manager.broadcast(f"❌ Erro no upload: {failing_filename} - {str(e)}", user_id=current_user.id)
         return {"status": "error", "message": str(e)}

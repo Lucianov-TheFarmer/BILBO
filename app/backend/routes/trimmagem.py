@@ -9,12 +9,48 @@ import os
 import json
 import logging
 import asyncio
+import re
 
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 router = APIRouter()
+
+
+_FASTQ_EXTENSION_RE = re.compile(
+    r"\.(?:fastq|fq)(?:\.gz)?$",
+    re.IGNORECASE,
+)
+
+_FASTQ_PAIR_RE = re.compile(
+    r"^(?P<base>.+?)_R?(?P<mate>[12])"
+    r"(?P<ext>\.(?:fastq|fq)(?:\.gz)?)$",
+    re.IGNORECASE,
+)
+
+
+def _strip_fastq_extension(name: str) -> str:
+    return _FASTQ_EXTENSION_RE.sub("", str(name))
+
+
+def _parse_fastq_name(name: str):
+    """Retorna basename, mate e extensão."""
+    match = _FASTQ_PAIR_RE.match(str(name))
+    if match:
+        return (
+            match.group("base"),
+            int(match.group("mate")),
+            match.group("ext"),
+        )
+
+    return _strip_fastq_extension(name), None, None
+
+
+def _sample_sra_code(name: str) -> str:
+    basename, _, _ = _parse_fastq_name(name)
+    return basename
+
 
 @router.post("/trimmagem/")
 def start_trimmagem(
@@ -53,18 +89,30 @@ def start_trimmagem(
             logger.error(f"Error deserializing parameters: {e}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON format: {e}")
 
-        # Classificar amostras em PE e SE
-        paired_samples = []
+        # Agrupar FASTQ por basename e mate.
+        grouped_samples = {}
         single_samples = []
 
         for sample in selected_samples:
-            if sample.endswith("_2.fastq"):
-                paired_samples.append(sample.replace("_2.fastq", ""))  # Adiciona o prefixo base do par
-            elif sample.endswith("_1.fastq") and f"{sample.replace('_1.fastq', '_2.fastq')}" not in selected_samples:
-                single_samples.append(sample)  # Adiciona como SE se não houver par correspondente
+            base_name, mate, _ = _parse_fastq_name(sample)
 
-        # Remover duplicatas de pares
-        paired_samples = list(set(paired_samples))
+            if mate in (1, 2):
+                grouped_samples.setdefault(base_name, {})[mate] = sample
+            else:
+                single_samples.append(sample)
+
+        paired_samples = []
+
+        for base_name, mates in grouped_samples.items():
+            if 1 in mates and 2 in mates:
+                paired_samples.append(base_name)
+            else:
+                # Uma leitura selecionada sem seu mate é tratada como single-end.
+                single_samples.extend(mates.values())
+
+        paired_samples = sorted(set(paired_samples))
+        single_samples = list(dict.fromkeys(single_samples))
+
         logger.info(f"Paired samples: {paired_samples}")
         logger.info(f"Single samples: {single_samples}")
 
@@ -72,7 +120,7 @@ def start_trimmagem(
         try:
             for base_name in paired_samples:
                 for suffix in ["_1", "_2"]:
-                    trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
+                    trimmed_name = f"{base_name}{suffix}_trimmed.fastq.gz"
                     exists = db.query(SampleStage).filter(
                         SampleStage.name == trimmed_name,
                         SampleStage.stage_id == 3,
@@ -90,8 +138,8 @@ def start_trimmagem(
                         db.add(db_sample_stage_trimmed)
 
             for sample in single_samples:
-                sample_base = sample.replace('.fastq', '')
-                trimmed_name = f"{sample_base}_trimmed.fastq"
+                sample_base = _strip_fastq_extension(sample)
+                trimmed_name = f"{sample_base}_trimmed.fastq.gz"
                 exists = db.query(SampleStage).filter(
                     SampleStage.name == trimmed_name,
                     SampleStage.stage_id == 3,
@@ -101,7 +149,7 @@ def start_trimmagem(
                     db_sample_stage_trimmed = SampleStage(
                         stage_id=3,
                             name=trimmed_name,
-                            sra_code=sample_base.split('_')[0],
+                            sra_code=_sample_sra_code(sample),
                             size=None,
                             status="RUNNING",
                             user_id=user_id,
@@ -160,7 +208,25 @@ def start_trimmagem(
 
             if process.returncode != 0:
                 logger.error(f"Error in trimmagem for {base_name}: {stderr.strip()}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error in trimmagem for {base_name}: {stderr.strip()}")
+
+                for suffix in ("_1", "_2"):
+                    failed_row = db.query(SampleStage).filter(
+                        SampleStage.name == f"{base_name}{suffix}_trimmed.fastq.gz",
+                        SampleStage.stage_id == 3,
+                        SampleStage.user_id == user_id,
+                    ).first()
+                    if failed_row:
+                        failed_row.status = "FAILED"
+
+                db.commit()
+
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        f"Error in trimmagem for {base_name}. "
+                        f"Consulte /tmp/{base_name}_trimmagem.log"
+                    ),
+                )
 
             # Obter o sample_id original
             db_sample_stage = db.query(SampleStage).filter(
@@ -174,7 +240,7 @@ def start_trimmagem(
 
             # Criar registros no banco de dados para os resultados da trimmagem
             for suffix in ["_1", "_2"]:
-                trimmed_name = f"{base_name}{suffix}_trimmed.fastq"
+                trimmed_name = f"{base_name}{suffix}_trimmed.fastq.gz"
                 # Avoid duplicate entries: check if trimmed sample already exists
                 exists = db.query(SampleStage).filter(
                     SampleStage.name == trimmed_name,
@@ -245,7 +311,25 @@ def start_trimmagem(
 
             if process.returncode != 0:
                 logger.error(f"Error in trimmagem for {sample}: {stderr.strip()}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error in trimmagem for {sample}: {stderr.strip()}")
+
+                failed_name = f"{_strip_fastq_extension(sample)}_trimmed.fastq.gz"
+                failed_row = db.query(SampleStage).filter(
+                    SampleStage.name == failed_name,
+                    SampleStage.stage_id == 3,
+                    SampleStage.user_id == user_id,
+                ).first()
+
+                if failed_row:
+                    failed_row.status = "FAILED"
+                    db.commit()
+
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        f"Error in trimmagem for {sample}. "
+                        f"Consulte o log em /tmp."
+                    ),
+                )
 
             # Obter o sample_id original
             db_sample_stage = db.query(SampleStage).filter(
@@ -259,8 +343,8 @@ def start_trimmagem(
 
             # Criar registro no banco de dados para o resultado da trimmagem
             # sample may include the suffix like '_1.fastq' - normalize base name
-            sample_base = sample.replace('.fastq', '')
-            trimmed_name = f"{sample_base}_trimmed.fastq"
+            sample_base = _strip_fastq_extension(sample)
+            trimmed_name = f"{sample_base}_trimmed.fastq.gz"
             # Update existing RUNNING entry to COMPLETED or insert new
             exists = db.query(SampleStage).filter(
                 SampleStage.name == trimmed_name,
@@ -308,9 +392,14 @@ def start_trimmagem(
         response = {"message": "Trimmagem completed successfully"}
         logger.info(f"Returning response: {response}")
         return response
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error in trimmagem route: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+        logger.exception(f"Unexpected error in trimmagem route: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {e}",
+        )
 
 @router.post("/trimmagem/update_status")
 async def update_trimmagem_status(
@@ -338,39 +427,75 @@ async def update_trimmagem_status(
     return {"message": f"Trimmagem status for {sra_code} updated to {normalized}"}
 
 @router.delete("/trimmagem/{sample_name}")
-async def delete_trimmed_sample(sample_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def delete_trimmed_sample(
+    sample_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     user_id = current_user.id
-    trimmed_path = f"../users/{user_id}/trimmed/{sample_name}"
 
-    # Verificar e excluir arquivos _trimmed.fastq e _unpaired.fastq
-    for suffix in ["_trimmed.fastq", "_unpaired.fastq"]:
-        file_path = trimmed_path.replace("_trimmed.fastq", suffix)
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logger.info(f"Arquivo {file_path} excluído com sucesso do sistema de arquivos.")
-            except Exception as e:
-                logger.error(f"Erro ao excluir arquivo {file_path} do sistema de arquivos: {e}")
-                raise HTTPException(status_code=500, detail=f"Erro ao excluir arquivo {file_path} do sistema de arquivos.")
-        else:
-            logger.warning(f"Arquivo {file_path} não encontrado para exclusão.")
+    if os.path.basename(sample_name) != sample_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sample name",
+        )
 
-    # Remover a entrada correspondente no banco de dados
+    trimmed_root = os.path.abspath(
+        f"../users/{user_id}/trimmed"
+    )
+
+    file_path = os.path.abspath(
+        os.path.join(trimmed_root, sample_name)
+    )
+
+    if os.path.commonpath([trimmed_root, file_path]) != trimmed_root:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sample path",
+        )
+
+    if os.path.isfile(file_path):
+        os.remove(file_path)
+        logger.info(
+            "Arquivo trimmado removido: %s",
+            file_path,
+        )
+
+    # Limpeza apenas de resíduos produzidos por versões antigas.
+    for suffix in (
+        "_trimmed.fastq.gz",
+        "_trimmed.fastq",
+    ):
+        if sample_name.endswith(suffix):
+            stem = sample_name[:-len(suffix)]
+
+            for old_suffix in (
+                "_unpaired.fastq",
+                "_unpaired.fastq.gz",
+            ):
+                legacy = os.path.join(
+                    trimmed_root,
+                    stem + old_suffix,
+                )
+
+                if os.path.isfile(legacy):
+                    os.remove(legacy)
+
+            break
+
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.name == sample_name,
         SampleStage.stage_id == 3,
-        SampleStage.user_id == user_id
+        SampleStage.user_id == user_id,
     ).first()
 
-    if not db_sample_stage:
-        logger.warning(f"Amostra trimmada {sample_name} não encontrada no banco de dados para exclusão.")
-        return {"message": f"Amostra trimmada {sample_name} já foi excluída ou não existe."}
-
-    try:
+    if db_sample_stage:
         db.delete(db_sample_stage)
         db.commit()
-        logger.info(f"Amostra trimmada {sample_name} excluída com sucesso do banco de dados.")
-        return {"message": f"Amostra trimmada {sample_name} excluída com sucesso."}
-    except Exception as e:
-        logger.error(f"Erro ao excluir amostra trimmada {sample_name} do banco de dados: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao excluir amostra trimmada do banco de dados.")
+
+    return {
+        "message": (
+            f"Amostra trimmada {sample_name} "
+            "excluída com sucesso."
+        )
+    }

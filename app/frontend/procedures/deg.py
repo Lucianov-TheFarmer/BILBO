@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 async def fetch_existing_contrasts(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/contrasts/", headers=headers)
+        response = await client.get("http://localhost:8890/contrasts/", headers=headers)
         response.raise_for_status()
         return response.json()
 
 async def fetch_reference_genomes(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/genomes/", headers=headers)
+        response = await client.get("http://localhost:8890/genomes/", headers=headers)
         response.raise_for_status()
         return response.json()  # [{"name": ..., "size": ..., "status": ...}]
 
@@ -40,7 +40,7 @@ def extract_accession_from_name(name):
         return name.split("(")[-1].strip(")")
     return name
 
-async def run_deg_analysis(page, token, user_id):
+async def run_deg_analysis(page, token, user_id, refresh_callback=None):
     await log_message(page, "Selecione o genoma de referência e os contrastes para DEG.")
     # Buscar genomas de referência disponíveis
     genomes = await fetch_reference_genomes(token)
@@ -120,7 +120,7 @@ async def run_deg_analysis(page, token, user_id):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://localhost:8000/deg/run",
+                    "http://localhost:8890/deg/run",
                     json={
                         "contrast_ids": list(selected_ids),
                         "genome_accession": genome_accession,
@@ -136,9 +136,38 @@ async def run_deg_analysis(page, token, user_id):
                         result = await wait_for_job(token, job_id)
                         status = result.get("status")
                         if status == "COMPLETED":
-                            await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
+                            annotation = (result.get("result") or {}).get("annotation") or {}
+
+                            await log_message(
+                                page,
+                                "Análise DEG e anotação funcional concluídas! "
+                                "O arquivo DEG.xlsx foi gerado."
+                            )
+
+                            if annotation.get("gff") == "COMPLETED":
+                                await log_message(page, "Anotação GFF concluída.")
+
+                            if annotation.get("uniprot") == "COMPLETED":
+                                await log_message(page, "Anotação UniProt concluída.")
                         else:
                             await log_message(page, f"DEG finalizado com status {status}.")
+                            error_message = result.get("error_message")
+                            if error_message:
+                                await log_message(
+                                    page,
+                                    f"Detalhe: {error_message}"
+                                )
+
+                        # Atualizar tabela lateral imediatamente após
+                        # o término do job.
+                        if refresh_callback is not None:
+                            try:
+                                await refresh_callback()
+                            except Exception as refresh_error:
+                                logger.warning(
+                                    "Erro ao atualizar contagem DEG: %s",
+                                    refresh_error,
+                                )
                     else:
                         await log_message(page, "Análise DEG concluída! O arquivo DEG.xlsx foi gerado.")
                 else:
@@ -194,7 +223,7 @@ async def fetch_sheet_data(token, user_id, sheet_name):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     params = {"sheet": sheet_name}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/deg/sheet_data", headers=headers, params=params)
+        response = await client.get("http://localhost:8890/deg/sheet_data", headers=headers, params=params)
         response.raise_for_status()
         return response.json()  # {"columns": [...], "rows": [[...], ...]}
 
@@ -573,7 +602,7 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                                         return
                                     import urllib.parse
                                     fname_enc = urllib.parse.quote(current_filename, safe='')
-                                    download_url = f"http://localhost:8000/results/download_image?filename={fname_enc}&token={token}"
+                                    download_url = f"http://localhost:8890/results/download_image?filename={fname_enc}&token={token}"
                                     page.launch_url(download_url)
                                 except Exception as ex:
                                     await log_message(page, f"Erro ao iniciar download da figura: {ex}")
@@ -604,7 +633,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:8000/deg/sheets", headers=headers)
+            response = await client.get("http://localhost:8890/deg/sheets", headers=headers)
             if response.status_code == 200:
                 sheets = response.json().get("sheets", [])
                 if not sheets:
@@ -695,7 +724,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
 
                         import urllib.parse
                         sheets_param = urllib.parse.quote(",".join(selected), safe='')
-                        download_url = f"http://localhost:8000/results/download_deg_sheets?sheets={sheets_param}&token={token}"
+                        download_url = f"http://localhost:8890/results/download_deg_sheets?sheets={sheets_param}&token={token}"
                         page.launch_url(download_url)
 
                     from ..components.general_components import create_button

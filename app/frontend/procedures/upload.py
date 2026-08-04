@@ -9,6 +9,11 @@ from .utils import log_message
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# UPLOAD_PERSISTENT_GLOBAL_START
+_upload_panels = {}
+# UPLOAD_PERSISTENT_GLOBAL_END
+
         
 async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id):
     """
@@ -17,6 +22,16 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     
     print("DEBUG: show_upload_fastq_modal foi chamada!")
     logger.info("Abrindo modal de upload FASTQ")
+
+    # UPLOAD_PERSISTENT_REOPEN_START
+    cache_key = f"{id(page)}:{user_id}"
+    cached_panel = _upload_panels.get(cache_key)
+    if cached_panel is not None:
+        cached_panel.offset = ft.Offset(0, 0)
+        page.update()
+        return
+    # UPLOAD_PERSISTENT_REOPEN_END
+
     
     # HTML melhorado com estética e detecção SE/PE
     html_content = """<!DOCTYPE html>
@@ -253,29 +268,15 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                     output.textContent += `   📄 [${processedFiles}/${totalFiles}] ${file.name}...`;
                     
                     try {
-                        // Ler arquivo como ArrayBuffer para converter para base64
-                        const arrayBuffer = await file.arrayBuffer();
-                        const uint8Array = new Uint8Array(arrayBuffer);
-                        
-                        // Converter para base64
-                        let binary = '';
-                        for (let j = 0; j < uint8Array.length; j++) {
-                            binary += String.fromCharCode(uint8Array[j]);
-                        }
-                        const base64Content = btoa(binary);
-                        
-                        // Enviar para backend
-                        const response = await fetch('http://localhost:8000/upload/fastq', {
-                            method: 'POST',
+                        const formData = new FormData();
+                        formData.append("file", file, file.name);
+
+                        const response = await fetch("http://localhost:8890/upload/fastq", {
+                            method: "POST",
                             headers: {
-                                'Content-Type': 'application/json', 
-                                'Authorization': 'Bearer """ + token + """'
+                                "Authorization": "Bearer """ + token + """"
                             },
-                            body: JSON.stringify({
-                                filename: file.name,
-                                content: base64Content,
-                                user_id: """ + str(user_id) + """
-                            })
+                            body: formData
                         });
                         
                         if (!response.ok) {
@@ -302,7 +303,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
             output.textContent += 'Finalizando upload...\\n';
             
             try {
-                const finalizeResponse = await fetch('http://localhost:8000/upload/finalize', {
+                const finalizeResponse = await fetch('http://localhost:8890/upload/finalize', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -329,43 +330,85 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     
     # Criar data URL com o HTML
     import base64
-    html_encoded = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
+    html_encoded = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
     data_url = f"data:text/html;charset=utf-8;base64,{html_encoded}"
-    
-    # Criar WebView com data URL
+
+    # O WebView permanece montado mesmo quando o painel é ocultado
     webview = ft.WebView(
         url=data_url,
-        expand=True
+        expand=True,
     )
-    async def fechar_modal(e):
-        """Fecha o modal e atualiza a tabela"""
-        dlg_modal_upload_fastq.open = False
+
+    async def ocultar_upload(e):
+        # Desloca o painel para fora da tela sem destruir o WebView
+        upload_panel.offset = ft.Offset(2, 0)
         page.update()
-        
-        # Atualizar tabela de amostras após fechar o modal
+
         try:
-            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-        except Exception as e:
-            logger.error(f"Erro ao atualizar tabela após upload: {e}")
-            await log_message(page, f"⚠️ Erro ao atualizar tabela: {e}")
-    
-    # Criar o modal
-    dlg_modal_upload_fastq = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Adicionar arquivos FASTQ"),
-        content=ft.Container(
-            width=700,
-            height=600,
-            content=webview
+            await atualizar_tabela(
+                page,
+                token,
+                container_menu_direita,
+                tabela_amostras_local,
+            )
+        except Exception as exc:
+            logger.error(f"Erro ao atualizar tabela após ocultar upload: {exc}")
+
+    upload_card = ft.Container(
+        width=760,
+        height=700,
+        padding=20,
+        border_radius=18,
+        bgcolor="white",
+        shadow=ft.BoxShadow(
+            blur_radius=25,
+            spread_radius=2,
+            color="black38",
         ),
-        actions=[
-            ft.TextButton(
-                "Fechar",
-                on_click=fechar_modal
-            ),
-        ],
-        actions_alignment=ft.MainAxisAlignment.END,
+        content=ft.Column(
+            expand=True,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Text(
+                            "Adicionar arquivos FASTQ",
+                            size=22,
+                            weight="bold",
+                        ),
+                        ft.IconButton(
+                            icon="close",
+                            tooltip="Ocultar",
+                            on_click=ocultar_upload,
+                        ),
+                    ],
+                ),
+                ft.Container(
+                    content=webview,
+                    expand=True,
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    controls=[
+                        ft.TextButton(
+                            "Ocultar",
+                            on_click=ocultar_upload,
+                        ),
+                    ],
+                ),
+            ],
+        ),
     )
-    
-    # Exibir o modal
-    page.open(dlg_modal_upload_fastq)
+
+    upload_panel = ft.Container(
+        key=f"persistent-upload-{user_id}",
+        expand=True,
+        alignment=ft.alignment.center,
+        bgcolor="#99000000",
+        offset=ft.Offset(0, 0),
+        content=upload_card,
+    )
+
+    _upload_panels[cache_key] = upload_panel
+    page.overlay.append(upload_panel)
+    page.update()

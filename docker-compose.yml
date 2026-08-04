@@ -6,9 +6,9 @@ services:
       - ./app:/app/
       - ./users:/users/
     ports:
-      - "8000:8000"
+      - "8890:8890"
     tty: true
-    command: conda run --no-capture-output -n bioinfo uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    command: conda run --no-capture-output -n bioinfo uvicorn backend.main:app --host 0.0.0.0 --port 8890 --reload
     networks:
       - main-net
     environment:
@@ -23,11 +23,11 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-bioinfo}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8890,http://127.0.0.1:8890}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8890/health/live"]
       interval: 5s
       timeout: 3s
       retries: 15

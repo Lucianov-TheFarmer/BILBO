@@ -11,6 +11,7 @@ import os
 import logging
 import json
 import shutil
+import re
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -19,6 +20,39 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 router = APIRouter()
+
+
+def _resolve_trimmed_pair(base_path: str, basename: str):
+    candidates = (
+        (
+            os.path.join(base_path, f"{basename}_1_trimmed.fastq.gz"),
+            os.path.join(base_path, f"{basename}_2_trimmed.fastq.gz"),
+        ),
+        (
+            os.path.join(base_path, f"{basename}_1_trimmed.fastq"),
+            os.path.join(base_path, f"{basename}_2_trimmed.fastq"),
+        ),
+    )
+
+    for path1, path2 in candidates:
+        if os.path.isfile(path1) and os.path.isfile(path2):
+            return path1, path2
+
+    return candidates[0]
+
+
+
+def _trimmed_base(name: str) -> str:
+    value = str(name)
+    value = re.sub(r"\.bam$", "", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"_R?[12]_trimmed\.fastq(?:\.gz)?$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return value
+
 
 # ----------------------------------------
 # Helper Functions
@@ -97,13 +131,12 @@ def add_samples(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid genome format. Accession not found.")
 
     # Extrair basenames únicos das amostras
-    basenames = list({sample.split('_')[0] for sample in samples_list})
+    basenames = sorted({_trimmed_base(sample) for sample in samples_list})
     logger.info(f"Basenames identificados: {basenames}")
 
     # Adicionar basenames ao banco de dados
     for basename in basenames:
-        sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
-        sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
+        sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
         if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
             raise HTTPException(
@@ -152,9 +185,8 @@ async def start_alignment(
             detail=f"Genome index not found at {genome_dir}. Ensure the genome is indexed correctly.",
         )
 
-    basename = ensure_safe_component(sample.split('_')[0], "sample")
-    sample_path_1 = os.path.join(base_path, f"{basename}_1_trimmed.fastq")
-    sample_path_2 = os.path.join(base_path, f"{basename}_2_trimmed.fastq")
+    basename = ensure_safe_component(_trimmed_base(sample), "sample")
+    sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
     if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
         raise HTTPException(
@@ -380,8 +412,8 @@ def download_genome(
 @router.get("/genomes/{accession}/analyze")
 def analyze_gff(accession: str, current_user: User = Depends(get_current_user)):
     """Executa o script analyze_gff.py para o genoma especificado e retorna o resultado."""
-    gff_file = f"../users/ref_genomes/{accession}/genomic.gff"
-    command = ["python", "backend/scripts/analyze_gff.py", gff_file]
+    genome_dir = f"/users/ref_genomes/{accession}"
+    command = ["python", "/app/backend/scripts/analyze_gff.py", genome_dir]
 
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True)

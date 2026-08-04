@@ -63,16 +63,30 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sample_name} not found")
 
-        # Criar um novo estágio para quantificação (stage_id=6) com extensão .txt
-        new_sample_stage = SampleStage(
-            stage_id=6,
-            name=f"{sample_name.replace('.bam', '.txt')}",
-            sra_code=db_sample_stage.sra_code,
-            size=None,
-            status="PENDING",
-            user_id=user_id,
-        )
-        db.add(new_sample_stage)
+        # Criar ou reutilizar o estágio de quantificação.
+        # Evita duplicatas caso a requisição seja repetida.
+        txt_name = sample_name.replace(".bam", ".txt")
+        quant_stage = db.query(SampleStage).filter(
+            SampleStage.name == txt_name,
+            SampleStage.stage_id == 6,
+            SampleStage.user_id == user_id,
+        ).first()
+
+        if quant_stage is None:
+            quant_stage = SampleStage(
+                stage_id=6,
+                name=txt_name,
+                sra_code=db_sample_stage.sra_code,
+                size=None,
+                status="PENDING",
+                user_id=user_id,
+            )
+            db.add(quant_stage)
+        elif quant_stage.status != "COMPLETED":
+            quant_stage.sra_code = db_sample_stage.sra_code
+            quant_stage.size = None
+            quant_stage.status = "PENDING"
+
     db.commit()
 
     return {"message": "Amostras adicionadas à fila com sucesso"}

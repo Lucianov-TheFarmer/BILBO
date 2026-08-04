@@ -3,14 +3,57 @@ import httpx
 import logging
 import asyncio
 import json
+import re
 from .utils import log_message
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _paired_trimmed_name(name):
+    value = str(name)
+
+    pairs = (
+        ("_1_trimmed.fastq.gz", "_2_trimmed.fastq.gz"),
+        ("_1_trimmed.fastq", "_2_trimmed.fastq"),
+        ("_R1_trimmed.fastq.gz", "_R2_trimmed.fastq.gz"),
+        ("_R1_trimmed.fastq", "_R2_trimmed.fastq"),
+    )
+
+    for first, second in pairs:
+        if value.endswith(first):
+            return value[:-len(first)] + second
+        if value.endswith(second):
+            return value[:-len(second)] + first
+
+    return None
+
+
 # Global variables
 tabela_selecao_trimmagem = None
+
+_FASTQ_PAIR_RE = re.compile(
+    r"^(?P<base>.+?)(?P<tag>_R?[12])(?P<ext>\.(?:fastq|fq)(?:\.gz)?)$",
+    re.IGNORECASE,
+)
+
+
+def _paired_fastq_name(name):
+    """Retorna o nome do mate correspondente, preservando extensão e padrão R1/R2."""
+    match = _FASTQ_PAIR_RE.match(str(name))
+    if not match:
+        return None
+
+    tag = match.group("tag")
+    mate = "2" if tag.endswith("1") else "1"
+
+    return (
+        f"{match.group('base')}"
+        f"{tag[:-1]}{mate}"
+        f"{match.group('ext')}"
+    )
+
 
 def create_tabela_amostras_trimmadas(page, token):
     """Creates the table for trimmed samples."""
@@ -25,12 +68,7 @@ def create_tabela_amostras_trimmadas(page, token):
         """Toggle selection of a sample and ensure PE pairs are selected together."""
         selected_sample = e.control.data 
         is_selected = e.control.value
-        if selected_sample.endswith("_1_trimmed.fastq"):
-            paired_sample = selected_sample.replace("_1_trimmed.fastq", "_2_trimmed.fastq")
-        elif selected_sample.endswith("_2_trimmed.fastq"):
-            paired_sample = selected_sample.replace("_2_trimmed.fastq", "_1_trimmed.fastq")
-        else:
-            paired_sample = None
+        paired_sample = _paired_trimmed_name(selected_sample)
 
         if paired_sample:
             for row in tabela_amostras_trimmadas.rows:
@@ -58,7 +96,7 @@ async def update_trimmagem_table(page, token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
+            response = await client.get("http://bioinfo-container:8890/samples/stages/3", headers=headers)
             if response.status_code == 200:
                 samples = response.json()
                 tabela_amostras_trimmadas.rows.clear()
@@ -116,9 +154,17 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
         try:
             async with httpx.AsyncClient() as client:
                 for sample_name in selected_samples:
-                    if sample_name.endswith("_trimmed_trimmed.fastq"):
-                        sample_name = sample_name.replace("_trimmed_trimmed.fastq", "_trimmed.fastq")
-                    response = await client.delete(f"http://bioinfo-container:8000/trimmagem/{sample_name}", headers=headers)
+                    if sample_name.endswith("_trimmed_trimmed.fastq.gz"):
+                        sample_name = sample_name.replace(
+                            "_trimmed_trimmed.fastq.gz",
+                            "_trimmed.fastq.gz",
+                        )
+                    elif sample_name.endswith("_trimmed_trimmed.fastq"):
+                        sample_name = sample_name.replace(
+                            "_trimmed_trimmed.fastq",
+                            "_trimmed.fastq",
+                        )
+                    response = await client.delete(f"http://bioinfo-container:8890/trimmagem/{sample_name}", headers=headers)
                     if response.status_code == 200:
                         logger.info(f"Amostra trimmada {sample_name} excluída com sucesso!")
                     else:
@@ -160,8 +206,9 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
 
-    if tabela_selecao_trimmagem is None:
-        tabela_selecao_trimmagem = create_tabela_selecao_trimmagem(page, token)
+    # Recriar a tabela a cada abertura evita reutilizar um controle preso
+    # a um AlertDialog anterior.
+    tabela_selecao_trimmagem = create_tabela_selecao_trimmagem(page, token)
 
     await update_tabela_selecao_trimmagem(page, token)
 
@@ -456,12 +503,12 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
             return
 
         # Retry logic for HTTP request
-        max_retries = 3
+        max_retries = 1
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=600.0) as client:  # Increased timeout to 120 seconds
+                async with httpx.AsyncClient(timeout=86400.0) as client:  # Increased timeout to 120 seconds
                     response = await client.post(
-                        "http://bioinfo-container:8000/trimmagem/",
+                        "http://bioinfo-container:8890/trimmagem/",
                         data={
                             "selected_samples": json.dumps(selected_samples),
                             "threads": params["threads"],
@@ -602,11 +649,11 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 async def processar_trimmagem(page, token, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=86400.0) as client:
             logger.info("Preparando os dados para a requisição de trimmagem.")
             form_data = {"selected_samples": json.dumps(selected_samples)}
             response = await client.post(
-                "http://bioinfo-container:8000/trimmagem/",
+                "http://bioinfo-container:8890/trimmagem/",
                 data=form_data,
                 headers=headers,
             )
@@ -662,12 +709,7 @@ async def update_tabela_selecao_trimmagem(page, token):
         selected_sample = e.control.data
         is_selected = e.control.value
 
-        if selected_sample.endswith("_1.fastq"):
-            paired_sample = selected_sample.replace("_1.fastq", "_2.fastq")
-        elif selected_sample.endswith("_2.fastq"):
-            paired_sample = selected_sample.replace("_2.fastq", "_1.fastq")
-        else:
-            paired_sample = None
+        paired_sample = _paired_fastq_name(selected_sample)
 
         if paired_sample:
             for row in tabela_selecao_trimmagem.rows:
@@ -684,16 +726,21 @@ async def update_tabela_selecao_trimmagem(page, token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response_stage_1 = await client.get("http://bioinfo-container:8000/samples/stages/1", headers=headers)
+            response_stage_1 = await client.get("http://bioinfo-container:8890/samples/stages/1", headers=headers)
             if response_stage_1.status_code == 200:
                 downloaded_samples = response_stage_1.json()
             else:
                 logger.error(f"Erro ao obter amostras baixadas: {response_stage_1.status_code} - {response_stage_1.text}")
                 downloaded_samples = []
 
-            response_stage_3 = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
+            response_stage_3 = await client.get("http://bioinfo-container:8890/samples/stages/3", headers=headers)
             if response_stage_3.status_code == 200:
-                trimmed_samples = {sample["sra_code"] for sample in response_stage_3.json()}
+                trimmed_samples = {
+                    sample["sra_code"]
+                    for sample in response_stage_3.json()
+                    if str(sample.get("status") or "").upper()
+                    in {"PENDING", "RUNNING", "COMPLETED"}
+                }
             else:
                 logger.error(f"Erro ao obter amostras trimmadas: {response_stage_3.status_code} - {response_stage_3.text}")
                 trimmed_samples = set()

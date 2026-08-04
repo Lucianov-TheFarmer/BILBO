@@ -9,7 +9,7 @@ from .utils import log_message  # Adicione esta linha
 async def fetch_existing_contrasts(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/contrasts/", headers=headers)
+        response = await client.get("http://localhost:8890/contrasts/", headers=headers)
         response.raise_for_status()
         return response.json()
 
@@ -71,7 +71,7 @@ async def show_preprocess_modal(page, token, user_id):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://localhost:8000/preprocess/start",
+                    "http://localhost:8890/preprocess/start",
                     json={"contrast_ids": list(selected_ids)},
                     headers=headers,
                 )
