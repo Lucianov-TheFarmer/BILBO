@@ -9,6 +9,7 @@ from .procedures.trimmagem import show_trimmagem_modal, create_tabela_amostras_t
 from .procedures.quality_analysis_post_trim import show_quality_analysis_post_trim_modal, create_tabela_amostras_pos_trimmagem, update_tabela_amostras_pos_trimmagem, delete_quality_analysis_post_trim_results
 from .procedures.alignment import show_alignment_modal, show_genomes_modal, create_tabela_alinhamento, update_tabela_alinhamento, excluir_alinhamento
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
+from .procedures.contrasts import show_contrasts_modal
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
 from .procedures.deg import show_deg_results
@@ -127,6 +128,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
     async def iniciar_quantificacao_handler(e):
         await show_quantification_modal(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
+
+    async def show_contrasts_modal_handler(e):
+        await show_contrasts_modal(page, token, user_id)
+
 
     async def show_deg_results_handler(e):
         await show_deg_results(page, token, user_id, container_amostras)
@@ -307,6 +312,23 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ),
                         ft.DataRow(
                             cells=[
+                                ft.DataCell(
+                                    ft.Container(
+                                        content=ft.Text("Contrastes"),
+                                        on_click=show_contrasts_modal_handler,
+                                    )
+                                ),
+                                ft.DataCell(
+                                    ft.Container(
+                                        content=ft.Text("0"),
+                                        alignment=ft.alignment.center,
+                                        on_click=show_contrasts_modal_handler,
+                                    )
+                                ),
+                            ],
+                        ),
+                        ft.DataRow(
+                            cells=[
                                 ft.DataCell(ft.Container(
                                             content=ft.Text(t("menu_deg", lang)),
                                             on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=7)
@@ -381,7 +403,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     #         }
     #         async with httpx.AsyncClient(timeout=60.0) as client:
     #             response = await client.post(
-    #                 "http://localhost:8000/chat",
+    #                 "http://localhost:8890/chat",
     #                 json={"message": texto_usuario, "model": "qwen3:0.6b"},
     #                 headers=headers
     #             )
@@ -476,7 +498,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             controls=[
                 ft.Container(
                     margin=ft.Margin(-5, -5, 0, 0),
-                    expand=30,
+                    expand=24,
                     content=menubar_principal
                 ),
                 ft.Container(
@@ -486,7 +508,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ft.Container(
                     alignment=ft.alignment.center_right,
                     margin=ft.Margin(0, -7, -7, -7),
-                    expand=10,
+                    expand=16,
                     content=ft.Row(
                         alignment=ft.MainAxisAlignment.END,
                         controls=[
@@ -541,7 +563,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
     async def connect_websocket():
-        async with websockets.connect(f"ws://bioinfo-container:8000/ws?token={token}") as websocket:
+        async with websockets.connect(f"ws://bioinfo-container:8890/ws?token={token}") as websocket:
             while True:
                 message = await websocket.recv()
                 await log_message(page, message, container_terminal=container_terminal)

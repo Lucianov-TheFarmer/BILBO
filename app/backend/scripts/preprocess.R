@@ -21,7 +21,6 @@ if (length(file_arg) > 0) {
 
 setwd(target_preprocess_dir)
 
-library(httr)
 library(edgeR)
 library(ggplot2)
 library(pheatmap)
@@ -236,11 +235,3 @@ save_png("sampleClusteringHeatmap.png", width=heatmap_width, height=heatmap_heig
 })
 
 # Não gera gráficos de expressão gênica individuais
-
-# Mensagem para o frontend
-msg <- paste("Pré-processamento finalizado!")
-httr::POST(
-  url = "http://localhost:8000/ws/",
-  body = list(message = msg),
-  encode = "form"
-)

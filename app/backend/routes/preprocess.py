@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import SampleStage, User
-from ..utils import get_current_user
+from ..utils import get_current_user, manager
 import os
+import asyncio
 import subprocess
 
 router = APIRouter()
@@ -125,13 +126,41 @@ async def start_preprocess(
     with open(targets_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
-    # Execute o script R em background, passando user_id como argumento
-    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R"))
-    try:
-        # Execute Rscript with working directory set to the user's preprocess directory
-        subprocess.Popen(["Rscript", script_path, str(user_id)], cwd=base_dir)
-    except Exception as e:
-        # Logue o erro, mas não interrompa a resposta
-        print(f"Erro ao executar o script R: {e}")
+    # Executar o R em background e acompanhar sua finalização.
+    script_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R")
+    )
 
-    return {"status": "success", "message": "Targets.txt criado com sucesso."}
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "Rscript",
+            script_path,
+            str(user_id),
+            cwd=base_dir,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao iniciar pré-processamento: {e}",
+        )
+
+    async def wait_and_notify():
+        rc = await process.wait()
+
+        if rc == 0:
+            message = "Pré-processamento finalizado com sucesso!"
+        else:
+            message = f"Pré-processamento falhou (código {rc})."
+
+        try:
+            await manager.broadcast(message, user_id=user_id)
+        except Exception as exc:
+            print(f"Erro ao enviar notificação do pré-processamento: {exc}")
+
+    asyncio.create_task(wait_and_notify())
+
+    return {
+        "status": "success",
+        "message": "Pré-processamento iniciado com sucesso.",
+        "pid": process.pid,
+    }

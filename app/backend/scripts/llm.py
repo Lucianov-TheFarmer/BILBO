@@ -35,7 +35,13 @@ VECTOR_DB_LOCK_PATH = CHROMA_DB_PATH + ".bootstrap.lock"
 COLLECTION_NAME = "banco_literatura_bio"
 
 # models (kept from rag.py)
-MODELO_LLM = os.getenv("BILBO_LLM_MODEL_OVERRIDE") or os.getenv("LLM_PRIMARY_MODEL", "qwen3:14b")
+def _current_llm_model():
+    """Resolve o modelo a cada chamada, permitindo fallback em runtime."""
+    return (
+        os.getenv("BILBO_LLM_MODEL_OVERRIDE")
+        or os.getenv("LLM_PRIMARY_MODEL")
+        or "qwen3:14b"
+    )
 MODELO_EMBEDDING = "snowflake-arctic-embed2:568m"
 
 
@@ -245,7 +251,7 @@ def analisar_descricao_cluster(colecao, lista_genes):
 
     try:
         resposta = ollama.chat(
-            model=MODELO_LLM,
+            model=_current_llm_model(),
             messages=[{'role': 'user', 'content': prompt_cluster}]
         )
         return resposta['message']['content']
@@ -289,7 +295,7 @@ def analisar_coesao_cluster(colecao, lista_genes, descricao_tema):
 
     try:
         resposta = ollama.chat(
-            model=MODELO_LLM,
+            model=_current_llm_model(),
             messages=[{'role': 'user', 'content': prompt_validacao}],
             format='json'
         )
@@ -337,7 +343,7 @@ def analisar_representante(colecao, gene_rep, descricao_do_cluster):
 
     try:
         resposta = ollama.chat(
-            model=MODELO_LLM,
+            model=_current_llm_model(),
             messages=[{'role': 'user', 'content': prompt_gene}],
             format='json'
         )
@@ -373,7 +379,15 @@ def salvar_resultados(dados, out_dir):
         md_lines.append(f"**Cohesion Status:** {status_icon} {val_data.get('cohesion_status')}")
         md_lines.append(f"**Analysis:** {val_data.get('justification')}")
 
-        core_genes = ", ".join(val_data.get('core_genes', []))
+        core_items = val_data.get("core_genes", []) or []
+        core_genes = ", ".join(
+            (
+                str(item.get("gene") or item.get("name") or item)
+                if isinstance(item, dict)
+                else str(item)
+            )
+            for item in core_items
+        )
         md_lines.append(f"**Core Genes (Drivers):** {core_genes}")
 
         outliers = val_data.get('outliers', [])
@@ -392,7 +406,14 @@ def salvar_resultados(dados, out_dir):
         md_lines.append(f"**Mechanism:** {rep_data.get('molecular_mechanism')}\n")
         md_lines.append(f"**Relevance:** {rep_data.get('cluster_relevance')}\n")
 
-        fontes = ", ".join(rep_data.get('sources', []))
+        fontes = ", ".join(
+            (
+                str(item.get("source") or item.get("fonte") or item)
+                if isinstance(item, dict)
+                else str(item)
+            )
+            for item in (rep_data.get("sources", []) or [])
+        )
         md_lines.append(f"**Sources: _{fontes}_**")
         md_lines.append("---\n")
 
@@ -461,6 +482,14 @@ def run_llm(file_path, sheet_name=None, out_dir=None, user_id=None):
 
     # execute pipeline and save results to out_dir
     relatorio = executar_pipeline_completo(colecao, clusters_dict, out_dir)
+
+    # Não considerar sucesso quando todas as chamadas LLM falharam.
+    if not relatorio:
+        raise RuntimeError(
+            "Nenhuma interpretação LLM válida foi produzida "
+            f"usando o modelo {_current_llm_model()}."
+        )
+
     saved = salvar_resultados(relatorio, out_dir)
     saved["vector_db_bootstrap"] = bootstrap_info
     return saved

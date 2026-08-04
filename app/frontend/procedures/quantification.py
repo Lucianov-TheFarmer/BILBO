@@ -63,7 +63,7 @@ async def update_tabela_quantificacao(page, token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/samples/stages/6", headers=headers)
+            response = await client.get("http://bioinfo-container:8890/samples/stages/6", headers=headers)
             if response.status_code == 200:
                 samples = response.json()
                 tabela_quantificacao.rows.clear()
@@ -162,13 +162,13 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
 
     try:
         async with httpx.AsyncClient() as client:
-            response_stage_5 = await client.get("http://bioinfo-container:8000/samples/stages/5", headers=headers)
+            response_stage_5 = await client.get("http://bioinfo-container:8890/samples/stages/5", headers=headers)
             if response_stage_5.status_code == 200:
                 aligned_samples = response_stage_5.json()
             else:
                 aligned_samples = []
 
-            response_stage_6 = await client.get("http://bioinfo-container:8000/samples/stages/6", headers=headers)
+            response_stage_6 = await client.get("http://bioinfo-container:8890/samples/stages/6", headers=headers)
             if response_stage_6.status_code == 200:
                 quantified_samples = {sample["sra_code"] for sample in response_stage_6.json()}
             else:
@@ -176,7 +176,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
 
             samples = [sample for sample in aligned_samples if sample["sra_code"] not in quantified_samples]
 
-            response_genomes = await client.get("http://bioinfo-container:8000/genomes/", headers=headers)
+            response_genomes = await client.get("http://bioinfo-container:8890/genomes/", headers=headers)
             if response_genomes.status_code == 200:
                 genomes = response_genomes.json()
             else:
@@ -246,7 +246,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    "http://bioinfo-container:8000/quantification/add_to_queue",
+                    "http://bioinfo-container:8890/quantification/add_to_queue",
                     json={
                         "samples": selected_samples,
                         "feature_type": feature_type,
@@ -262,16 +262,8 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                     await log_message(page, f"Erro ao adicionar amostras à fila: {response.text}")
                     return
 
-                for sample in selected_samples:
-                    sample_txt = sample.replace(".bam", ".txt")
-                    for row in tabela_quantificacao.rows:
-                        if row.cells[0].content.value == sample_txt:
-                            row.cells[2].content.value = "RUNNING"
-                            page.update()
-                            break
-
                 response = await client.post(
-                    "http://bioinfo-container:8000/quantification/start_processing",
+                    "http://bioinfo-container:8890/quantification/start_processing",
                     json={
                         "samples": selected_samples,
                         "feature_type": feature_type,
@@ -286,9 +278,32 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"Quantificação enfileirada (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
+
+                        async def refresh_quantification_status(_job_payload):
+                            await update_tabela_quantificacao(page, token, user_id)
+                            page.update()
+
+                        try:
+                            result = await wait_for_job(
+                                token,
+                                job_id,
+                                interval=5.0,
+                                on_update=refresh_quantification_status,
+                            )
+                        except httpx.HTTPStatusError as exc:
+                            if exc.response.status_code == 401:
+                                await log_message(
+                                    page,
+                                    "A sessão expirou durante o acompanhamento do job. "
+                                    "A quantificação continua normalmente no servidor. "
+                                    "Faça login novamente para acompanhar o status."
+                                )
+                                return
+                            raise
+
                         status = result.get("status")
                         await log_message(page, f"Quantificação finalizada com status {status}.")
+
                         if status != "COMPLETED":
                             details = _extract_quantification_error(result)
                             if details:
@@ -351,7 +366,7 @@ async def excluir_quantificacao(page, token, user_id, selected_samples, containe
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://bioinfo-container:8000/quantification/delete",
+                    "http://bioinfo-container:8890/quantification/delete",
                     json=selected_samples,
                     headers=headers,
                 )

@@ -175,6 +175,40 @@ if [ -z "$annotation_file" ]; then
     exit 1
 fi
 
+# HTSEQ_STRAND_NORMALIZATION
+normalized_annotation="${annotation_file%.*}.htseq.${annotation_file##*.}"
+
+if [ ! -f "$normalized_annotation" ] || [ "$annotation_file" -nt "$normalized_annotation" ]; then
+    invalid_strands="$(
+        awk -F '\t' '
+            $0 !~ /^#/ && NF >= 9 &&
+            $7 != "+" && $7 != "-" && $7 != "." {
+                count++
+            }
+            END { print count + 0 }
+        ' "$annotation_file"
+    )"
+
+    awk -F '\t' '
+        BEGIN { OFS = "\t" }
+        /^#/ {
+            print
+            next
+        }
+        NF >= 9 && $7 != "+" && $7 != "-" && $7 != "." {
+            $7 = "."
+        }
+        {
+            print
+        }
+    ' "$annotation_file" > "${normalized_annotation}.tmp"
+
+    mv "${normalized_annotation}.tmp" "$normalized_annotation"
+    log "Normalized ${invalid_strands} unsupported strand values for HTSeq."
+fi
+
+annotation_file="$normalized_annotation"
+
 if ! attribute_exists_for_feature "$annotation_file" "$feature_type" "$id_attribute"; then
     fallback_attr="$(detect_fallback_attribute "$annotation_file" "$feature_type" || true)"
     if [ -n "$fallback_attr" ]; then

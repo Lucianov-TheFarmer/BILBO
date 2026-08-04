@@ -14,7 +14,7 @@ async def fetch_samples(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get("http://localhost:8000/contrasts/samples", headers=headers)
+            response = await client.get("http://localhost:8890/contrasts/samples", headers=headers)
             response.raise_for_status()
             samples = response.json()
             logger.info(f"Fetched samples: {samples}")
@@ -32,7 +32,7 @@ async def fetch_existing_contrasts(token):
     logger.info("Fetching existing contrasts from the backend.")
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/contrasts/", headers=headers)
+        response = await client.get("http://localhost:8890/contrasts/", headers=headers)
         response.raise_for_status()
         contrasts = response.json()
         logger.info(f"Fetched existing contrasts: {contrasts}")
@@ -134,7 +134,7 @@ async def show_contrasts_modal(page, token, user_id):
         logger.info(f"Deleting contrast {contrast_id} from backend.")
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         async with httpx.AsyncClient() as client:
-            response = await client.delete(f"http://localhost:8000/contrasts/{contrast_id}", headers=headers)
+            response = await client.delete(f"http://localhost:8890/contrasts/{contrast_id}", headers=headers)
             if response.status_code == 200:
                 logger.info(f"Contrast {contrast_id} deleted from backend.")
             else:
@@ -567,7 +567,7 @@ async def show_contrasts_modal(page, token, user_id):
                 }
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
-                        "http://localhost:8000/contrasts/save",
+                        "http://localhost:8890/contrasts/save",
                         json={"contrasts": contrasts_data},
                         headers=headers,
                     )

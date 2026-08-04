@@ -151,6 +151,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
         controls=[
             ft.SubmenuButton(
                 content=ft.Text(t("menu_samples", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_add_fastq", lang),
@@ -164,6 +167,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_quality", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_check_quality", lang),
@@ -178,6 +184,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_alignment", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_add_genome", lang),
@@ -189,6 +198,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_quantification", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_quantify_reads", lang),
@@ -197,6 +209,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_deg", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_define_contrasts", lang),
@@ -208,12 +223,27 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
                     ),
                     create_menu_item(
                         t("menu_start_deg", lang),
-                        on_click=lambda e: asyncio.run(run_deg_analysis(page, token, user_id))
+                        on_click=lambda e: asyncio.run(
+                            run_deg_analysis(
+                                page,
+                                token,
+                                user_id,
+                                refresh_callback=lambda: atualizar_tabela(
+                                    page,
+                                    token,
+                                    container_menu_direita,
+                                    tabela_amostras_local,
+                                ),
+                            )
+                        )
                     ),
                 ],
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_results", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_exploratory_analysis", lang),
@@ -247,6 +277,9 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
             ),
             ft.SubmenuButton(
                 content=ft.Text(t("menu_about", lang)),
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=5, vertical=0)
+                ),
                 controls=[
                     create_menu_item(
                         t("menu_version", lang),

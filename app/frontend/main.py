@@ -59,7 +59,7 @@ async def main(page: ft.Page):
         headers = {"ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post("http://bioinfo-container:8000/token", data={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
+                response = await client.post("http://bioinfo-container:8890/token", data={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
             if response.status_code == 200:
                 data = None
                 try:
@@ -90,7 +90,7 @@ async def main(page: ft.Page):
         headers = {"ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post("http://bioinfo-container:8000/register/", params={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
+                response = await client.post("http://bioinfo-container:8890/register/", params={"username": username_input.value, "password": password_input.value}, headers=headers, timeout=5)
 
             if response.status_code == 200:
                 await show_snackbar("Registration successful! Please log in.")

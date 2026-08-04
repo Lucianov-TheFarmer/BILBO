@@ -45,6 +45,6 @@ COPY app /app
 
 ENV PATH=/opt/conda/envs/bioinfo/bin:/app/backend/scripts:$PATH
 
-EXPOSE 8000
+EXPOSE 8890
 
-CMD ["conda", "run", "--no-capture-output", "-n", "bioinfo", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["conda", "run", "--no-capture-output", "-n", "bioinfo", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8890"]

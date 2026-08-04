@@ -6,14 +6,14 @@ from .jobs import wait_for_job
 async def fetch_deg_sheets(token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
-        response = await client.get("http://localhost:8000/results/deg_sheets", headers=headers)
+        response = await client.get("http://localhost:8890/results/deg_sheets", headers=headers)
         response.raise_for_status()
         return response.json().get("sheets", [])
 
 async def fetch_barplot_files(token, user_id):
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            "http://localhost:8000/results/barplot_files",
+            "http://localhost:8890/results/barplot_files",
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -22,7 +22,7 @@ async def fetch_barplot_files(token, user_id):
 async def create_barplot_file(token, user_id, title, contrasts):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8000/results/create_barplot_file",
+            "http://localhost:8890/results/create_barplot_file",
             json={"title": title, "contrasts": contrasts},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
@@ -32,7 +32,7 @@ async def create_barplot_file(token, user_id, title, contrasts):
 async def fetch_venn_files(token, user_id):
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            "http://localhost:8000/results/venn_files",
+            "http://localhost:8890/results/venn_files",
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
         response.raise_for_status()
@@ -41,7 +41,7 @@ async def fetch_venn_files(token, user_id):
 async def create_venn_file(token, user_id, title, contrasts):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8000/results/create_venn_file",
+            "http://localhost:8890/results/create_venn_file",
             json={"title": title, "contrasts": contrasts},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
@@ -51,7 +51,7 @@ async def create_venn_file(token, user_id, title, contrasts):
 async def delete_venn_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
         response = await client.delete(
-            "http://localhost:8000/results/delete_venn_file",
+            "http://localhost:8890/results/delete_venn_file",
             params={"filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
@@ -61,7 +61,7 @@ async def delete_venn_file(token, user_id, filename):
 async def delete_barplot_file(token, user_id, filename):
     async with httpx.AsyncClient() as client:
         response = await client.delete(
-            "http://localhost:8000/results/delete_barplot_file",
+            "http://localhost:8890/results/delete_barplot_file",
             params={"filename": filename},
             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
         )
@@ -99,7 +99,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar barplot",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -157,7 +157,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar diagrama de Venn",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -343,7 +343,7 @@ async def show_heatmap_modal(page, token, user_id, container_amostras):
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://localhost:8000/results/create_heatmap_file",
+                    "http://localhost:8890/results/create_heatmap_file",
                     json=data,
                     headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                     timeout=120.0,
@@ -381,7 +381,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         # Busca os arquivos de heatmap
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                "http://localhost:8000/results/heatmap_files",
+                "http://localhost:8890/results/heatmap_files",
                 headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                 timeout=30.0,
             )
@@ -403,7 +403,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
                 print(f"[frontend] Enviando DELETE /results/delete_heatmap_file filename={filename}")
                 async with httpx.AsyncClient() as client:
                     response = await client.delete(
-                        "http://localhost:8000/results/delete_heatmap_file",
+                        "http://localhost:8890/results/delete_heatmap_file",
                         params={"filename": filename},
                         headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                         timeout=30.0,
@@ -462,7 +462,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
             download_button = ft.IconButton(
                 icon="file_download",
                 tooltip="Baixar heatmap",
-                on_click=lambda e, fname=filename: page.launch_url(f"http://localhost:8000/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
+                on_click=lambda e, fname=filename: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
             )
             
             row = ft.DataRow(

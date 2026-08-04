@@ -27,7 +27,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:8000/samples/stages/9", headers=headers)
+            resp = await client.get(f"http://localhost:8890/samples/stages/9", headers=headers)
         if resp.status_code != 200:
             await log_message(page, f"Erro ao buscar entradas de clustering: {resp.text}")
             resp_data = []
@@ -51,7 +51,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         """Fetch image bytes from backend and return an InteractiveViewer control."""
         try:
             headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
-            url = f"http://localhost:8000/clustering/file?file={filename}&sheet={sheet}"
+            url = f"http://localhost:8890/clustering/file?file={filename}&sheet={sheet}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
@@ -76,7 +76,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
 
         async with httpx.AsyncClient() as client:
-            resp = await client.get("http://localhost:8000/clustering/contrasts", headers=headers)
+            resp = await client.get("http://localhost:8890/clustering/contrasts", headers=headers)
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar contrasts: {resp.text}")
                 return
@@ -98,7 +98,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
             payload = {"sheets": selected}
             # Allow long-running request: set a high timeout (or None to disable)
             async with httpx.AsyncClient(timeout=None) as client:
-                resp = await client.post("http://localhost:8000/clustering/run", json=payload, headers=headers)
+                resp = await client.post("http://localhost:8890/clustering/run", json=payload, headers=headers)
             if resp.status_code not in (200, 202):
                 await log_message(page, f"Erro ao iniciar clusterização: {resp.text}")
             else:
@@ -179,7 +179,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                         import urllib.parse
                         fname = "cluster.png" if dropdown.value == "Cluster" else "metrics.png"
                         fname_enc = urllib.parse.quote(fname, safe='')
-                        download_url = f"http://localhost:8000/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
+                        download_url = f"http://localhost:8890/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
                         page.launch_url(download_url)
                     except Exception as ex:
                         await log_message(page, f"Erro ao iniciar download da figura: {ex}")
@@ -209,7 +209,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                 try:
                     async with httpx.AsyncClient() as client:
                         resp = await client.delete(
-                            f"http://localhost:8000/clustering/{sheet_name}",
+                            f"http://localhost:8890/clustering/{sheet_name}",
                             headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                         )
                     if resp.status_code == 200:

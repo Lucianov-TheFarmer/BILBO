@@ -144,9 +144,30 @@ def execute_pipeline_job(self, job_id: str):
     started_at = time.monotonic()
     try:
         job, payload = _job_payload(db, job_id)
-        if job.status == PipelineStatus.CANCELED.value:
-            logger.info(json.dumps({"event": "job_skipped_canceled", "job_id": job_id}))
+
+        terminal_statuses = {
+            PipelineStatus.COMPLETED.value,
+            PipelineStatus.FAILED.value,
+            PipelineStatus.CANCELED.value,
+        }
+
+        if job.status in terminal_statuses or job.finished_at is not None:
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "job_skipped_terminal",
+                        "job_id": job_id,
+                        "status": job.status,
+                        "finished_at": (
+                            job.finished_at.isoformat()
+                            if job.finished_at
+                            else None
+                        ),
+                    }
+                )
+            )
             return
+
         set_job_running(db, job_id)
         stage = job.stage
         user_id = int(job.user_id)
@@ -296,16 +317,20 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
         safe_sample = ensure_safe_component(str(sample), "sample")
         rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800)
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
-        base = safe_sample.replace("_1.fastq", "").replace("_2.fastq", "")
-        for suffix in ["_1", "_2"]:
-            row = db.query(SampleStage).filter(
-                SampleStage.name == f"{base}{suffix}.html",
-                SampleStage.stage_id == 2,
-                SampleStage.user_id == user_id,
-            ).first()
-            if row:
-                row.status = "COMPLETED" if rc == 0 else "FAILED"
-                db.commit()
+        sample_stem = safe_sample
+        for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+            if sample_stem.endswith(extension):
+                sample_stem = sample_stem[:-len(extension)]
+                break
+
+        row = db.query(SampleStage).filter(
+            SampleStage.name == f"{sample_stem}.html",
+            SampleStage.stage_id == 2,
+            SampleStage.user_id == user_id,
+        ).first()
+        if row:
+            row.status = "COMPLETED" if rc == 0 else "FAILED"
+            db.commit()
 
     failed = [x for x in outputs if x["rc"] != 0]
     _finalize_job(
@@ -327,7 +352,19 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
         safe_sample = ensure_safe_component(str(sample), "sample")
         rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800)
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
-        row_name = safe_sample.replace("_trimmed.fastq", "_post_trim.html")
+        row_name = safe_sample
+        for suffix in (
+            "_trimmed.fastq.gz",
+            "_trimmed.fq.gz",
+            "_trimmed.fastq",
+            "_trimmed.fq",
+        ):
+            if row_name.endswith(suffix):
+                row_name = (
+                    row_name[:-len(suffix)]
+                    + "_post_trim.html"
+                )
+                break
         row = db.query(SampleStage).filter(
             SampleStage.name == row_name,
             SampleStage.stage_id == 4,
@@ -414,17 +451,40 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
     outputs: list[dict[str, Any]] = []
     for sample in samples:
         safe_sample = ensure_safe_component(str(sample), "sample")
-        cmd = ["bash", "/app/backend/scripts/quantification.sh", safe_sample, str(user_id), feature_type, id_attribute]
-        if selected_genome:
-            cmd.append(str(selected_genome))
-        rc, stdout, stderr = _run(cmd, timeout=10800)
-        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         txt_name = safe_sample.replace(".bam", ".txt")
+
         row = db.query(SampleStage).filter(
             SampleStage.name == txt_name,
             SampleStage.stage_id == 6,
             SampleStage.user_id == user_id,
         ).first()
+
+        if row:
+            row.status = "RUNNING"
+            row.size = None
+            db.commit()
+
+        cmd = ["bash", "/app/backend/scripts/quantification.sh", safe_sample, str(user_id), feature_type, id_attribute]
+        if selected_genome:
+            cmd.append(str(selected_genome))
+
+        try:
+            rc, stdout, stderr = _run(cmd, timeout=10800)
+        except Exception as exc:
+            rc = 1
+            stdout = ""
+            stderr = str(exc)
+            logger.exception("Quantification failed for %s", safe_sample)
+
+        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
+
+        if row is None:
+            row = db.query(SampleStage).filter(
+                SampleStage.name == txt_name,
+                SampleStage.stage_id == 6,
+                SampleStage.user_id == user_id,
+            ).first()
+
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             txt_path = _abs_users(str(user_id), "quantification", txt_name)
@@ -459,24 +519,191 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     preprocess_dir = _abs_users(str(user_id), "preprocess")
     deg_dir = _abs_users(str(user_id), "DEG")
     deg_dir.mkdir(parents=True, exist_ok=True)
-    deg_script = "/app/backend/scripts/DEG.R"
 
-    rc, stdout, stderr = _run(["Rscript", deg_script, str(preprocess_dir), str(deg_dir)], timeout=172800)
+    deg_script = "/app/backend/scripts/DEG.R"
+    gff_annotation_script = "/app/backend/scripts/annotate_deg_with_gff.py"
+    uniprot_annotation_script = "/app/backend/scripts/annotate_deg_with_uniprot.py"
+    deg_graphs_script = "/app/backend/scripts/deg_graphs.py"
+
+    genome_accession = str(payload.get("genome_accession") or "").strip()
+
+    # --------------------------------------------------------
+    # 1. edgeR / DEG
+    # --------------------------------------------------------
+    rc, stdout, stderr = _run(
+        ["Rscript", deg_script, str(preprocess_dir), str(deg_dir)],
+        timeout=172800,
+    )
 
     deg_xlsx = deg_dir / "DEG.xlsx"
+    deg_full_xlsx = deg_dir / "DEG_full.xlsx"
+
+    annotation_result: dict[str, Any] = {
+        "genome_accession": genome_accession,
+        "gff": "NOT_RUN",
+        "uniprot": "NOT_RUN",
+    }
+
+    annotation_error: str | None = None
+
+    # --------------------------------------------------------
+    # 2. Anotação funcional somente se DEG terminou
+    # --------------------------------------------------------
+    if rc == 0:
+        if not deg_xlsx.exists():
+            annotation_error = "DEG.xlsx não foi produzido."
+        elif not genome_accession:
+            annotation_error = "Genome accession não informado para anotação funcional."
+        else:
+            genome_root = _abs_users("ref_genomes")
+            genome_dir = _abs_users("ref_genomes", genome_accession)
+
+            # Segurança: impedir acesso fora de ref_genomes
+            try:
+                genome_dir.resolve().relative_to(genome_root.resolve())
+            except ValueError:
+                annotation_error = "Diretório de genoma inválido."
+            else:
+                gff_candidates = [
+                    genome_dir / "genomic.gff",
+                    genome_dir / "genomic.gff3",
+                    genome_dir / "genomic.gtf",
+                ]
+
+                gff_path = next((x for x in gff_candidates if x.exists()), None)
+
+                if gff_path is None:
+                    annotation_error = (
+                        f"Arquivo GFF/GTF não encontrado para {genome_accession}."
+                    )
+                else:
+                    annotation_result["gff_path"] = str(gff_path)
+
+                    # ------------------------------------------------
+                    # GFF
+                    # ------------------------------------------------
+                    gff_rc, gff_stdout, gff_stderr = _run(
+                        [
+                            "python",
+                            gff_annotation_script,
+                            str(deg_xlsx),
+                            str(gff_path),
+                        ],
+                        timeout=7200,
+                    )
+
+                    annotation_result["gff"] = (
+                        "COMPLETED" if gff_rc == 0 else "FAILED"
+                    )
+                    annotation_result["gff_stdout"] = gff_stdout[-3000:]
+                    annotation_result["gff_stderr"] = gff_stderr[-3000:]
+
+                    if gff_rc != 0:
+                        annotation_error = (
+                            "Falha na anotação pelo GFF: "
+                            + (gff_stderr[-1500:] or f"rc={gff_rc}")
+                        )
+                    else:
+                        # --------------------------------------------
+                        # UniProt
+                        #
+                        # Executado somente sobre DEG.xlsx
+                        # (genes significativos), evitando dezenas de
+                        # milhares de consultas de DEG_full.xlsx.
+                        # --------------------------------------------
+                        uni_rc, uni_stdout, uni_stderr = _run(
+                            [
+                                "python",
+                                uniprot_annotation_script,
+                                str(deg_xlsx),
+                            ],
+                            timeout=86400,
+                        )
+
+                        annotation_result["uniprot"] = (
+                            "COMPLETED" if uni_rc == 0 else "FAILED"
+                        )
+                        annotation_result["uniprot_stdout"] = uni_stdout[-5000:]
+                        annotation_result["uniprot_stderr"] = uni_stderr[-3000:]
+
+                        if uni_rc != 0:
+                            annotation_error = (
+                                "Falha na anotação UniProt: "
+                                + (uni_stderr[-1500:] or f"rc={uni_rc}")
+                            )
+
+    # --------------------------------------------------------
+    # 3. Gerar figuras DEG após a anotação funcional
+    # --------------------------------------------------------
+    if rc == 0 and deg_xlsx.exists() and annotation_error is None:
+        graph_rc, graph_stdout, graph_stderr = _run(
+            [
+                "python",
+                deg_graphs_script,
+                str(deg_xlsx),
+                str(deg_dir),
+            ],
+            timeout=7200,
+        )
+
+        annotation_result["graphs"] = (
+            "COMPLETED" if graph_rc == 0 else "FAILED"
+        )
+        annotation_result["graphs_stdout"] = graph_stdout[-4000:]
+        annotation_result["graphs_stderr"] = graph_stderr[-3000:]
+
+        if graph_rc != 0:
+            annotation_error = (
+                "Falha na geração das figuras DEG: "
+                + (graph_stderr[-1500:] or f"rc={graph_rc}")
+            )
+
+    # --------------------------------------------------------
+    # 4. Registrar artefatos
+    # --------------------------------------------------------
     if deg_xlsx.exists():
-        add_artifact(db, job_id=job_id, user_id=user_id, kind="xlsx", path=str(deg_xlsx))
+        add_artifact(
+            db,
+            job_id=job_id,
+            user_id=user_id,
+            kind="xlsx",
+            path=str(deg_xlsx),
+        )
+
+    if deg_full_xlsx.exists():
+        add_artifact(
+            db,
+            job_id=job_id,
+            user_id=user_id,
+            kind="xlsx",
+            path=str(deg_full_xlsx),
+        )
+
+    # DEG só é considerado integralmente concluído quando
+    # análise estatística + GFF + UniProt terminam.
+    final_ok = rc == 0 and annotation_error is None
+
+    if rc != 0:
+        error_message = stderr[-4000:] or f"DEG.R terminou com rc={rc}"
+    else:
+        error_message = annotation_error
 
     _finalize_job(
         db,
         job_id=job_id,
         stage="deg",
         user_id=user_id,
-        status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
-        result={"stdout": stdout[-6000:]},
-        error_message=None if rc == 0 else stderr[-4000:],
-        exit_code=rc,
+        status=PipelineStatus.COMPLETED if final_ok else PipelineStatus.FAILED,
+        result={
+            "stdout": stdout[-6000:],
+            "annotation": annotation_result,
+            "deg_xlsx": str(deg_xlsx) if deg_xlsx.exists() else None,
+            "deg_full_xlsx": str(deg_full_xlsx) if deg_full_xlsx.exists() else None,
+        },
+        error_message=error_message,
+        exit_code=0 if final_ok else 1,
     )
+
 
 
 def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
@@ -548,16 +775,76 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
 
 
 def _run_llm_with_fallback(user_id: int, sheet: str, out_dir: str) -> dict[str, Any]:
-    models = [settings.llm_primary_model] + [m for m in settings.llm_fallback_models if m != settings.llm_primary_model]
+    import ollama
+
+    candidates = [settings.llm_primary_model] + [
+        m for m in settings.llm_fallback_models
+        if m != settings.llm_primary_model
+    ]
+
+    try:
+        response = ollama.list()
+        items = getattr(response, "models", None)
+        if items is None and isinstance(response, dict):
+            items = response.get("models", [])
+
+        available = set()
+        for item in items or []:
+            name = getattr(item, "model", None)
+            if name is None and isinstance(item, dict):
+                name = item.get("model")
+            if name:
+                available.add(name)
+
+    except Exception as exc:
+        raise RuntimeError(f"Não foi possível consultar modelos Ollama: {exc}") from exc
+
+    models = [model for model in candidates if model in available]
+
+    if not models:
+        raise RuntimeError(
+            "Nenhum modelo LLM configurado está disponível no Ollama. "
+            f"Configurados={candidates}; disponíveis={sorted(available)}"
+        )
+
     last_error = None
-    for model in models:
-        os.environ["BILBO_LLM_MODEL_OVERRIDE"] = model
-        try:
-            result = llm_script.run_llm(file_path=None, sheet_name=sheet, out_dir=out_dir, user_id=user_id)
-            result["model_used"] = model
-            return result
-        except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)
+    previous_override = os.environ.get("BILBO_LLM_MODEL_OVERRIDE")
+
+    try:
+        for model in models:
+            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = model
+            logger.info(
+                "Tentando LLM user_id=%s sheet=%s model=%s",
+                user_id,
+                sheet,
+                model,
+            )
+
+            try:
+                result = llm_script.run_llm(
+                    file_path=None,
+                    sheet_name=sheet,
+                    out_dir=out_dir,
+                    user_id=user_id,
+                )
+                result["model_used"] = model
+                return result
+
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "Falha LLM user_id=%s sheet=%s model=%s: %s",
+                    user_id,
+                    sheet,
+                    model,
+                    exc,
+                )
+    finally:
+        if previous_override is None:
+            os.environ.pop("BILBO_LLM_MODEL_OVERRIDE", None)
+        else:
+            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = previous_override
+
     raise RuntimeError(last_error or "No model could process LLM job")
 
 

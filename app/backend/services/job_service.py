@@ -53,11 +53,26 @@ def create_job(db: Session, stage: str, user_id: int, payload: Optional[dict[str
 
 
 def set_job_running(db: Session, job_id: str) -> PipelineJob:
-    job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+    job = db.query(PipelineJob).filter(
+        PipelineJob.id == job_id
+    ).first()
+
     if job is None:
         raise ValueError(f"Job {job_id} not found")
+
+    terminal_statuses = {
+        PipelineStatus.COMPLETED.value,
+        PipelineStatus.FAILED.value,
+        PipelineStatus.CANCELED.value,
+    }
+
+    if job.status in terminal_statuses or job.finished_at is not None:
+        return job
+
     job.status = PipelineStatus.RUNNING.value
     job.started_at = datetime.now(timezone.utc)
+    job.error_message = None
+
     db.commit()
     db.refresh(job)
     return job

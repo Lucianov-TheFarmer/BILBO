@@ -77,7 +77,10 @@ def find_gff_or_gtf(path):
     # If it's a directory, check for genomic.gff then genomic.gtf
     if os.path.isdir(path):
         gff = os.path.join(path, "genomic.gff")
+        gff3 = os.path.join(path, "genomic.gff3")
         gtf = os.path.join(path, "genomic.gtf")
+        if os.path.isfile(gff3):
+            return gff3
         if os.path.isfile(gff):
             return gff
         if os.path.isfile(gtf):
@@ -99,7 +102,7 @@ def find_gff_or_gtf(path):
 
 def main():
     if len(sys.argv) != 2:
-        print("Uso: python analyze_gff.py <arquivo.gff|arquivo.gtf|diretorio_do_genoma>")
+        print("Uso: python analyze_gff.py <arquivo.gff|arquivo.gff3|arquivo.gtf|diretorio_do_genoma>")
         sys.exit(1)
 
     input_path = sys.argv[1]

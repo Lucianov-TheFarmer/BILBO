@@ -34,7 +34,7 @@ async def update_quality_analysis_table(page, token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/quality_analysis/completed", headers=headers)
+            response = await client.get("http://bioinfo-container:8890/quality_analysis/completed", headers=headers)
             if response.status_code == 200:
                 samples = response.json()
                 logger.info(f"Data received from backend: {samples}")
@@ -44,7 +44,7 @@ async def update_quality_analysis_table(page, token, user_id):
                         asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC"))
                     
                     async def download_handler(e, s=sample["name"]):
-                        download_url = f"http://localhost:8000/download/qualidade1/{s}?token={token}"
+                        download_url = f"http://localhost:8890/download/qualidade1/{s}?token={token}"
                         page.launch_url(download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
@@ -116,7 +116,7 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
         try:
             async with httpx.AsyncClient() as client:
                 for sample_name in selected_samples:
-                    response = await client.delete(f"http://bioinfo-container:8000/quality_analysis/{sample_name}", headers=headers)
+                    response = await client.delete(f"http://bioinfo-container:8890/quality_analysis/{sample_name}", headers=headers)
                     if response.status_code == 200:
                         logger.info(f"Resultado da análise {sample_name} excluído com sucesso!")
                     else:
@@ -153,7 +153,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            response_stage_1 = await client.get("http://bioinfo-container:8000/samples/stages/1", headers=headers)
+            response_stage_1 = await client.get("http://bioinfo-container:8890/samples/stages/1", headers=headers)
             if response_stage_1.status_code == 200:
                 downloaded_samples = response_stage_1.json()
                 logger.info(f"Amostras baixadas (stage_id=1): {downloaded_samples}")
@@ -161,9 +161,18 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 logger.error(f"Erro ao obter amostras baixadas: {response_stage_1.status_code} - {response_stage_1.text}")
                 downloaded_samples = []
 
-            response_stage_2 = await client.get("http://bioinfo-container:8000/samples/stages/2", headers=headers)
+            response_stage_2 = await client.get("http://bioinfo-container:8890/samples/stages/2", headers=headers)
             if response_stage_2.status_code == 200:
-                analyzed_samples = {sample["name"].replace(".html", ".fastq") for sample in response_stage_2.json()}
+                analyzed_samples = set()
+                for analyzed in response_stage_2.json():
+                    analyzed_name = analyzed["name"]
+                    analyzed_stem = analyzed_name[:-5] if analyzed_name.endswith(".html") else analyzed_name
+                    analyzed_samples.update({
+                        f"{analyzed_stem}.fastq",
+                        f"{analyzed_stem}.fq",
+                        f"{analyzed_stem}.fastq.gz",
+                        f"{analyzed_stem}.fq.gz",
+                    })
                 logger.info(f"Amostras analisadas (stage_id=2): {analyzed_samples}")
             else:
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_2.status_code} - {response_stage_2.text}")
@@ -195,7 +204,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         page.update()
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post("http://bioinfo-container:8000/quality_analysis/", json={"samples": selected_samples}, headers=headers)
+                response = await client.post("http://bioinfo-container:8890/quality_analysis/", json={"samples": selected_samples}, headers=headers)
                 if response.status_code in (200, 202):
                     body = response.json()
                     job_id = body.get("job_id")

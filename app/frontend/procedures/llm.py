@@ -38,7 +38,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:8000/samples/stages/10", headers=headers)
+            resp = await client.get(f"http://localhost:8890/samples/stages/10", headers=headers)
         if resp.status_code != 200:
             await log_message(page, f"Erro ao buscar entradas LLM: {resp.text}")
             resp_data = []
@@ -51,7 +51,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_md(e, sheet_name):
         try:
-            url = f"http://localhost:8000/llm/file?file=report.md&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=report.md&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
             if resp.status_code != 200:
@@ -86,7 +86,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_json(e, sheet_name):
         try:
-            url = f"http://localhost:8000/llm/file?file=data.json&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=data.json&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
             if resp.status_code != 200:
@@ -105,7 +105,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(
-                    f"http://localhost:8000/llm/{sheet_name}",
+                    f"http://localhost:8890/llm/{sheet_name}",
                     headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                 )
             if resp.status_code == 200:
@@ -145,8 +145,8 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
         try:
             async with httpx.AsyncClient() as client:
-                resp_deg = await client.get("http://localhost:8000/deg/sheets", headers=headers)
-                resp_llm = await client.get("http://localhost:8000/llm/contrasts", headers=headers)
+                resp_deg = await client.get("http://localhost:8890/deg/sheets", headers=headers)
+                resp_llm = await client.get("http://localhost:8890/llm/contrasts", headers=headers)
 
             if resp_deg.status_code != 200:
                 await log_message(page, f"Erro ao buscar abas DEG: {resp_deg.text}")
@@ -176,7 +176,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 payload = {"sheets": selected}
                 try:
                     async with httpx.AsyncClient(timeout=None) as client:
-                        resp = await client.post("http://localhost:8000/llm/run", json=payload, headers=headers)
+                        resp = await client.post("http://localhost:8890/llm/run", json=payload, headers=headers)
                     if resp.status_code not in (200, 202):
                         await log_message(page, f"Erro ao iniciar LLM: {resp.status_code} - {resp.text}")
                     else:

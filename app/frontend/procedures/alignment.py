@@ -3,6 +3,7 @@ import httpx
 import logging
 import asyncio
 import json
+import re
 from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import view_alignment_log
@@ -10,6 +11,39 @@ from .viewer import view_alignment_log
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _paired_trimmed_name(name):
+    value = str(name)
+
+    pairs = (
+        ("_1_trimmed.fastq.gz", "_2_trimmed.fastq.gz"),
+        ("_1_trimmed.fastq", "_2_trimmed.fastq"),
+        ("_R1_trimmed.fastq.gz", "_R2_trimmed.fastq.gz"),
+        ("_R1_trimmed.fastq", "_R2_trimmed.fastq"),
+    )
+
+    for first, second in pairs:
+        if value.endswith(first):
+            return value[:-len(first)] + second
+        if value.endswith(second):
+            return value[:-len(second)] + first
+
+    return None
+
+
+
+def _trimmed_base(name):
+    value = str(name)
+    value = re.sub(r"\.bam$", "", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"_R?[12]_trimmed\.fastq(?:\.gz)?$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return value
+
 
 # ----------------------------------------
 # Table Management
@@ -44,7 +78,7 @@ async def update_tabela_alinhamento(page, token, user_id):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://bioinfo-container:8000/alignment/", headers=headers)
+            response = await client.get("http://bioinfo-container:8890/alignment/", headers=headers)
             if response.status_code == 200:
                 samples = response.json()
                 tabela_alinhamento.rows.clear()
@@ -89,7 +123,7 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
-                "http://bioinfo-container:8000/alignment/add_samples",
+                "http://bioinfo-container:8890/alignment/add_samples",
                 data={
                     "samples": json.dumps(selected_samples),
                     "genome": genome,
@@ -100,11 +134,11 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
                 await log_message(page, f"Erro ao adicionar amostras: {response.text}")
                 return
 
-            basenames = list({sample.split('_')[0] for sample in selected_samples})
+            basenames = sorted({_trimmed_base(sample) for sample in selected_samples})
             
             for basename in basenames:
                 response = await client.post(
-                    "http://bioinfo-container:8000/alignment/start",
+                    "http://bioinfo-container:8890/alignment/start",
                     data={"sample": basename, "genome": genome},
                     params={"threads": params["threads"]},
                     headers=headers,
@@ -140,7 +174,7 @@ async def excluir_alinhamento(page, token, user_id, selected_samples, container_
         try:
             async with httpx.AsyncClient() as client:
                 for sample in selected_samples:
-                    response = await client.delete(f"http://bioinfo-container:8000/alignment/{sample}", headers=headers)
+                    response = await client.delete(f"http://bioinfo-container:8890/alignment/{sample}", headers=headers)
                     if response.status_code == 200:
                         await log_message(page, f"Alinhamento {sample} excluído com sucesso!")
                     else:
@@ -185,11 +219,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
         selected_sample = e.control.data
         is_selected = e.control.value
         
-        paired_sample = None
-        if selected_sample.endswith("_1_trimmed.fastq"):
-            paired_sample = selected_sample.replace("_1_trimmed.fastq", "_2_trimmed.fastq")
-        elif selected_sample.endswith("_2_trimmed.fastq"):
-            paired_sample = selected_sample.replace("_2_trimmed.fastq", "_1_trimmed.fastq")
+        paired_sample = _paired_trimmed_name(selected_sample)
 
         if paired_sample:
             for row in tabela_trimmados.rows:
@@ -235,15 +265,20 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
         headers = {"Authorization": f"Bearer {token}"}
         try:
             async with httpx.AsyncClient() as client:
-                response_trimmados = await client.get("http://bioinfo-container:8000/samples/stages/3", headers=headers)
+                response_trimmados = await client.get("http://bioinfo-container:8890/samples/stages/3", headers=headers)
                 trimmed_samples = response_trimmados.json() if response_trimmados.status_code == 200 else []
 
-                response_alinhadas = await client.get("http://bioinfo-container:8000/alignment/", headers=headers)
-                aligned_samples = {s["name"].replace(".bam", "") for s in response_alinhadas.json()} if response_alinhadas.status_code == 200 else set()
+                response_alinhadas = await client.get("http://bioinfo-container:8890/alignment/", headers=headers)
+                aligned_samples = {
+                    _trimmed_base(s["name"])
+                    for s in response_alinhadas.json()
+                    if str(s.get("status") or "").upper()
+                    in {"PENDING", "RUNNING", "COMPLETED"}
+                } if response_alinhadas.status_code == 200 else set()
 
                 available_samples = [
                     s for s in trimmed_samples
-                    if s["name"].replace("_1_trimmed.fastq", "").replace("_2_trimmed.fastq", "") not in aligned_samples
+                    if _trimmed_base(s["name"]) not in aligned_samples
                 ]
 
                 tabela_trimmados.rows.clear()
@@ -266,7 +301,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
         headers = {"Authorization": f"Bearer {token}"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get("http://bioinfo-container:8000/genomes/", headers=headers)
+                response = await client.get("http://bioinfo-container:8890/genomes/", headers=headers)
                 if response.status_code == 200:
                     genomes = response.json()
                     tabela_genomas_referencia.rows.clear()
@@ -357,7 +392,7 @@ async def show_genomes_modal(page, token, user_id):
         headers = {"Authorization": f"Bearer {token}"}
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get("http://bioinfo-container:8000/genomes/", headers=headers)
+                response = await client.get("http://bioinfo-container:8890/genomes/", headers=headers)
                 if response.status_code == 200:
                     tabela_genomas_referencia.rows.clear()
                     for genome in response.json():
@@ -397,11 +432,11 @@ async def show_genomes_modal(page, token, user_id):
     async def fetch_gff_analysis(accession, token):
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://bioinfo-container:8000/genomes/{accession}/analyze", headers=headers)
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.get(f"http://bioinfo-container:8890/genomes/{accession}/analyze", headers=headers)
                 return response.json()["output"] if response.status_code == 200 else f"Erro: {response.text}"
         except Exception as ex:
-            return f"Erro ao chamar o backend: {ex}"
+            return f"Erro ao chamar o backend ({type(ex).__name__}): {ex!r}"
 
     def view_gff_analysis(accession, page, token):
         dlg_gff_analysis = ft.AlertDialog(
@@ -419,7 +454,7 @@ async def show_genomes_modal(page, token, user_id):
             async with httpx.AsyncClient() as client:
                 dlg_modal_excluir_genoma.open = False
                 page.update()
-                response = await client.delete(f"http://bioinfo-container:8000/genomes/{accession}", headers=headers)
+                response = await client.delete(f"http://bioinfo-container:8890/genomes/{accession}", headers=headers)
                 if response.status_code == 200:
                     await log_message(page, f"Genoma {accession} excluído com sucesso.")
                     await update_tabela_genomas_referencia()
@@ -481,7 +516,7 @@ async def show_genomes_modal(page, token, user_id):
         search_type = search_type_dropdown.value
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://bioinfo-container:8000/genomes/search?{search_type}={search_field.value}", headers=headers)
+                response = await client.get(f"http://bioinfo-container:8890/genomes/search?{search_type}={search_field.value}", headers=headers)
                 if response.status_code == 200:
                     data = response.json()["genomes"]
                     update_rows_with_checkboxes(data)
@@ -560,7 +595,7 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
     try:
         async with httpx.AsyncClient(timeout=3600) as client:
             await log_message(page, f"Iniciando download do genoma {accession}...")
-            response = await client.post(f"http://bioinfo-container:8000/genomes/download", params={"accession": accession}, headers=headers)
+            response = await client.post(f"http://bioinfo-container:8890/genomes/download", params={"accession": accession}, headers=headers)
             if response.status_code == 200:
                 # Download endpoint only returns 200 after the genome files are ready.
                 await index_genome(page, token, accession, organism_name, int(sjdb_overhang), int(threads))
@@ -576,7 +611,7 @@ async def index_genome(page, token, accession, organism_name, sjdb_overhang, thr
         async with httpx.AsyncClient(timeout=3600) as client:
             await log_message(page, f"Iniciando indexação do genoma {organism_name} ({accession})...")
             response = await client.post(
-                f"http://bioinfo-container:8000/genomes/index",
+                f"http://bioinfo-container:8890/genomes/index",
                 params={"accession": accession, "organism_name": organism_name, "sjdb_overhang": sjdb_overhang, "threads": threads},
                 headers=headers,
             )
