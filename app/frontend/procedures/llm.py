@@ -1,28 +1,15 @@
+import asyncio
+
 import flet as ft
 import httpx
-import asyncio
+
 from ..components.general_components import create_button
 from .jobs import wait_for_job
 from .utils import log_message
 
 
-def _collect_vector_bootstrap_messages(job_payload):
-    result = (job_payload or {}).get("result") or {}
-    per_sheet = result.get("results") or {}
-    messages = []
-    for sheet_name, sheet_result in per_sheet.items():
-        info = (sheet_result or {}).get("vector_db_bootstrap") or {}
-        if info.get("downloaded"):
-            messages.append(
-                f"Banco vetorial RAG baixado automaticamente do Zenodo para {sheet_name}."
-            )
-    return messages
-
-
 async def show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None):
-    """List stage_id=10 entries (interpretacao_llm) and show action icons (md/json/delete).
-    This is a frontend-only scaffold; backend/llm script will be wired later.
-    """
+    """List prototype cluster/RAG interpretations and their report artifacts."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     files = []
 
@@ -38,7 +25,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:8890/samples/stages/10", headers=headers)
+            resp = await client.get("http://localhost:8890/samples/stages/10", headers=headers)
         if resp.status_code != 200:
             await log_message(page, f"Erro ao buscar entradas LLM: {resp.text}")
             resp_data = []
@@ -53,11 +40,14 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         try:
             url = f"http://localhost:8890/llm/file?file=report.md&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+                )
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .md: {resp.status_code} - {resp.text}")
                 return
             text = resp.text
+
             # render in preview container using Markdown renderer
             async def _navigate_md_link(ev):
                 try:
@@ -88,7 +78,9 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         try:
             url = f"http://localhost:8890/llm/file?file=data.json&sheet={sheet_name}"
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"})
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+                )
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .json: {resp.status_code} - {resp.text}")
                 return
@@ -111,7 +103,9 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
             if resp.status_code == 200:
                 await log_message(page, f"LLM {sheet_name} excluído.")
                 await _refresh_stage_counts_if_needed()
-                await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+                await show_llm(
+                    page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts
+                )
             else:
                 await log_message(page, f"Erro ao excluir LLM {sheet_name}: {resp.status_code} - {resp.text}")
         except Exception as ex:
@@ -120,14 +114,23 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
     rows = []
     for entry in files:
         sheet = entry.get("sheet")
-        md_btn = ft.IconButton(icon="description", tooltip="Ver report (.md)", on_click=lambda e, s=sheet: asyncio.run(_view_md(e, s)))
-        json_btn = ft.IconButton(icon="code", tooltip="Ver dados (.json)", on_click=lambda e, s=sheet: asyncio.run(_view_json(e, s)))
-        del_btn = ft.IconButton(icon="delete", tooltip="Excluir", on_click=lambda e, s=sheet: asyncio.run(_delete_sheet(e, s)))
 
-        rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text(sheet)),
-            ft.DataCell(ft.Row(controls=[md_btn, json_btn, del_btn]))
-        ]))
+        async def _view_md_handler(e, sheet_name=sheet):
+            await _view_md(e, sheet_name)
+
+        async def _view_json_handler(e, sheet_name=sheet):
+            await _view_json(e, sheet_name)
+
+        async def _delete_handler(e, sheet_name=sheet):
+            await _delete_sheet(e, sheet_name)
+
+        md_btn = ft.IconButton(icon="description", tooltip="Ver report (.md)", on_click=_view_md_handler)
+        json_btn = ft.IconButton(icon="code", tooltip="Ver dados (.json)", on_click=_view_json_handler)
+        del_btn = ft.IconButton(icon="delete", tooltip="Excluir", on_click=_delete_handler)
+
+        rows.append(
+            ft.DataRow(cells=[ft.DataCell(ft.Text(sheet)), ft.DataCell(ft.Row(controls=[md_btn, json_btn, del_btn]))])
+        )
 
     tabela = ft.DataTable(
         heading_row_color="primary",
@@ -186,11 +189,8 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                             await log_message(page, f"Interpretação LLM enfileirada (job {job_id}).")
                             result = await wait_for_job(token, job_id)
                             status = result.get("status")
-                            bootstrap_messages = _collect_vector_bootstrap_messages(result)
                             if status == "COMPLETED":
-                                for msg in bootstrap_messages:
-                                    await log_message(page, msg)
-                                await log_message(page, "Interpretação LLM concluída com sucesso.")
+                                await log_message(page, "Interpretação de clusters e RAG concluída com sucesso.")
                             else:
                                 error_message = result.get("error_message")
                                 if error_message:
@@ -200,7 +200,9 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                             await log_message(page, "Interpretação LLM iniciada.")
                         # refresh list
                         await _refresh_stage_counts_if_needed()
-                        await show_llm(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+                        await show_llm(
+                            page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts
+                        )
                 except Exception as ex:
                     await log_message(page, f"Erro ao executar LLM: {ex}")
 
@@ -229,6 +231,6 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     container_amostras.content.controls = [
         tabela,
-        create_button("Gerar Interpretação LLM", lambda e: asyncio.run(_start_llm(e)), color="primary", expand=False)
+        create_button("Reexecutar Interpretação e RAG", _start_llm, color="primary", expand=False),
     ]
     page.update()

@@ -1,15 +1,18 @@
-import flet as ft
-import os
-import httpx
 import asyncio
-from functools import partial
+
+import flet as ft
+import httpx
+
 from ..components.general_components import create_button
 from .jobs import wait_for_job
 from .utils import log_message
 
-async def show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None):
+
+async def show_clustering(
+    page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None
+):
     """Frontend-only: lista figuras de cluster já geradas em users/{user_id}/DEG
-    e oferece botão placeholder para "Gerar Clusterização".
+    e inicia o pipeline completo de clusterização, interpretação e RAG.
     """
     # Fetch clustering entries from backend DB (stage_id=9)
     files = []
@@ -27,7 +30,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:8890/samples/stages/9", headers=headers)
+            resp = await client.get("http://localhost:8890/samples/stages/9", headers=headers)
         if resp.status_code != 200:
             await log_message(page, f"Erro ao buscar entradas de clustering: {resp.text}")
             resp_data = []
@@ -35,14 +38,23 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
             resp_data = resp.json()
         # resp_data is a list of sample stage dicts with 'name' and optional 'size'
         for item in resp_data:
-            files.append({"sheet": item.get("name"), "file": "cluster.png", "metrics": "metrics.png", "size": item.get("size", "")})
+            files.append(
+                {
+                    "sheet": item.get("name"),
+                    "file": "cluster.png",
+                    "metrics": "metrics.png",
+                    "size": item.get("size", ""),
+                }
+            )
     except Exception as ex:
         await log_message(page, f"Erro ao buscar entradas de clustering: {ex}")
 
     async def _view_image(e, url):
         try:
             img = ft.Image(src=url, fit=ft.ImageFit.CONTAIN)
-            container_pre_visualizacao.content = ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[img])
+            container_pre_visualizacao.content = ft.Column(
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[img]
+            )
             page.update()
         except Exception as ex:
             await log_message(page, f"Erro ao abrir imagem: {ex}")
@@ -58,7 +70,8 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                 return ft.Text(f"Erro ao baixar imagem: {resp.status_code}", color="red")
             data = resp.content
             import base64
-            image_base64 = base64.b64encode(data).decode('utf-8')
+
+            image_base64 = base64.b64encode(data).decode("utf-8")
             image_control = ft.Image(src_base64=image_base64, fit=ft.ImageFit.CONTAIN, expand=True)
             interactive_viewer = ft.InteractiveViewer(
                 min_scale=0.5,
@@ -86,7 +99,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         checkboxes = []
         for c in data:
             label = f"{c['sheet']} {'(ok)' if c.get('clustered') else '(nenhuma clusterização)'}"
-            cb = ft.Checkbox(label=label, value=False, data=c['sheet'])
+            cb = ft.Checkbox(label=label, value=False, data=c["sheet"])
             checkboxes.append(cb)
 
         async def _confirm_start(e):
@@ -109,13 +122,15 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                     result = await wait_for_job(token, job_id)
                     status = result.get("status")
                     if status == "COMPLETED":
-                        await log_message(page, "Clusterização concluída com sucesso.")
+                        await log_message(page, "Clusterização, interpretação e RAG concluídos com sucesso.")
                     else:
                         await log_message(page, f"Clusterização finalizada com status {status}.")
                 else:
                     await log_message(page, "Clusterização iniciada.")
                 await _refresh_stage_counts_if_needed()
-                await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+                await show_clustering(
+                    page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts
+                )
             dlg.open = False
             page.update()
 
@@ -143,7 +158,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
             ft.Column(
                 controls=[
                     ft.Text("Nenhuma figura de cluster encontrada."),
-                    create_button("Gerar Clusterização", _start_clustering, color="primary", expand=False)
+                    create_button("Executar Pipeline Completo", _start_clustering, color="primary", expand=False),
                 ]
             )
         ]
@@ -151,6 +166,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
         rows = []
         for entry in files:
             sheet = entry.get("sheet", "")
+
             # build URLs for cluster and metrics
             # icon buttons: view (opens dropdown+viewer+download) and delete (call backend)
             async def _open_viewer(e, sheet_name=sheet):
@@ -177,30 +193,40 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                             await log_message(page, "Nenhuma figura selecionada para download.")
                             return
                         import urllib.parse
+
                         fname = "cluster.png" if dropdown.value == "Cluster" else "metrics.png"
-                        fname_enc = urllib.parse.quote(fname, safe='')
-                        download_url = f"http://localhost:8890/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
+                        fname_enc = urllib.parse.quote(fname, safe="")
+                        download_url = (
+                            f"http://localhost:8890/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
+                        )
                         page.launch_url(download_url)
                     except Exception as ex:
                         await log_message(page, f"Erro ao iniciar download da figura: {ex}")
 
-                download_icon_btn = ft.IconButton(icon="file_download", tooltip="Baixar figura", on_click=download_current_image)
+                download_icon_btn = ft.IconButton(
+                    icon="file_download", tooltip="Baixar figura", on_click=download_current_image
+                )
 
                 # load default
-                img_placeholder.content = await display_clustering_image(page, token, user_id, sheet_name, "cluster.png")
+                img_placeholder.content = await display_clustering_image(
+                    page, token, user_id, sheet_name, "cluster.png"
+                )
 
                 # Place the dropdown + download + image inside the preview container
                 container_pre_visualizacao.content = ft.Container(
                     expand=True,
                     content=ft.Column(
                         controls=[
-                            ft.Row([dropdown, ft.Container(width=8), download_icon_btn], alignment=ft.MainAxisAlignment.CENTER),
+                            ft.Row(
+                                [dropdown, ft.Container(width=8), download_icon_btn],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                            ),
                             ft.Container(height=10),
                             img_placeholder,
                         ],
                         alignment=ft.MainAxisAlignment.CENTER,
                         spacing=0,
-                    )
+                    ),
                 )
 
                 page.update()
@@ -215,19 +241,22 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
                     if resp.status_code == 200:
                         await log_message(page, f"Clusterização {sheet_name} excluída.")
                         await _refresh_stage_counts_if_needed()
-                        await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
+                        await show_clustering(
+                            page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts
+                        )
                     else:
-                        await log_message(page, f"Erro ao excluir clusterização {sheet_name}: {resp.status_code} - {resp.text}")
+                        await log_message(
+                            page, f"Erro ao excluir clusterização {sheet_name}: {resp.status_code} - {resp.text}"
+                        )
                 except Exception as ex:
                     await log_message(page, f"Erro ao excluir clusterização: {ex}")
 
             view_btn = ft.IconButton(icon="visibility", tooltip="Ver figuras", on_click=_open_viewer)
             delete_btn = ft.IconButton(icon="delete", tooltip="Excluir", on_click=_delete_sheet)
 
-            rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(sheet)),
-                ft.DataCell(ft.Row(controls=[view_btn, delete_btn]))
-            ]))
+            rows.append(
+                ft.DataRow(cells=[ft.DataCell(ft.Text(sheet)), ft.DataCell(ft.Row(controls=[view_btn, delete_btn]))])
+            )
 
         tabela = ft.DataTable(
             heading_row_color="primary",
@@ -243,7 +272,7 @@ async def show_clustering(page, token, user_id, container_amostras, container_pr
 
         container_amostras.content.controls = [
             tabela,
-            create_button("Gerar Clusterização", _start_clustering, color="primary", expand=False)
+            create_button("Executar Pipeline Completo", _start_clustering, color="primary", expand=False),
         ]
 
     page.update()

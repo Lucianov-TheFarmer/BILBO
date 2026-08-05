@@ -5,6 +5,7 @@ services:
     volumes:
       - ./app:/app/
       - ./users:/users/
+      - ./rag_data:/rag/
     ports:
       - "8890:8890"
     tty: true
@@ -26,6 +27,12 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8890,http://127.0.0.1:8890}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
+      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8890/health/live"]
       interval: 5s
@@ -38,6 +45,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      qdrant:
+        condition: service_started
 
   worker:
     build: .
@@ -46,6 +55,7 @@ services:
     volumes:
       - ./app:/app/
       - ./users:/users/
+      - ./rag_data:/rag/
     networks:
       - main-net
     environment:
@@ -62,10 +72,44 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-bioinfo}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
+      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  rag-indexer:
+    build: .
+    profiles: ["rag-index"]
+    command: conda run --no-capture-output -n bioinfo python -m backend.pipeline_rag.index
+    volumes:
+      - ./app:/app/
+      - ./rag_data:/rag/
+    networks:
+      - main-net
+    environment:
+      - PYTHONPATH=/app
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_EMBEDDING_URL=http://ollama:11434/api/embed
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - RAG_ARTICLES_DIR=/rag/articles
+      - RAG_ANNOTATE_LITERATURE_ENTITIES=${RAG_ANNOTATE_LITERATURE_ENTITIES:-false}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      qdrant:
         condition: service_started
       ollama:
         condition: service_healthy
@@ -75,6 +119,17 @@ services:
     container_name: redis-container
     ports:
       - "6379:6379"
+    networks:
+      - main-net
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: bilbo-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
     networks:
       - main-net
 
@@ -105,14 +160,22 @@ services:
       - "${OLLAMA_HOST_PORT:-11435}:11434"
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_CLUSTER_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
+      - OLLAMA_RAG_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - OLLAMA_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
     networks:
       - main-net
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test:
+        [
+          "CMD-SHELL",
+          "ollama list | grep -Fq \"$$OLLAMA_CLUSTER_MODEL\" && ollama list | grep -Fq \"$$OLLAMA_RAG_MODEL\" && ollama list | grep -Fq \"$$OLLAMA_EMBEDDING_MODEL\"",
+        ]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 60
+      start_period: 30s
 
   db:
     image: postgres:13
@@ -160,3 +223,4 @@ volumes:
   users:
   ssh_config:
   ollama_data:
+  qdrant_storage:

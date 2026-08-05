@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Tuple
-import logging
 
 from sqlalchemy.orm import Session
 
@@ -66,9 +66,7 @@ def _enforce_retention(db: Session, user_id: int) -> None:
     if settings.artifact_retention_days > 0:
         artifacts_cutoff = now - timedelta(days=settings.artifact_retention_days)
         old_artifacts = (
-            db.query(Artifact)
-            .filter(Artifact.user_id == user_id, Artifact.created_at < artifacts_cutoff)
-            .all()
+            db.query(Artifact).filter(Artifact.user_id == user_id, Artifact.created_at < artifacts_cutoff).all()
         )
         user_root = _abs_users(str(user_id))
         for artifact in old_artifacts:
@@ -158,11 +156,7 @@ def execute_pipeline_job(self, job_id: str):
                         "event": "job_skipped_terminal",
                         "job_id": job_id,
                         "status": job.status,
-                        "finished_at": (
-                            job.finished_at.isoformat()
-                            if job.finished_at
-                            else None
-                        ),
+                        "finished_at": (job.finished_at.isoformat() if job.finished_at else None),
                     }
                 )
             )
@@ -200,7 +194,7 @@ def execute_pipeline_job(self, job_id: str):
 
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, RETRYABLE_EXCEPTIONS) and self.request.retries < 2:
-            retry_delay = min(300, (2 ** self.request.retries) * 30)
+            retry_delay = min(300, (2**self.request.retries) * 30)
             job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
             if job:
                 job.status = PipelineStatus.PENDING.value
@@ -219,7 +213,7 @@ def execute_pipeline_job(self, job_id: str):
                     }
                 )
             )
-            raise self.retry(exc=exc, countdown=retry_delay, max_retries=2)
+            raise self.retry(exc=exc, countdown=retry_delay, max_retries=2) from exc
 
         try:
             if user_id >= 0:
@@ -266,17 +260,23 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
         except Exception:
             return ""
 
-    sample = db.query(SampleStage).filter(
-        SampleStage.sra_code == sra_code,
-        SampleStage.stage_id == 1,
-        SampleStage.user_id == user_id,
-    ).first()
+    sample = (
+        db.query(SampleStage)
+        .filter(
+            SampleStage.sra_code == sra_code,
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == user_id,
+        )
+        .first()
+    )
     if sample:
         sample.status = "RUNNING"
         db.commit()
 
     try:
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000
+        )
     except Exception as exc:
         if sample:
             sample.status = "FAILED"
@@ -315,19 +315,25 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
     outputs: list[dict[str, Any]] = []
     for sample in samples:
         safe_sample = ensure_safe_component(str(sample), "sample")
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
+        )
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         sample_stem = safe_sample
         for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
             if sample_stem.endswith(extension):
-                sample_stem = sample_stem[:-len(extension)]
+                sample_stem = sample_stem[: -len(extension)]
                 break
 
-        row = db.query(SampleStage).filter(
-            SampleStage.name == f"{sample_stem}.html",
-            SampleStage.stage_id == 2,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == f"{sample_stem}.html",
+                SampleStage.stage_id == 2,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -350,7 +356,9 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
     outputs: list[dict[str, Any]] = []
     for sample in samples:
         safe_sample = ensure_safe_component(str(sample), "sample")
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800
+        )
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         row_name = safe_sample
         for suffix in (
@@ -360,16 +368,17 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
             "_trimmed.fq",
         ):
             if row_name.endswith(suffix):
-                row_name = (
-                    row_name[:-len(suffix)]
-                    + "_post_trim.html"
-                )
+                row_name = row_name[: -len(suffix)] + "_post_trim.html"
                 break
-        row = db.query(SampleStage).filter(
-            SampleStage.name == row_name,
-            SampleStage.stage_id == 4,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == row_name,
+                SampleStage.stage_id == 4,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -418,11 +427,15 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
     bam_file = alignment_path / sample / f"{sample}.bam"
     if bam_file.exists():
         add_artifact(db, job_id=job_id, user_id=user_id, kind="bam", path=str(bam_file))
-    row = db.query(SampleStage).filter(
-        SampleStage.sra_code == sample,
-        SampleStage.stage_id == 5,
-        SampleStage.user_id == user_id,
-    ).first()
+    row = (
+        db.query(SampleStage)
+        .filter(
+            SampleStage.sra_code == sample,
+            SampleStage.stage_id == 5,
+            SampleStage.user_id == user_id,
+        )
+        .first()
+    )
     if row:
         row.status = "COMPLETED" if rc == 0 else "FAILED"
         if bam_file.exists():
@@ -453,11 +466,15 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
         safe_sample = ensure_safe_component(str(sample), "sample")
         txt_name = safe_sample.replace(".bam", ".txt")
 
-        row = db.query(SampleStage).filter(
-            SampleStage.name == txt_name,
-            SampleStage.stage_id == 6,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == txt_name,
+                SampleStage.stage_id == 6,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
 
         if row:
             row.status = "RUNNING"
@@ -472,18 +489,21 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
             rc, stdout, stderr = _run(cmd, timeout=10800)
         except Exception as exc:
             rc = 1
-            stdout = ""
             stderr = str(exc)
             logger.exception("Quantification failed for %s", safe_sample)
 
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
 
         if row is None:
-            row = db.query(SampleStage).filter(
-                SampleStage.name == txt_name,
-                SampleStage.stage_id == 6,
-                SampleStage.user_id == user_id,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.name == txt_name,
+                    SampleStage.stage_id == 6,
+                    SampleStage.user_id == user_id,
+                )
+                .first()
+            )
 
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
@@ -573,9 +593,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                 gff_path = next((x for x in gff_candidates if x.exists()), None)
 
                 if gff_path is None:
-                    annotation_error = (
-                        f"Arquivo GFF/GTF não encontrado para {genome_accession}."
-                    )
+                    annotation_error = f"Arquivo GFF/GTF não encontrado para {genome_accession}."
                 else:
                     annotation_result["gff_path"] = str(gff_path)
 
@@ -592,17 +610,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         timeout=7200,
                     )
 
-                    annotation_result["gff"] = (
-                        "COMPLETED" if gff_rc == 0 else "FAILED"
-                    )
+                    annotation_result["gff"] = "COMPLETED" if gff_rc == 0 else "FAILED"
                     annotation_result["gff_stdout"] = gff_stdout[-3000:]
                     annotation_result["gff_stderr"] = gff_stderr[-3000:]
 
                     if gff_rc != 0:
-                        annotation_error = (
-                            "Falha na anotação pelo GFF: "
-                            + (gff_stderr[-1500:] or f"rc={gff_rc}")
-                        )
+                        annotation_error = "Falha na anotação pelo GFF: " + (gff_stderr[-1500:] or f"rc={gff_rc}")
                     else:
                         # --------------------------------------------
                         # UniProt
@@ -620,17 +633,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                             timeout=86400,
                         )
 
-                        annotation_result["uniprot"] = (
-                            "COMPLETED" if uni_rc == 0 else "FAILED"
-                        )
+                        annotation_result["uniprot"] = "COMPLETED" if uni_rc == 0 else "FAILED"
                         annotation_result["uniprot_stdout"] = uni_stdout[-5000:]
                         annotation_result["uniprot_stderr"] = uni_stderr[-3000:]
 
                         if uni_rc != 0:
-                            annotation_error = (
-                                "Falha na anotação UniProt: "
-                                + (uni_stderr[-1500:] or f"rc={uni_rc}")
-                            )
+                            annotation_error = "Falha na anotação UniProt: " + (uni_stderr[-1500:] or f"rc={uni_rc}")
 
     # --------------------------------------------------------
     # 3. Gerar figuras DEG após a anotação funcional
@@ -646,17 +654,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
             timeout=7200,
         )
 
-        annotation_result["graphs"] = (
-            "COMPLETED" if graph_rc == 0 else "FAILED"
-        )
+        annotation_result["graphs"] = "COMPLETED" if graph_rc == 0 else "FAILED"
         annotation_result["graphs_stdout"] = graph_stdout[-4000:]
         annotation_result["graphs_stderr"] = graph_stderr[-3000:]
 
         if graph_rc != 0:
-            annotation_error = (
-                "Falha na geração das figuras DEG: "
-                + (graph_stderr[-1500:] or f"rc={graph_rc}")
-            )
+            annotation_error = "Falha na geração das figuras DEG: " + (graph_stderr[-1500:] or f"rc={graph_rc}")
 
     # --------------------------------------------------------
     # 4. Registrar artefatos
@@ -705,7 +708,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     )
 
 
-
 def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sheets = payload.get("sheets") or []
     deg_xlsx = _abs_users(str(user_id), "DEG", "DEG.xlsx")
@@ -729,7 +731,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
             )
             results[safe_sheet] = res
             artifact_paths = [img_final, img_metrics, cluster_json]
-            for key in ["metrics", "prioritized_genes", "input_normalized"]:
+            for key in ["metrics", "input_normalized"]:
                 value = res.get(key)
                 if value:
                     artifact_paths.append(Path(value))
@@ -742,24 +744,94 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
                 if artifact.exists():
                     kind = artifact.suffix.replace(".", "") or "file"
                     add_artifact(db, job_id=job_id, user_id=user_id, kind=kind, path=str(artifact))
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 9,
-                SampleStage.name == safe_sheet,
-            ).first()
+
+            llm_stage = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
+            if llm_stage is None:
+                llm_stage = SampleStage(
+                    stage_id=10,
+                    name=safe_sheet,
+                    sra_code=None,
+                    size="",
+                    status="RUNNING",
+                    user_id=user_id,
+                )
+                db.add(llm_stage)
+            else:
+                llm_stage.status = "RUNNING"
+            db.commit()
+
+            interpretation_out = _abs_users(str(user_id), "llm", safe_sheet)
+            interpretation_out.mkdir(parents=True, exist_ok=True)
+            interpretation = _run_llm_with_fallback(
+                user_id,
+                safe_sheet,
+                str(interpretation_out),
+            )
+            res["interpretation"] = interpretation
+            for key in [
+                "report",
+                "json",
+                "rag_json",
+                "cluster_interpretations",
+                "prioritized_genes",
+            ]:
+                artifact = Path(interpretation.get(key, ""))
+                if artifact.exists():
+                    add_artifact(
+                        db,
+                        job_id=job_id,
+                        user_id=user_id,
+                        kind=artifact.suffix.replace(".", "") or "file",
+                        path=str(artifact),
+                    )
+            llm_stage.status = "COMPLETED"
+            db.commit()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 9,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "COMPLETED"
                 db.commit()
         except Exception as exc:
             logger.exception("Clustering failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 9,
-                SampleStage.name == safe_sheet,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 9,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "FAILED"
+                db.commit()
+            llm_row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
+            if llm_row and llm_row.status == "RUNNING":
+                llm_row.status = "FAILED"
                 db.commit()
 
     _finalize_job(
@@ -775,77 +847,21 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
 
 
 def _run_llm_with_fallback(user_id: int, sheet: str, out_dir: str) -> dict[str, Any]:
-    import ollama
-
-    candidates = [settings.llm_primary_model] + [
-        m for m in settings.llm_fallback_models
-        if m != settings.llm_primary_model
-    ]
-
-    try:
-        response = ollama.list()
-        items = getattr(response, "models", None)
-        if items is None and isinstance(response, dict):
-            items = response.get("models", [])
-
-        available = set()
-        for item in items or []:
-            name = getattr(item, "model", None)
-            if name is None and isinstance(item, dict):
-                name = item.get("model")
-            if name:
-                available.add(name)
-
-    except Exception as exc:
-        raise RuntimeError(f"Não foi possível consultar modelos Ollama: {exc}") from exc
-
-    models = [model for model in candidates if model in available]
-
-    if not models:
-        raise RuntimeError(
-            "Nenhum modelo LLM configurado está disponível no Ollama. "
-            f"Configurados={candidates}; disponíveis={sorted(available)}"
-        )
-
-    last_error = None
-    previous_override = os.environ.get("BILBO_LLM_MODEL_OVERRIDE")
-
-    try:
-        for model in models:
-            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = model
-            logger.info(
-                "Tentando LLM user_id=%s sheet=%s model=%s",
-                user_id,
-                sheet,
-                model,
-            )
-
-            try:
-                result = llm_script.run_llm(
-                    file_path=None,
-                    sheet_name=sheet,
-                    out_dir=out_dir,
-                    user_id=user_id,
-                )
-                result["model_used"] = model
-                return result
-
-            except Exception as exc:
-                last_error = str(exc)
-                logger.warning(
-                    "Falha LLM user_id=%s sheet=%s model=%s: %s",
-                    user_id,
-                    sheet,
-                    model,
-                    exc,
-                )
-    finally:
-        if previous_override is None:
-            os.environ.pop("BILBO_LLM_MODEL_OVERRIDE", None)
-        else:
-            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = previous_override
-
-    raise RuntimeError(last_error or "No model could process LLM job")
+    logger.info(
+        "Running prototype interpretation pipeline user_id=%s sheet=%s "
+        "cluster_model=%s rag_model=%s embedding_model=%s",
+        user_id,
+        sheet,
+        settings.cluster_interpretation_model,
+        settings.rag_llm_model,
+        settings.rag_embedding_model,
+    )
+    return llm_script.run_llm(
+        file_path=None,
+        sheet_name=sheet,
+        out_dir=out_dir,
+        user_id=user_id,
+    )
 
 
 def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
@@ -859,25 +875,42 @@ def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
         try:
             res = _run_llm_with_fallback(user_id, safe_sheet, str(out_dir))
             results[safe_sheet] = res
-            for key in ["report", "json"]:
+            for key in [
+                "report",
+                "json",
+                "rag_json",
+                "cluster_interpretations",
+                "prioritized_genes",
+            ]:
                 p = Path(res.get(key, ""))
                 if p.exists():
-                    add_artifact(db, job_id=job_id, user_id=user_id, kind=p.suffix.replace(".", "") or "file", path=str(p))
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 10,
-                SampleStage.name == safe_sheet,
-            ).first()
+                    add_artifact(
+                        db, job_id=job_id, user_id=user_id, kind=p.suffix.replace(".", "") or "file", path=str(p)
+                    )
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "COMPLETED"
                 db.commit()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Prototype LLM/RAG failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 10,
-                SampleStage.name == safe_sheet,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "FAILED"
                 db.commit()
