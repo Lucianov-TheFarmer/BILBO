@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Tuple
-import logging
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,7 @@ from ..schemas.common import PipelineStatus
 from ..scripts import clustering as clustering_script
 from ..scripts import llm as llm_script
 from ..services.job_service import add_artifact, set_job_finished, set_job_running
+from ..services.rag_bootstrap import ensure_rag_database
 from ..utils_paths import ensure_safe_component
 from .celery_app import celery_app
 
@@ -25,7 +26,208 @@ logger = logging.getLogger(__name__)
 RETRYABLE_EXCEPTIONS = (TimeoutError, OSError, ConnectionError)
 
 
-def _run(cmd: list[str], cwd: Optional[str] = None, timeout: Optional[int] = None) -> Tuple[int, str, str]:
+
+# Progresso persistente individual por job
+_PROGRESS_CONTEXT = {
+    "job_id": None,
+    "user_id": None,
+    "stage": None,
+}
+
+
+def _job_progress_path(job_id: str, user_id: int) -> Path:
+    progress_dir = (
+        Path(settings.users_root)
+        / str(user_id)
+        / "logs"
+        / "jobs"
+    )
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    return progress_dir / f"{job_id}.progress.log"
+
+
+def _append_job_progress(
+    job_id: str,
+    user_id: int,
+    message: str,
+) -> None:
+    """Adiciona uma mensagem curta ao log individual do job."""
+    try:
+        path = _job_progress_path(job_id, user_id)
+        timestamp = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                f"[{timestamp}] PROGRESS: {message.strip()}\n"
+            )
+            stream.flush()
+    except Exception:
+        logger.warning(
+            "Não foi possível escrever progresso do job %s",
+            job_id,
+            exc_info=True,
+        )
+
+
+def _set_progress_context(
+    job_id: str,
+    user_id: int,
+    stage: str,
+) -> None:
+    _PROGRESS_CONTEXT["job_id"] = job_id
+    _PROGRESS_CONTEXT["user_id"] = user_id
+    _PROGRESS_CONTEXT["stage"] = stage
+
+    if stage not in ("deg", "clustering", "llm"):
+        return
+
+    path = _job_progress_path(job_id, user_id)
+
+    try:
+        path.write_text("", encoding="utf-8")
+    except OSError:
+        logger.warning(
+            "Não foi possível inicializar o log do job %s",
+            job_id,
+            exc_info=True,
+        )
+
+    # BILBO_LLM_PROGRESS_PERSISTENCE
+    initial_message = {
+        "deg": "DEG — job recebido pelo worker.",
+        "clustering": (
+            "Clusterização — job recebido pelo worker."
+        ),
+        "llm": (
+            "Interpretação LLM/RAG — "
+            "job recebido pelo worker."
+        ),
+    }[stage]
+
+    _append_job_progress(
+        job_id,
+        user_id,
+        initial_message,
+    )
+
+
+def _progress_event(message: str) -> None:
+    if _PROGRESS_CONTEXT.get("stage") not in ("deg", "clustering", "llm"):
+        return
+
+    job_id = _PROGRESS_CONTEXT.get("job_id")
+    user_id = _PROGRESS_CONTEXT.get("user_id")
+
+    if not job_id or user_id is None:
+        return
+
+    _append_job_progress(
+        str(job_id),
+        int(user_id),
+        message,
+    )
+
+
+
+def _call_with_progress(
+    label: str,
+    function,
+    *args,
+    **kwargs,
+):
+    """
+    Executa uma função longa emitindo heartbeat a cada 15 segundos.
+    """
+    import threading
+
+    stop_event = threading.Event()
+    started = time.monotonic()
+
+    _progress_event(f"{label} iniciada.")
+
+    def heartbeat():
+        while not stop_event.wait(15):
+            elapsed = int(time.monotonic() - started)
+            _progress_event(
+                f"{label} em andamento ({elapsed} s decorridos)."
+            )
+
+    thread = threading.Thread(
+        target=heartbeat,
+        daemon=True,
+    )
+    thread.start()
+
+    try:
+        result = function(*args, **kwargs)
+    except Exception as exc:
+        elapsed = int(time.monotonic() - started)
+        _progress_event(
+            f"{label} falhou após {elapsed} s: {str(exc)[:300]}"
+        )
+        raise
+    else:
+        elapsed = int(time.monotonic() - started)
+        _progress_event(
+            f"{label} concluída em {elapsed} s."
+        )
+        return result
+    finally:
+        stop_event.set()
+        thread.join(timeout=1)
+
+
+def _deg_command_phase(cmd: list[str]) -> tuple[str, str]:
+    """
+    Retorna nome curto e mensagem inicial conforme o script executado.
+    """
+    command_names = {
+        Path(str(component)).name.casefold()
+        for component in cmd
+    }
+
+    if "deg.r" in command_names:
+        return (
+            "análise diferencial",
+            "DEG — iniciando análise estatística no R.",
+        )
+
+    if "annotate_deg_with_gff.py" in command_names:
+        return (
+            "anotação GFF",
+            "DEG — iniciando anotação funcional GFF.",
+        )
+
+    if "annotate_deg_with_uniprot.py" in command_names:
+        return (
+            "anotação UniProt",
+            "DEG — iniciando anotação funcional UniProt.",
+        )
+
+    if "deg_graphs.py" in command_names:
+        return (
+            "geração de gráficos",
+            "DEG — iniciando geração dos gráficos.",
+        )
+
+    return "", ""
+
+
+def _run(
+    cmd: list[str],
+    cwd: Optional[str] = None,
+    timeout: Optional[int] = None,
+) -> Tuple[int, str, str]:
+    """
+    Executa um subprocesso e emite heartbeat para etapas DEG longas.
+    """
+    phase_name, start_message = _deg_command_phase(cmd)
+
+    if start_message:
+        _progress_event(start_message)
+
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -33,12 +235,82 @@ def _run(cmd: list[str], cwd: Optional[str] = None, timeout: Optional[int] = Non
         stderr=subprocess.PIPE,
         text=True,
     )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        process.kill()
-        stdout, stderr = process.communicate()
-        raise TimeoutError(f"Timed out after {timeout}s running: {' '.join(cmd)}") from exc
+
+    started = time.monotonic()
+    heartbeat_interval = 15
+    deadline = (
+        started + timeout
+        if timeout is not None
+        else None
+    )
+
+    stdout = ""
+    stderr = ""
+
+    while True:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+
+            if remaining <= 0:
+                process.kill()
+                stdout, stderr = process.communicate()
+
+                if phase_name:
+                    _progress_event(
+                        f"DEG — {phase_name} excedeu o tempo limite."
+                    )
+
+                raise TimeoutError(
+                    f"Timed out after {timeout}s running: "
+                    f"{' '.join(cmd)}"
+                )
+
+            wait_time = min(
+                heartbeat_interval,
+                max(0.1, remaining),
+            )
+        else:
+            wait_time = heartbeat_interval
+
+        try:
+            stdout, stderr = process.communicate(
+                timeout=wait_time
+            )
+            break
+
+        except subprocess.TimeoutExpired:
+            if phase_name:
+                elapsed = int(time.monotonic() - started)
+                _progress_event(
+                    f"DEG — {phase_name} em andamento "
+                    f"({elapsed} s decorridos)."
+                )
+
+    elapsed = int(time.monotonic() - started)
+
+    if phase_name:
+        if process.returncode == 0:
+            _progress_event(
+                f"DEG — {phase_name} concluída "
+                f"em {elapsed} s."
+            )
+        else:
+            detail = ""
+
+            if stderr:
+                stderr_lines = [
+                    line.strip()
+                    for line in stderr.splitlines()
+                    if line.strip()
+                ]
+                if stderr_lines:
+                    detail = f" Detalhe: {stderr_lines[-1][:300]}"
+
+            _progress_event(
+                f"DEG — falha durante {phase_name} "
+                f"(código {process.returncode}).{detail}"
+            )
+
     return process.returncode, stdout, stderr
 
 
@@ -66,9 +338,7 @@ def _enforce_retention(db: Session, user_id: int) -> None:
     if settings.artifact_retention_days > 0:
         artifacts_cutoff = now - timedelta(days=settings.artifact_retention_days)
         old_artifacts = (
-            db.query(Artifact)
-            .filter(Artifact.user_id == user_id, Artifact.created_at < artifacts_cutoff)
-            .all()
+            db.query(Artifact).filter(Artifact.user_id == user_id, Artifact.created_at < artifacts_cutoff).all()
         )
         user_root = _abs_users(str(user_id))
         for artifact in old_artifacts:
@@ -158,11 +428,7 @@ def execute_pipeline_job(self, job_id: str):
                         "event": "job_skipped_terminal",
                         "job_id": job_id,
                         "status": job.status,
-                        "finished_at": (
-                            job.finished_at.isoformat()
-                            if job.finished_at
-                            else None
-                        ),
+                        "finished_at": (job.finished_at.isoformat() if job.finished_at else None),
                     }
                 )
             )
@@ -172,6 +438,7 @@ def execute_pipeline_job(self, job_id: str):
         stage = job.stage
         user_id = int(job.user_id)
         logger.info(json.dumps({"event": "job_started", "job_id": job_id, "user_id": user_id, "stage": stage}))
+        _set_progress_context(job_id, user_id, stage)
 
         if stage == "samples_download":
             _handle_samples_download(db, job_id, user_id, payload)
@@ -185,6 +452,8 @@ def execute_pipeline_job(self, job_id: str):
             _handle_quantification(db, job_id, user_id, payload)
         elif stage == "deg":
             _handle_deg(db, job_id, user_id, payload)
+        elif stage == "rag_bootstrap":
+            _handle_rag_bootstrap(db, job_id, user_id, payload)
         elif stage == "clustering":
             _handle_clustering(db, job_id, user_id, payload)
         elif stage == "llm":
@@ -200,7 +469,7 @@ def execute_pipeline_job(self, job_id: str):
 
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, RETRYABLE_EXCEPTIONS) and self.request.retries < 2:
-            retry_delay = min(300, (2 ** self.request.retries) * 30)
+            retry_delay = min(300, (2**self.request.retries) * 30)
             job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
             if job:
                 job.status = PipelineStatus.PENDING.value
@@ -219,7 +488,7 @@ def execute_pipeline_job(self, job_id: str):
                     }
                 )
             )
-            raise self.retry(exc=exc, countdown=retry_delay, max_retries=2)
+            raise self.retry(exc=exc, countdown=retry_delay, max_retries=2) from exc
 
         try:
             if user_id >= 0:
@@ -266,17 +535,23 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
         except Exception:
             return ""
 
-    sample = db.query(SampleStage).filter(
-        SampleStage.sra_code == sra_code,
-        SampleStage.stage_id == 1,
-        SampleStage.user_id == user_id,
-    ).first()
+    sample = (
+        db.query(SampleStage)
+        .filter(
+            SampleStage.sra_code == sra_code,
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == user_id,
+        )
+        .first()
+    )
     if sample:
         sample.status = "RUNNING"
         db.commit()
 
     try:
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000
+        )
     except Exception as exc:
         if sample:
             sample.status = "FAILED"
@@ -315,19 +590,25 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
     outputs: list[dict[str, Any]] = []
     for sample in samples:
         safe_sample = ensure_safe_component(str(sample), "sample")
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
+        )
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         sample_stem = safe_sample
         for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
             if sample_stem.endswith(extension):
-                sample_stem = sample_stem[:-len(extension)]
+                sample_stem = sample_stem[: -len(extension)]
                 break
 
-        row = db.query(SampleStage).filter(
-            SampleStage.name == f"{sample_stem}.html",
-            SampleStage.stage_id == 2,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == f"{sample_stem}.html",
+                SampleStage.stage_id == 2,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -350,7 +631,9 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
     outputs: list[dict[str, Any]] = []
     for sample in samples:
         safe_sample = ensure_safe_component(str(sample), "sample")
-        rc, stdout, stderr = _run(["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800)
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800
+        )
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         row_name = safe_sample
         for suffix in (
@@ -360,16 +643,17 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
             "_trimmed.fq",
         ):
             if row_name.endswith(suffix):
-                row_name = (
-                    row_name[:-len(suffix)]
-                    + "_post_trim.html"
-                )
+                row_name = row_name[: -len(suffix)] + "_post_trim.html"
                 break
-        row = db.query(SampleStage).filter(
-            SampleStage.name == row_name,
-            SampleStage.stage_id == 4,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == row_name,
+                SampleStage.stage_id == 4,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -418,11 +702,15 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
     bam_file = alignment_path / sample / f"{sample}.bam"
     if bam_file.exists():
         add_artifact(db, job_id=job_id, user_id=user_id, kind="bam", path=str(bam_file))
-    row = db.query(SampleStage).filter(
-        SampleStage.sra_code == sample,
-        SampleStage.stage_id == 5,
-        SampleStage.user_id == user_id,
-    ).first()
+    row = (
+        db.query(SampleStage)
+        .filter(
+            SampleStage.sra_code == sample,
+            SampleStage.stage_id == 5,
+            SampleStage.user_id == user_id,
+        )
+        .first()
+    )
     if row:
         row.status = "COMPLETED" if rc == 0 else "FAILED"
         if bam_file.exists():
@@ -453,11 +741,15 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
         safe_sample = ensure_safe_component(str(sample), "sample")
         txt_name = safe_sample.replace(".bam", ".txt")
 
-        row = db.query(SampleStage).filter(
-            SampleStage.name == txt_name,
-            SampleStage.stage_id == 6,
-            SampleStage.user_id == user_id,
-        ).first()
+        row = (
+            db.query(SampleStage)
+            .filter(
+                SampleStage.name == txt_name,
+                SampleStage.stage_id == 6,
+                SampleStage.user_id == user_id,
+            )
+            .first()
+        )
 
         if row:
             row.status = "RUNNING"
@@ -472,18 +764,21 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
             rc, stdout, stderr = _run(cmd, timeout=10800)
         except Exception as exc:
             rc = 1
-            stdout = ""
             stderr = str(exc)
             logger.exception("Quantification failed for %s", safe_sample)
 
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
 
         if row is None:
-            row = db.query(SampleStage).filter(
-                SampleStage.name == txt_name,
-                SampleStage.stage_id == 6,
-                SampleStage.user_id == user_id,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.name == txt_name,
+                    SampleStage.stage_id == 6,
+                    SampleStage.user_id == user_id,
+                )
+                .first()
+            )
 
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
@@ -573,9 +868,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                 gff_path = next((x for x in gff_candidates if x.exists()), None)
 
                 if gff_path is None:
-                    annotation_error = (
-                        f"Arquivo GFF/GTF não encontrado para {genome_accession}."
-                    )
+                    annotation_error = f"Arquivo GFF/GTF não encontrado para {genome_accession}."
                 else:
                     annotation_result["gff_path"] = str(gff_path)
 
@@ -592,17 +885,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         timeout=7200,
                     )
 
-                    annotation_result["gff"] = (
-                        "COMPLETED" if gff_rc == 0 else "FAILED"
-                    )
+                    annotation_result["gff"] = "COMPLETED" if gff_rc == 0 else "FAILED"
                     annotation_result["gff_stdout"] = gff_stdout[-3000:]
                     annotation_result["gff_stderr"] = gff_stderr[-3000:]
 
                     if gff_rc != 0:
-                        annotation_error = (
-                            "Falha na anotação pelo GFF: "
-                            + (gff_stderr[-1500:] or f"rc={gff_rc}")
-                        )
+                        annotation_error = "Falha na anotação pelo GFF: " + (gff_stderr[-1500:] or f"rc={gff_rc}")
                     else:
                         # --------------------------------------------
                         # UniProt
@@ -620,17 +908,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                             timeout=86400,
                         )
 
-                        annotation_result["uniprot"] = (
-                            "COMPLETED" if uni_rc == 0 else "FAILED"
-                        )
+                        annotation_result["uniprot"] = "COMPLETED" if uni_rc == 0 else "FAILED"
                         annotation_result["uniprot_stdout"] = uni_stdout[-5000:]
                         annotation_result["uniprot_stderr"] = uni_stderr[-3000:]
 
                         if uni_rc != 0:
-                            annotation_error = (
-                                "Falha na anotação UniProt: "
-                                + (uni_stderr[-1500:] or f"rc={uni_rc}")
-                            )
+                            annotation_error = "Falha na anotação UniProt: " + (uni_stderr[-1500:] or f"rc={uni_rc}")
 
     # --------------------------------------------------------
     # 3. Gerar figuras DEG após a anotação funcional
@@ -646,17 +929,12 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
             timeout=7200,
         )
 
-        annotation_result["graphs"] = (
-            "COMPLETED" if graph_rc == 0 else "FAILED"
-        )
+        annotation_result["graphs"] = "COMPLETED" if graph_rc == 0 else "FAILED"
         annotation_result["graphs_stdout"] = graph_stdout[-4000:]
         annotation_result["graphs_stderr"] = graph_stderr[-3000:]
 
         if graph_rc != 0:
-            annotation_error = (
-                "Falha na geração das figuras DEG: "
-                + (graph_stderr[-1500:] or f"rc={graph_rc}")
-            )
+            annotation_error = "Falha na geração das figuras DEG: " + (graph_stderr[-1500:] or f"rc={graph_rc}")
 
     # --------------------------------------------------------
     # 4. Registrar artefatos
@@ -706,21 +984,53 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
 
 
 
+def _handle_rag_bootstrap(
+    db: Session,
+    job_id: str,
+    user_id: int,
+    payload: dict[str, Any],
+) -> None:
+    del payload
+    status = ensure_rag_database()
+    _finalize_job(
+        db,
+        job_id=job_id,
+        stage="rag_bootstrap",
+        user_id=user_id,
+        status=PipelineStatus.COMPLETED,
+        result={"rag": status},
+        error_message=None,
+        exit_code=0,
+    )
+
+
 def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sheets = payload.get("sheets") or []
     deg_xlsx = _abs_users(str(user_id), "DEG", "DEG.xlsx")
     results: dict[str, Any] = {}
     failed_sheets: list[str] = []
 
-    for sheet in sheets:
+    _progress_event(
+        f"Clusterização — preparando {len(sheets)} contraste(s)."
+    )
+
+    for sheet_index, sheet in enumerate(sheets, start=1):
         safe_sheet = ensure_safe_component(str(sheet), "sheet")
+
+        _progress_event(
+            "Clusterização — contraste "
+            f"{sheet_index}/{len(sheets)}: {safe_sheet}."
+        )
+
         out_dir = _abs_users(str(user_id), "clustering", safe_sheet)
         out_dir.mkdir(parents=True, exist_ok=True)
         img_final = out_dir / "cluster.png"
         img_metrics = out_dir / "metrics.png"
         cluster_json = out_dir / "clusters.json"
         try:
-            res = clustering_script.cluster_pipeline(
+            res = _call_with_progress(
+                f"Clusterização — cálculo semântico de {safe_sheet}",
+                clustering_script.cluster_pipeline,
                 str(deg_xlsx),
                 sheet_name=safe_sheet,
                 img_final_path=str(img_final),
@@ -729,7 +1039,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
             )
             results[safe_sheet] = res
             artifact_paths = [img_final, img_metrics, cluster_json]
-            for key in ["metrics", "prioritized_genes", "input_normalized"]:
+            for key in ["metrics", "input_normalized"]:
                 value = res.get(key)
                 if value:
                     artifact_paths.append(Path(value))
@@ -742,25 +1052,62 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
                 if artifact.exists():
                     kind = artifact.suffix.replace(".", "") or "file"
                     add_artifact(db, job_id=job_id, user_id=user_id, kind=kind, path=str(artifact))
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 9,
-                SampleStage.name == safe_sheet,
-            ).first()
-            if row:
+
+            # Interpretação LLM/RAG executada somente pelo handler manual.
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 9,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
+            if row is None:
+                row = SampleStage(
+                    stage_id=9,
+                    name=safe_sheet,
+                    sra_code=None,
+                    size="",
+                    status="COMPLETED",
+                    user_id=user_id,
+                )
+                db.add(row)
+            else:
                 row.status = "COMPLETED"
-                db.commit()
+            db.commit()
+
+            _progress_event(
+                f"Clusterização — {safe_sheet} concluída. "
+                "Interpretação LLM/RAG aguardando execução manual."
+            )
         except Exception as exc:
+            _progress_event(
+                f"Clusterização — falha no contraste {safe_sheet}: "
+                f"{str(exc)[:300]}"
+            )
             logger.exception("Clustering failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 9,
-                SampleStage.name == safe_sheet,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 9,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "FAILED"
                 db.commit()
+    _progress_event(
+        "Clusterização — processamento finalizado"
+        + (
+            " com falhas em: " + ", ".join(failed_sheets)
+            if failed_sheets
+            else " com sucesso."
+        )
+    )
 
     _finalize_job(
         db,
@@ -774,81 +1121,156 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
     )
 
 
-def _run_llm_with_fallback(user_id: int, sheet: str, out_dir: str) -> dict[str, Any]:
-    import ollama
+# BILBO_LLM_DETAILED_PROGRESS_HANDLER
+class _LLMDetailedProgressHandler(logging.Handler):
+    """Encaminha eventos internos do LLM ao terminal do job."""
 
-    candidates = [settings.llm_primary_model] + [
-        m for m in settings.llm_fallback_models
-        if m != settings.llm_primary_model
+    def __init__(self) -> None:
+        super().__init__(
+            level=logging.WARNING
+        )
+        self._last_message = ""
+
+    def emit(
+        self,
+        record: logging.LogRecord,
+    ) -> None:
+        try:
+            message = record.getMessage().strip()
+
+            if (
+                not message
+                or message == self._last_message
+            ):
+                return
+
+            self._last_message = message
+            parts = message.split()
+
+            if (
+                len(parts) == 4
+                and parts[0] in {
+                    "BP",
+                    "MF",
+                    "CC",
+                }
+                and parts[1].lower() in {
+                    "up",
+                    "down",
+                    "upregulated",
+                    "downregulated",
+                }
+                and parts[2].lower() == "cluster"
+                and parts[3].isdigit()
+            ):
+                ontology = parts[0]
+                direction = parts[1].lower()
+                cluster_number = parts[3]
+
+                direction_label = {
+                    "up": "regulação positiva",
+                    "upregulated": "regulação positiva",
+                    "down": "regulação negativa",
+                    "downregulated": "regulação negativa",
+                }[direction]
+
+                progress_message = (
+                    "Interpretação LLM/RAG — "
+                    f"processando cluster {cluster_number} "
+                    f"({ontology}, {direction_label})."
+                )
+
+            elif message.startswith("Ollama:"):
+                progress_message = (
+                    "Interpretação LLM/RAG — "
+                    + message[len("Ollama:"):].strip()
+                )
+
+            else:
+                progress_message = (
+                    "Interpretação LLM/RAG — "
+                    + message[:500]
+                )
+
+            _progress_event(progress_message)
+
+        except Exception:
+            # Progresso nunca deve interromper a análise.
+            return
+
+
+def _run_llm_with_fallback(user_id: int, sheet: str, out_dir: str) -> dict[str, Any]:
+    # BILBO_OLLAMA_MODELS_BEFORE_MANUAL_LLM
+    progress_handler = _LLMDetailedProgressHandler()
+
+    progress_loggers = [
+        logging.getLogger(
+            "backend.scripts.cluster_interpretation"
+        ),
+        logging.getLogger(
+            "backend.scripts.llm"
+        ),
+        logging.getLogger(
+            "backend.services.ollama_bootstrap"
+        ),
+        logging.getLogger(
+            "backend.services.rag_retrieval"
+        ),
     ]
 
-    try:
-        response = ollama.list()
-        items = getattr(response, "models", None)
-        if items is None and isinstance(response, dict):
-            items = response.get("models", [])
-
-        available = set()
-        for item in items or []:
-            name = getattr(item, "model", None)
-            if name is None and isinstance(item, dict):
-                name = item.get("model")
-            if name:
-                available.add(name)
-
-    except Exception as exc:
-        raise RuntimeError(f"Não foi possível consultar modelos Ollama: {exc}") from exc
-
-    models = [model for model in candidates if model in available]
-
-    if not models:
-        raise RuntimeError(
-            "Nenhum modelo LLM configurado está disponível no Ollama. "
-            f"Configurados={candidates}; disponíveis={sorted(available)}"
+    for progress_logger in progress_loggers:
+        progress_logger.addHandler(
+            progress_handler
         )
 
-    last_error = None
-    previous_override = os.environ.get("BILBO_LLM_MODEL_OVERRIDE")
+    _progress_event(
+        "Interpretação LLM/RAG — "
+        "verificando modelos e preparando execução."
+    )
 
     try:
-        for model in models:
-            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = model
-            logger.info(
-                "Tentando LLM user_id=%s sheet=%s model=%s",
-                user_id,
-                sheet,
-                model,
+        from ..services.ollama_bootstrap import (
+            ensure_required_ollama_models,
+        )
+
+        ensure_required_ollama_models()
+
+        ensure_rag_database()
+        logger.info(
+            "Running prototype interpretation pipeline user_id=%s sheet=%s "
+            "cluster_model=%s rag_model=%s embedding_model=%s",
+            user_id,
+            sheet,
+            settings.cluster_interpretation_model,
+            settings.rag_llm_model,
+            settings.rag_embedding_model,
+        )
+        return llm_script.run_llm(
+            file_path=None,
+            sheet_name=sheet,
+            out_dir=out_dir,
+            user_id=user_id,
+        )
+    finally:
+        for progress_logger in progress_loggers:
+            progress_logger.removeHandler(
+                progress_handler
             )
 
-            try:
-                result = llm_script.run_llm(
-                    file_path=None,
-                    sheet_name=sheet,
-                    out_dir=out_dir,
-                    user_id=user_id,
-                )
-                result["model_used"] = model
-                return result
-
-            except Exception as exc:
-                last_error = str(exc)
-                logger.warning(
-                    "Falha LLM user_id=%s sheet=%s model=%s: %s",
-                    user_id,
-                    sheet,
-                    model,
-                    exc,
-                )
-    finally:
-        if previous_override is None:
-            os.environ.pop("BILBO_LLM_MODEL_OVERRIDE", None)
-        else:
-            os.environ["BILBO_LLM_MODEL_OVERRIDE"] = previous_override
-
-    raise RuntimeError(last_error or "No model could process LLM job")
+        _progress_event(
+            "Interpretação LLM/RAG — "
+            "execução interna finalizada."
+        )
 
 
 def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
+    # BILBO_LLM_PROGRESS_CONTEXT
+    _set_progress_context(job_id, user_id, "llm")
+    _progress_event(
+        "Interpretação LLM/RAG — "
+        f"job {job_id} iniciado."
+    )
+
     sheets = payload.get("sheets") or []
     results: dict[str, Any] = {}
     failed_sheets: list[str] = []
@@ -859,25 +1281,43 @@ def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
         try:
             res = _run_llm_with_fallback(user_id, safe_sheet, str(out_dir))
             results[safe_sheet] = res
-            for key in ["report", "json"]:
+            for key in [
+                "report",
+                "html",
+                "json",
+                "rag_json",
+                "cluster_interpretations",
+                "prioritized_genes",
+            ]:
                 p = Path(res.get(key, ""))
                 if p.exists():
-                    add_artifact(db, job_id=job_id, user_id=user_id, kind=p.suffix.replace(".", "") or "file", path=str(p))
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 10,
-                SampleStage.name == safe_sheet,
-            ).first()
+                    add_artifact(
+                        db, job_id=job_id, user_id=user_id, kind=p.suffix.replace(".", "") or "file", path=str(p)
+                    )
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "COMPLETED"
                 db.commit()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Prototype LLM/RAG failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
-            row = db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id == 10,
-                SampleStage.name == safe_sheet,
-            ).first()
+            row = (
+                db.query(SampleStage)
+                .filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id == 10,
+                    SampleStage.name == safe_sheet,
+                )
+                .first()
+            )
             if row:
                 row.status = "FAILED"
                 db.commit()

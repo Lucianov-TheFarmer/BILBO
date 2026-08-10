@@ -1,70 +1,31 @@
-done
 #!/bin/sh
-set -e
+set -eu
 
-# Configuration
-MAX_WAIT=60
-PULL_RETRIES=3
-PULL_DELAY=5
+ollama serve &
+server_pid=$!
 
-start_server() {
-    cmds=(
-        "ollama serve"
-    )
-
-    for cmd in "${cmds[@]}"; do
-        echo "Trying: $cmd"
-        sh -c "$cmd" &
-        PID=$!
-        sleep 2
-        if kill -0 "$PID" >/dev/null 2>&1; then
-            echo "Ollama started with: $cmd (pid $PID)"
-            return 0
-        else
-            echo "Failed to start with: $cmd"
-        fi
-    done
-    return 1
-}
-
-# Start Ollama server in background (try multiple argument variants)
-if ! start_server; then
-    echo "Failed to start Ollama server with known flags; running default 'ollama serve' fallback"
-    ollama serve &
-    PID=$!
-fi
-
-# Wait until server responds (with timeout)
-START_TS=$(date +%s)
-while ! ollama list >/dev/null 2>&1; do
-    NOW_TS=$(date +%s)
-    ELAPSED=$((NOW_TS - START_TS))
-    if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-        echo "Ollama server did not become ready within ${MAX_WAIT}s"
-        break
+attempt=0
+until ollama list >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 60 ]; then
+        echo "Ollama did not become ready within 60 seconds" >&2
+        exit 1
     fi
-    echo 'A aguardar pelo servidor Ollama...'
     sleep 1
 done
 
-# Pull model in background with limited retries to avoid infinite pulling
+pull_model() {
+    model="$1"
+    [ -n "$model" ] || return 0
+    ollama pull "$model" || echo "Warning: unable to pull Ollama model $model" >&2
+}
+
 (
-    i=0
-    while [ "$i" -lt "$PULL_RETRIES" ]; do
-        echo "Attempting to pull model (attempt $((i+1))/${PULL_RETRIES})"
-        if ollama pull deepseek-r1:8b; then
-            echo "Model pulled successfully"
-            break
-        else
-            echo "Pull failed, retrying after ${PULL_DELAY}s"
-            sleep "$PULL_DELAY"
-        fi
-        i=$((i+1))
-    done
-    if [ "$i" -ge "$PULL_RETRIES" ]; then
-        echo "Model pull failed after ${PULL_RETRIES} attempts; continuing without model."
+    pull_model "${OLLAMA_CLUSTER_MODEL:-gemma4:e4b}"
+    if [ "${OLLAMA_RAG_MODEL:-gemma4:e4b}" != "${OLLAMA_CLUSTER_MODEL:-gemma4:e4b}" ]; then
+        pull_model "${OLLAMA_RAG_MODEL:-gemma4:e4b}"
     fi
+    pull_model "${OLLAMA_EMBEDDING_MODEL:-bge-m3:latest}"
 ) &
 
-# Wait for the server process to exit
-wait "$PID"
+wait "$server_pid"

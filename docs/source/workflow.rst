@@ -81,7 +81,7 @@ BILBO exports:
 12. Clustering and LLM Interpretation
 -------------------------------------
 
-For each selected DEG sheet, BILBO can cluster genes using GO-based semantic similarity, complete-linkage hierarchical clustering, silhouette-based pruning, and semantic medoid selection. The RAG stage then links representative genes and their functional cluster context to curated literature evidence for structured interpretation.
+For each selected DEG sheet, one job executes the complete validated prototype flow: GO-Wang clustering, one restricted function/GO summary per cluster, semantic-medoid selection, multi-ontology representative prioritization, hybrid Qdrant retrieval, and cited gene-level RAG synthesis.
 
 Stage Dependencies
 ------------------
@@ -114,9 +114,6 @@ Stage Dependencies
    * - Preprocess/DEG
      - Count tables and valid contrasts
      - edgeR objects, plots, DEG workbooks
-   * - Clustering
+   * - Complete clustering/interpretation pipeline
      - DEG workbook with annotation columns
-     - Cluster images and JSON
-   * - LLM
-     - Cluster JSON and local vector DB
-     - Markdown and JSON interpretation reports
+     - Cluster CSVs/images, cluster interpretations, prioritized genes, retrieved chunks, Markdown report, and structured JSON

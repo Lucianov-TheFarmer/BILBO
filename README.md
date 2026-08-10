@@ -53,17 +53,19 @@ BILBO covers the complete RNA-Seq processing and interpretation lifecycle:
 
 ## AI and RAG Layer
 
-BILBO includes local LLM support via Ollama and a retrieval-augmented generation workflow backed by a persistent ChromaDB vector database.
+BILBO follows the validated ``Bilbo/`` prototype: GO-Wang semantic clusters are first summarized from their own function/GO annotations, representatives are selected by recurrence across GO ontologies, and only then a traceable gene-level RAG is executed with Ollama and Qdrant.
 
-### First-use vector database bootstrap
+### Shared literature index
 
-If the vector database directory is not present at first LLM execution, BILBO automatically downloads the archive from Zenodo and initializes the local vector store before continuing the normal LLM pipeline.
+The shared corpus uses ``bge-m3:latest`` dense vectors and local BM25 sparse vectors in Qdrant. Retrieval fuses both rankings with RRF and performs the prototype's name/context/entity reranking before synthesis with ``gemma4:e4b``.
 
-Default source URL:
+Place the Markdown corpus under ``rag_data/articles`` and build the shared index once:
 
-https://zenodo.org/records/19440155/files/chroma_db_BILBO_Plants.rar?download=1
+```bash
+docker compose --profile rag-index run --rm rag-indexer
+```
 
-This behavior can be overridden with the environment variable BILBO_RAG_DB_URL.
+Entity annotation is optional in the standard image. Set ``RAG_ANNOTATE_LITERATURE_ENTITIES=true`` when the indexing environment contains scispaCy and ``en_ner_bionlp13cg_md``.
 
 ## Environment Variables
 
@@ -74,11 +76,12 @@ Configure the following variables for secure and predictable operation:
 3. CORS_ORIGINS.
 4. CELERY_BROKER_URL.
 5. CELERY_RESULT_BACKEND.
-6. LLM_PRIMARY_MODEL (default: qwen3:14b).
-7. LLM_FALLBACK_MODELS (default: qwen3:8b,qwen3:0.6b).
-8. ARTIFACT_RETENTION_DAYS.
-9. LOG_RETENTION_DAYS.
-10. AUDIT_RETENTION_DAYS.
+6. CLUSTER_INTERPRETATION_MODEL (default: gemma4:e4b).
+7. RAG_LLM_MODEL (default: gemma4:e4b).
+8. RAG_EMBEDDING_MODEL (default: bge-m3:latest).
+9. QDRANT_URL and QDRANT_COLLECTION.
+10. BM25_METADATA_PATH.
+11. ARTIFACT_RETENTION_DAYS, LOG_RETENTION_DAYS and AUDIT_RETENTION_DAYS.
 
 ## Getting Started
 
@@ -157,4 +160,3 @@ Developed by Vitor Luciano Costa da Silva and Joao Vitor Reis Alvarenga, with su
 <div align="right">
     - Carlos Bernardo Gonzalez Pecotche
 </div>
-

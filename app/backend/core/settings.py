@@ -41,6 +41,12 @@ class Settings:
 
     llm_primary_model: str = os.getenv("LLM_PRIMARY_MODEL", "qwen3:14b")
     llm_fallback_models: list[str] = None  # type: ignore[assignment]
+    cluster_interpretation_model: str = os.getenv("CLUSTER_INTERPRETATION_MODEL", "gemma4:e4b")
+    rag_llm_model: str = os.getenv("RAG_LLM_MODEL", "gemma4:e4b")
+    rag_embedding_model: str = os.getenv("RAG_EMBEDDING_MODEL", "bge-m3:latest")
+    qdrant_url: str = os.getenv("QDRANT_URL", "http://qdrant:6333")
+    qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "banco_literatura_bio")
+    bm25_metadata_path: str = os.getenv("BM25_METADATA_PATH", "/rag/bm25_metadata.json")
 
     users_root: str = os.getenv("USERS_ROOT", "/users")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -51,7 +57,9 @@ class Settings:
     db_startup_retry_seconds: float = float(os.getenv("DB_STARTUP_RETRY_SECONDS", "2"))
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "cors_origins", _list("CORS_ORIGINS", ["http://localhost:8890", "http://127.0.0.1:8890", "null"]))
+        object.__setattr__(
+            self, "cors_origins", _list("CORS_ORIGINS", ["http://localhost:8890", "http://127.0.0.1:8890", "null"])
+        )
         object.__setattr__(self, "llm_fallback_models", _list("LLM_FALLBACK_MODELS", ["qwen3:8b", "qwen3:0.6b"]))
 
         db_url = (self.database_url or "").strip()

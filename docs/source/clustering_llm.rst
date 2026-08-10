@@ -16,7 +16,7 @@ The implemented clustering workflow:
 
 1. Loads one DEG sheet.
 2. Separates genes according to regulatory direction and GO ontology.
-3. Removes invalid GO identifiers and maps obsolete terms to current valid counterparts where possible.
+3. Removes GO identifiers that are not present in the configured ``GO.db`` version.
 4. Computes gene-level Wang semantic similarity from the GO directed acyclic graph.
 5. Converts similarity to distance using ``distance = 1 - similarity``.
 6. Applies agglomerative hierarchical clustering with complete linkage.
@@ -28,6 +28,19 @@ The implemented clustering workflow:
 
 Interpretation of Clusters
 --------------------------
+
+Before literature retrieval, every eligible cluster is summarized once with
+the prototype cluster prompt. Each gene is represented only by its ``function``
+and ontology-specific ``go`` annotation. Gene identifiers, names, expression
+statistics, similarity metrics, and external literature are deliberately not
+sent to this prompt. BP, MF, and CC use different focus instructions, and the
+result is persisted in ``clusters/interpretations.csv``.
+
+After cluster interpretation, BILBO selects the Wang semantic medoid of each
+cluster and deduplicates representatives across ontologies. A gene is selected
+for literature search only when it represents clusters in at least two GO
+ontologies. The complete ranking and selection rationale are stored in
+``outputs/prioritized_genes.csv``.
 
 Clusters are exploratory summaries of GO-based functional relatedness, not formal pathway enrichment tests. They are useful for organizing DEG lists and identifying broad biological modules, but users should validate cluster conclusions against:
 
@@ -52,9 +65,9 @@ The retrieval workflow uses hybrid evidence recovery:
 
 The interpretation workflow:
 
-1. Loads the selected cluster output.
-2. Builds sparse queries from gene metadata and aliases.
-3. Builds dense queries from cluster-level ontology context.
+1. Loads only representatives selected by the multi-ontology rule.
+2. Builds sparse queries from gene names and dynamic aliases.
+3. Builds dense queries from ontology terms in the representative search query.
 4. Retrieves and reranks evidence chunks from the literature corpus.
 5. Executes local synthesis through Ollama under a closed-knowledge constraint.
 6. Produces structured outputs containing chunk-level interpretations, cross-chunk synthesis, and final evidence-constrained interpretation.
@@ -72,7 +85,10 @@ Recommended use:
 * Verify all important biological claims against source literature and gene annotations.
 * Do not report generated interpretation as a standalone finding without independent validation.
 
-Model Fallback
---------------
+Prototype Models
+----------------
 
-BILBO can be configured to use local Ollama models for synthesis. Smaller models may reduce runtime and memory requirements, but they may also produce less detailed or less stable interpretations.
+The validated defaults are ``gemma4:e4b`` for both cluster summaries and RAG
+synthesis, and ``bge-m3:latest`` for dense retrieval. Alternative models are
+configurable for controlled experiments, but changing them means the execution
+is no longer strictly equivalent to the reference prototype.
