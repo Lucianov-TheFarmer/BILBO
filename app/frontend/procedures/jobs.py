@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from typing import Optional
 import httpx
 
 
@@ -8,13 +9,14 @@ async def wait_for_job(
     job_id: str,
     *,
     interval: float = 2.0,
-    timeout: float = 7200.0,
+    timeout: Optional[float] = 7200.0,
     on_update=None,
 ):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     elapsed = 0.0
     async with httpx.AsyncClient(timeout=60.0) as client:
-        while elapsed <= timeout:
+        # BILBO_OPTIONAL_JOB_TIMEOUT
+        while timeout is None or elapsed <= timeout:
             response = await client.get(f"http://localhost:8890/jobs/{job_id}", headers=headers)
             response.raise_for_status()
             payload = response.json()

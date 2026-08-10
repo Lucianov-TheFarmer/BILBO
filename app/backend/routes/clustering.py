@@ -5,7 +5,7 @@ import shutil
 
 import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from ..core.settings import settings
@@ -13,6 +13,7 @@ from ..db.database import get_db
 from ..db.models import SampleStage, User
 from ..services.job_service import audit, create_job
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
+from ..scripts.generate_rag_html import generate_clustering_html
 from ..utils import get_current_user, get_current_user_compat
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 
@@ -126,6 +127,84 @@ def download_clustering_file(
         metadata_json={"sheet": safe_sheet, "file": file_path.name},
     )
     return FileResponse(path=str(file_path), filename=file_path.name, media_type="image/png", headers=headers)
+
+
+
+# BILBO_CLUSTER_REPORT_V2
+@router.get(
+    "/clustering/report",
+    response_class=HTMLResponse,
+)
+def view_clustering_report(
+    sheet: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user_compat
+    ),
+):
+    safe_sheet = ensure_safe_component(
+        sheet,
+        "sheet",
+    )
+
+    clustering_dir = safe_resolve_user_path(
+        settings.users_root,
+        current_user.id,
+        "clustering",
+        safe_sheet,
+    )
+
+    if not clustering_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Diretório de clusterização "
+                "não encontrado."
+            ),
+        )
+
+    try:
+        rendered = generate_clustering_html(
+            clustering_dir,
+            title=(
+                "BILBO - Semantic clustering report - "
+                + safe_sheet
+            ),
+        )
+    except (FileNotFoundError, ValueError) as error:
+        logger.exception(
+            "Falha ao gerar relatório de clustering %s",
+            safe_sheet,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    headers = {}
+
+    if (
+        not request.headers.get("Authorization")
+        and request.query_params.get("token")
+    ):
+        headers["X-Auth-Deprecated"] = (
+            "Use Authorization bearer token."
+        )
+
+    audit(
+        db,
+        action="clustering_report_viewed",
+        user_id=current_user.id,
+        stage="clustering",
+        metadata_json={"sheet": safe_sheet},
+    )
+
+    return HTMLResponse(
+        content=rendered,
+        status_code=200,
+        headers=headers,
+    )
 
 
 @router.delete("/clustering/{sheet}")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 
 import csv
 import json
@@ -123,12 +124,18 @@ def run_cluster_interpretation(
                     evidence = [
                         {
                             "function": row["function"].strip(),
-                            "go": row[go_column].strip(),
+                            "go": row["go_terms"].strip(),
                         }
                         for row in rows
                         if int(row["cluster"]) == cluster
                     ]
-                    print(f"{ontology} {direction} cluster {cluster}")
+                    # BILBO_LLM_CLUSTER_PROGRESS_LOGGER
+                    logging.getLogger(__name__).warning(
+                        "%s %s cluster %s",
+                        ontology,
+                        direction,
+                        cluster,
+                    )
                     interpretation = call_model(
                         ontology,
                         evidence,

@@ -219,7 +219,16 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     for stage_id in range(1, 11):
         try:
             response = await make_request("GET", f"http://bioinfo-container:8890/samples/stages/{stage_id}", headers=headers)
-            stage_counts[stage_id] = len(response.json())
+            stage_rows = response.json()
+            if stage_id in (9, 10):
+                stage_rows = [
+                    row
+                    for row in stage_rows
+                    if str(
+                        row.get("status", "")
+                    ).upper() == "COMPLETED"
+                ]
+            stage_counts[stage_id] = len(stage_rows)
         except Exception:
             stage_counts[stage_id] = 0
 

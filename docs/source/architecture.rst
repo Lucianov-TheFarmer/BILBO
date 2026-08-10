@@ -37,7 +37,7 @@ Container Layout
 
 The Docker Compose configuration defines the following services:
 
-* ``bioinfo``: API container exposing port ``8000``.
+* ``bioinfo``: API container exposing port ``8890``.
 * ``worker``: Celery worker with concurrency set to ``1`` by default.
 * ``redis``: message broker and result backend.
 * ``db``: PostgreSQL 13.

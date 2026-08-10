@@ -12,7 +12,7 @@ from .procedures.quantification import show_quantification_modal, update_tabela_
 from .procedures.contrasts import show_contrasts_modal
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
-from .procedures.deg import show_deg_results
+from .procedures.deg import run_deg_analysis, show_deg_results
 from .procedures.clustering import show_clustering
 from .procedures.llm import show_llm
 import websockets
@@ -133,9 +133,104 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         await show_contrasts_modal(page, token, user_id)
 
 
-    async def show_deg_results_handler(e):
-        await show_deg_results(page, token, user_id, container_amostras)
+    async def atualizar_contagem_deg(quantidade):
+        """Atualiza a quantidade exibida na linha DEG do menu lateral."""
+        try:
+            expected_label = str(t("menu_deg", lang)).strip().casefold()
+            table = container_menu_direita.content.controls[0]
 
+            for row in table.rows:
+                label_control = row.cells[0].content.content
+                label = str(label_control.value).strip().casefold()
+
+                if label == expected_label:
+                    row.cells[1].content.content.value = str(quantidade)
+                    break
+
+            page.update()
+        except Exception:
+            logger.exception("Erro ao atualizar contagem visual do DEG.")
+
+    async def show_deg_results_handler(e=None):
+        """
+        Mostra os resultados existentes ou abre o modal Iniciar DEG
+        quando DEG.xlsx ainda não existe.
+        """
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "ngrok-skip-browser-warning": "true",
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "http://localhost:8890/deg/sheets",
+                    headers=headers,
+                    params={"user_id": user_id},
+                    timeout=30,
+                )
+
+            if response.status_code == 200:
+                sheets = response.json().get("sheets", [])
+
+                if sheets:
+                    await show_deg_results(
+                        page,
+                        token,
+                        user_id,
+                        container_amostras,
+                    )
+                    await atualizar_contagem_deg(len(sheets))
+                    return
+
+            if response.status_code == 404 or (
+                response.status_code == 200 and not sheets
+            ):
+                await atualizar_contagem_deg(0)
+
+                # Limpa qualquer tabela genérica anteriormente exibida.
+                container_amostras.content.controls = [
+                    ft.Container(
+                        content=ft.Text(
+                            "Nenhuma análise diferencial disponível. "
+                            "Selecione o genoma de referência e os "
+                            "contrastes para iniciar.",
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        alignment=ft.alignment.center,
+                        padding=20,
+                    )
+                ]
+                page.update()
+
+                async def refresh_deg_after_run():
+                    # Atualiza primeiro as contagens gerais e, depois,
+                    # sobrescreve a contagem e a tabela do DEG.
+                    await refresh_stage_counts()
+                    await show_deg_results_handler()
+
+                await run_deg_analysis(
+                    page,
+                    token,
+                    user_id,
+                    refresh_callback=refresh_deg_after_run,
+                )
+                return
+
+            await log_message(
+                page,
+                f"Erro ao consultar análise diferencial: {response.text}",
+            )
+
+        except Exception as ex:
+            logger.exception(
+                "Erro ao abrir análise diferencial: %s",
+                ex,
+            )
+            await log_message(
+                page,
+                f"Erro ao abrir análise diferencial: {ex}",
+            )
     async def excluir_quantificacao_handler(e):
         selected_samples = [row.cells[0].content.value for row in tabela_quantificacao.rows if row.cells[4].content.value]
         if not selected_samples:
@@ -148,7 +243,16 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
         logger.info(f"Alterando para o estágio: {stage_id}")
-        await atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras_local, user_id)
+        # Estágios 7, 9 e 10 possuem visualizações próprias.
+        if stage_id not in (7, 9, 10):
+            await atualizar_tabela_por_estagio(
+                e,
+                page,
+                token,
+                stage_id,
+                tabela_amostras_local,
+                user_id,
+            )
 
         if stage_id == 1:
             await toggle_buttons(
@@ -205,8 +309,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 ]
             )
         elif stage_id == 7:
-            # DEG stage: show DEG results in the actions area (container_amostras)
-            await show_deg_results(page, token, user_id, container_amostras)
+            await show_deg_results_handler(e)
         elif stage_id == 9:
             await show_clustering(page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts)
         elif stage_id == 10:
@@ -467,6 +570,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         content=ft.ListView(
             expand=True,
             spacing=8,
+            auto_scroll=True,
             controls=[]
         )
     )

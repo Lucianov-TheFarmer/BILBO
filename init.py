@@ -25,7 +25,7 @@ CONFIG = {
         'user': 'bilbo',
         'password': 'bilbo123',
         'container_name': 'bioinfo-container',
-        'local_port': 8000
+        'local_port': 8890
     },
     'network': {
         'test_hosts': ['8.8.8.8', '1.1.1.1'],
@@ -365,7 +365,7 @@ def main():
             else:
                 logger.error("❌ SSH server failed to start")
         else:
-            logger.info("ℹ️ Debug profile desabilitado. Acesse diretamente: http://localhost:8000/frontend")
+            logger.info("ℹ️ Debug profile desabilitado. Acesse diretamente: http://localhost:8890/frontend")
 
         while True:
             time.sleep(1)

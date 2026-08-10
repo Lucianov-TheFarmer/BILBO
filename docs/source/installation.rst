@@ -22,7 +22,7 @@ From the project root:
 
    docker compose up -d bioinfo worker db redis qdrant ollama
 
-The backend API is exposed on port ``8000`` by default. The Ollama container is exposed through ``OLLAMA_HOST_PORT`` with a default host-side port of ``11435``.
+The backend API is exposed on port ``8890`` by default. The Ollama container is exposed through ``OLLAMA_HOST_PORT`` with a default host-side port of ``11435``.
 
 Environment Variables
 ---------------------

@@ -27,12 +27,17 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8890,http://127.0.0.1:8890}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
-      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
-      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma3:4b}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma3:4b}
       - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
       - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - RAG_SNAPSHOT_URL=${RAG_SNAPSHOT_URL:-https://zenodo.org/api/records/21855338/files/QDrant_DB_BILBO_Plants.zip/content}
+      - RAG_SNAPSHOT_MD5=${RAG_SNAPSHOT_MD5:-b06fb3793956cf5809f6c4091b8d91db}
+      - RAG_SNAPSHOT_SHA256=${RAG_SNAPSHOT_SHA256:-a087b0601fcb14f7498b0cdb41573569f8584e47963d4aed4239725530790fa4}
+      - RAG_BM25_SHA256=${RAG_BM25_SHA256:-8b4085db8fe788cc63426a78450204c28a7dd37c5cb3d1d32e7dc34e99f72882}
+      - RAG_ROOT=/rag
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8890/health/live"]
       interval: 5s
@@ -61,6 +66,11 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-}
       - PYTHONPATH=/app
+      - BILBO_WANG_CPU_FRACTION=${BILBO_WANG_CPU_FRACTION:-0.50}
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
       - OLLAMA_HOST=http://ollama:11434
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -72,12 +82,17 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-bioinfo}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
-      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
-      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma3:4b}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma3:4b}
       - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
       - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - RAG_SNAPSHOT_URL=${RAG_SNAPSHOT_URL:-https://zenodo.org/api/records/21855338/files/QDrant_DB_BILBO_Plants.zip/content}
+      - RAG_SNAPSHOT_MD5=${RAG_SNAPSHOT_MD5:-b06fb3793956cf5809f6c4091b8d91db}
+      - RAG_SNAPSHOT_SHA256=${RAG_SNAPSHOT_SHA256:-a087b0601fcb14f7498b0cdb41573569f8584e47963d4aed4239725530790fa4}
+      - RAG_BM25_SHA256=${RAG_BM25_SHA256:-8b4085db8fe788cc63426a78450204c28a7dd37c5cb3d1d32e7dc34e99f72882}
+      - RAG_ROOT=/rag
     depends_on:
       db:
         condition: service_healthy
@@ -105,6 +120,11 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
       - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - RAG_SNAPSHOT_URL=${RAG_SNAPSHOT_URL:-https://zenodo.org/api/records/21855338/files/QDrant_DB_BILBO_Plants.zip/content}
+      - RAG_SNAPSHOT_MD5=${RAG_SNAPSHOT_MD5:-b06fb3793956cf5809f6c4091b8d91db}
+      - RAG_SNAPSHOT_SHA256=${RAG_SNAPSHOT_SHA256:-a087b0601fcb14f7498b0cdb41573569f8584e47963d4aed4239725530790fa4}
+      - RAG_BM25_SHA256=${RAG_BM25_SHA256:-8b4085db8fe788cc63426a78450204c28a7dd37c5cb3d1d32e7dc34e99f72882}
+      - RAG_ROOT=/rag
       - RAG_ARTICLES_DIR=/rag/articles
       - RAG_ANNOTATE_LITERATURE_ENTITIES=${RAG_ANNOTATE_LITERATURE_ENTITIES:-false}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -161,8 +181,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     environment:
-      - OLLAMA_CLUSTER_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
-      - OLLAMA_RAG_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - OLLAMA_CLUSTER_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma3:4b}
+      - OLLAMA_RAG_MODEL=${RAG_LLM_MODEL:-gemma3:4b}
       - OLLAMA_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
     networks:
       - main-net

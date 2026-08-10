@@ -106,7 +106,7 @@ if (file.exists(selected_contrasts_file)) {
 
 logmsg("Obtendo contrastes do Targets.txt")
 # Ordena os grupos alfabeticamente para garantir consistência dos contrastes
-contrasts <- sort(unique(as.character(targets$group)))
+contrasts <- colnames(design)
 
 # Buscar apenas os contrastes selecionados pelo usuário
 all_contrasts <- list()
@@ -161,9 +161,24 @@ if (length(all_contrasts) > 0) {
     group1 <- trimws(group1)
     group2 <- trimws(group2)
     logmsg(sprintf("Processando contraste: %s vs %s", group1, group2))
-    contrast_vector <- rep(0, length(contrasts))  # <-- Adicione esta linha antes de logar e usar
-    contrast_vector[which(contrasts == group1)] <- 1
-    contrast_vector[which(contrasts == group2)] <- -1
+    available_groups <- colnames(design)
+    missing_groups <- setdiff(
+      c(group1, group2),
+      available_groups
+    )
+    if (length(missing_groups) > 0) {
+      stop(sprintf(
+        "Grupo(s) ausente(s) no design: %s. Disponíveis: %s",
+        paste(missing_groups, collapse=", "),
+        paste(available_groups, collapse=", ")
+      ))
+    }
+    contrast_vector <- setNames(
+      rep(0, ncol(design)),
+      available_groups
+    )
+    contrast_vector[group1] <- 1
+    contrast_vector[group2] <- -1
     logmsg(sprintf("Parâmetro contrast_vector: %s", paste(contrast_vector, collapse = ",")))
     logmsg(sprintf("Executando: lrt <- glmLRT(fit, contrast=contrast_vector)"))
     lrt <- glmLRT(fit, contrast=contrast_vector)
@@ -184,9 +199,24 @@ if (length(all_contrasts) > 0) {
     group1 <- pair[1]
     group2 <- pair[2]
     logmsg(sprintf("Processando contraste: %s vs %s", group1, group2))
-    contrast_vector <- rep(0, length(contrasts))
-    contrast_vector[which(contrasts == group1)] <- 1
-    contrast_vector[which(contrasts == group2)] <- -1
+    available_groups <- colnames(design)
+    missing_groups <- setdiff(
+      c(group1, group2),
+      available_groups
+    )
+    if (length(missing_groups) > 0) {
+      stop(sprintf(
+        "Grupo(s) ausente(s) no design: %s. Disponíveis: %s",
+        paste(missing_groups, collapse=", "),
+        paste(available_groups, collapse=", ")
+      ))
+    }
+    contrast_vector <- setNames(
+      rep(0, ncol(design)),
+      available_groups
+    )
+    contrast_vector[group1] <- 1
+    contrast_vector[group2] <- -1
     logmsg(sprintf("Parâmetro contrast_vector: %s", paste(contrast_vector, collapse = ",")))
     logmsg(sprintf("Executando: lrt <- glmLRT(fit, contrast=contrast_vector)"))
     lrt <- glmLRT(fit, contrast=contrast_vector)
@@ -223,9 +253,24 @@ if (length(all_contrasts) > 0) {
     group1 <- trimws(group1)
     group2 <- trimws(group2)
     logmsg(sprintf("Processando contraste FULL: %s vs %s", group1, group2))
-    contrast_vector <- rep(0, length(contrasts))
-    contrast_vector[which(contrasts == group1)] <- 1
-    contrast_vector[which(contrasts == group2)] <- -1
+    available_groups <- colnames(design)
+    missing_groups <- setdiff(
+      c(group1, group2),
+      available_groups
+    )
+    if (length(missing_groups) > 0) {
+      stop(sprintf(
+        "Grupo(s) ausente(s) no design: %s. Disponíveis: %s",
+        paste(missing_groups, collapse=", "),
+        paste(available_groups, collapse=", ")
+      ))
+    }
+    contrast_vector <- setNames(
+      rep(0, ncol(design)),
+      available_groups
+    )
+    contrast_vector[group1] <- 1
+    contrast_vector[group2] <- -1
     lrt <- glmLRT(fit, contrast=contrast_vector)
     tt <- topTags(lrt, n=NULL)
     # SEM FILTRO - todos os genes
@@ -241,9 +286,24 @@ if (length(all_contrasts) > 0) {
     group1 <- pair[1]
     group2 <- pair[2]
     logmsg(sprintf("Processando contraste FULL: %s vs %s", group1, group2))
-    contrast_vector <- rep(0, length(contrasts))
-    contrast_vector[which(contrasts == group1)] <- 1
-    contrast_vector[which(contrasts == group2)] <- -1
+    available_groups <- colnames(design)
+    missing_groups <- setdiff(
+      c(group1, group2),
+      available_groups
+    )
+    if (length(missing_groups) > 0) {
+      stop(sprintf(
+        "Grupo(s) ausente(s) no design: %s. Disponíveis: %s",
+        paste(missing_groups, collapse=", "),
+        paste(available_groups, collapse=", ")
+      ))
+    }
+    contrast_vector <- setNames(
+      rep(0, ncol(design)),
+      available_groups
+    )
+    contrast_vector[group1] <- 1
+    contrast_vector[group2] <- -1
     lrt <- glmLRT(fit, contrast=contrast_vector)
     tt <- topTags(lrt, n=NULL)
     # SEM FILTRO - todos os genes
