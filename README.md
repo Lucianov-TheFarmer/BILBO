@@ -149,9 +149,26 @@ cd BILBO
 # Optional helper bootstrap
 python init.py
 
-# Or run services directly
-docker compose up -d bioinfo worker db redis ollama
+# Or start the complete application stack
+make full-up
 ```
+
+Use ``make full-build`` instead when the application image must be rebuilt.
+The complete mode starts the API/frontend container, Celery worker, PostgreSQL,
+Redis, Qdrant, Ollama, SSH gateway, and pgAdmin. Administrative one-shot
+services such as the RAG indexer remain opt-in through their Compose profiles.
+
+Inspect or stop the complete stack with:
+
+```bash
+make full-status
+make full-logs
+make full-down
+```
+
+The complete and standalone modes share the same Ollama model volume, Qdrant
+collection, and BM25 metadata. Consequently, an index built or imported for one
+mode is immediately available to the other.
 
 ## Repository Organization
 

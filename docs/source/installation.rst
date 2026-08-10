@@ -20,9 +20,22 @@ From the project root:
 
 .. code-block:: bash
 
-   docker compose up -d bioinfo worker db redis qdrant ollama
+   make full-up
 
-The backend API is exposed on port ``8000`` by default. The Ollama container is exposed through ``OLLAMA_HOST_PORT`` with a default host-side port of ``11435``.
+Use ``make full-build`` when the application image must also be rebuilt. The
+complete mode starts the API/frontend, Celery worker, PostgreSQL, Redis, Qdrant,
+Ollama, SSH gateway, and pgAdmin. Administrative one-shot services use explicit
+Compose profiles and are not started during normal application startup.
+
+Inspect logs and service state, or stop the stack, with:
+
+.. code-block:: bash
+
+   make full-status
+   make full-logs
+   make full-down
+
+The backend API is exposed on port ``8890`` by default. The Ollama container is exposed through ``OLLAMA_HOST_PORT`` with a default host-side port of ``11435``.
 
 Environment Variables
 ---------------------

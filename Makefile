@@ -1,4 +1,4 @@
-.PHONY: lint test run worker format ai-up ai-down ai-run rag-index rag-export rag-import
+.PHONY: lint test run worker format ai-up ai-down ai-run full-up full-build full-down full-logs full-status rag-index rag-export rag-import
 
 lint:
 	ruff check app
@@ -25,6 +25,21 @@ ai-run:
 	test -n "$(DEG_FILE)"
 	test -n "$(SHEET)"
 	docker compose --profile ai run --rm cluster-rag --deg-xlsx /input/$(DEG_FILE) --sheet "$(SHEET)" --output-dir /output --run-id "$(or $(RUN_ID),standalone)"
+
+full-up:
+	docker compose up -d
+
+full-build:
+	docker compose up -d --build
+
+full-down:
+	docker compose down
+
+full-logs:
+	docker compose logs -f bioinfo worker
+
+full-status:
+	docker compose ps
 
 rag-index:
 	docker compose --profile rag-index run --rm rag-indexer
