@@ -31,6 +31,13 @@ Thumbs.db
 app/frontend/__pycache__/
 app/backend/__pycache__/
 docs/build/
+rag_data/bm25_metadata.json
+rag_data/exports/*
+!rag_data/exports/.gitkeep
+ai_data/input/*
+ai_data/output/*
+!ai_data/input/.gitkeep
+!ai_data/output/.gitkeep
 
 # Ignore the users directory
 /users/

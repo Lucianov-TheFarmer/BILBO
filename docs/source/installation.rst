@@ -59,8 +59,9 @@ Important variables include:
 Building the Shared Literature Index
 ------------------------------------
 
-Place the prototype Markdown corpus under ``rag_data/articles`` and run the
-administrative indexer once:
+The Compose configuration mounts the prototype Markdown corpus from
+``../Bilbo/artigos`` read-only at ``/rag/articles``. Run the administrative
+indexer once:
 
 .. code-block:: bash
 
@@ -71,6 +72,51 @@ The command recreates the Qdrant collection and writes
 analysis. Entity annotation can be enabled with
 ``RAG_ANNOTATE_LITERATURE_ENTITIES=true`` in an indexing image containing
 scispaCy and ``en_ner_bionlp13cg_md``.
+
+Exporting and Importing the Literature Index
+--------------------------------------------
+
+Qdrant collection snapshots are the portable backup unit used by BILBO. The
+export command also copies the BM25 vocabulary and writes a manifest containing
+checksums and the expected point count:
+
+.. code-block:: bash
+
+   make rag-export EXPORT_NAME=literature-2026-08-06
+
+The result is stored under ``rag_data/exports/literature-2026-08-06``. Copy the
+complete directory to the destination installation, not only the ``.snapshot``
+file, because hybrid retrieval also requires ``bm25_metadata.json``.
+
+Restore the export with:
+
+.. code-block:: bash
+
+   make rag-import EXPORT_NAME=literature-2026-08-06
+
+The destination must run Qdrant 1.15.x, with a patch version equal to or newer
+than the source snapshot. Import verifies SHA-256 checksums, restores with
+``priority=snapshot``, confirms the point count and then installs BM25 metadata.
+If ``QDRANT_API_KEY`` is configured, both commands send it to the snapshot API.
+
+These are administrative commands. Do not run indexing, export, or import as
+part of FastAPI startup or an individual user's analysis.
+
+Standalone Cluster and RAG Execution
+-------------------------------------
+
+An existing ``DEG.xlsx`` workbook can be processed without starting the API,
+frontend, database, Redis, or Celery. Copy the workbook to ``ai_data/input``
+and run:
+
+.. code-block:: bash
+
+   make ai-run DEG_FILE=DEG.xlsx SHEET="Treatment_vs_Control" RUN_ID=experiment-01
+
+The one-shot runner starts only its Qdrant and Ollama dependencies and writes
+the clustering, prioritization, retrieved evidence, and interpretation outputs
+under ``ai_data/output/runs/experiment-01``. Set ``BILBO_AI_INPUT_DIR`` and
+``BILBO_AI_OUTPUT_DIR`` to use directories outside the repository.
 
 Reference Genome Requirements
 -----------------------------

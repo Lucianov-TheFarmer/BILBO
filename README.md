@@ -59,13 +59,59 @@ BILBO follows the validated ``Bilbo/`` prototype: GO-Wang semantic clusters are 
 
 The shared corpus uses ``bge-m3:latest`` dense vectors and local BM25 sparse vectors in Qdrant. Retrieval fuses both rankings with RRF and performs the prototype's name/context/entity reranking before synthesis with ``gemma4:e4b``.
 
-Place the Markdown corpus under ``rag_data/articles`` and build the shared index once:
+The repository Compose configuration mounts the prototype corpus from
+``../Bilbo/artigos`` read-only at ``/rag/articles``. Build the shared index once:
 
 ```bash
 docker compose --profile rag-index run --rm rag-indexer
 ```
 
+The operation recreates the configured collection and may take a long time. It
+is an administrative operation and must not run during application startup.
+
+Export the Qdrant collection together with the required BM25 metadata:
+
+```bash
+make rag-export EXPORT_NAME=literature-2026-08-06
+```
+
+This creates ``rag_data/exports/literature-2026-08-06`` containing the Qdrant
+snapshot, ``bm25_metadata.json`` and a checksummed manifest. Restore it into a
+Qdrant 1.15.x instance with a patch version equal to or newer than the source:
+
+```bash
+make rag-import EXPORT_NAME=literature-2026-08-06
+```
+
+Import uses Qdrant snapshot priority and validates file checksums and point
+counts before installing the BM25 metadata. Keep the whole export directory;
+the Qdrant snapshot alone is insufficient for BILBO's hybrid retrieval.
+
 Entity annotation is optional in the standard image. Set ``RAG_ANNOTATE_LITERATURE_ENTITIES=true`` when the indexing environment contains scispaCy and ``en_ner_bionlp13cg_md``.
+
+### Standalone Cluster + RAG mode
+
+Clustering and literature interpretation can run without the API, frontend,
+PostgreSQL, Redis, or Celery. Place an existing ``DEG.xlsx`` workbook in
+``ai_data/input`` and ensure that the shared literature index has already been
+built or imported. Then run:
+
+```bash
+make ai-run DEG_FILE=DEG.xlsx SHEET="Treatment_vs_Control" RUN_ID=experiment-01
+```
+
+Compose starts only the one-shot ``cluster-rag`` runner and its Qdrant and
+Ollama dependencies. Results are written under
+``ai_data/output/runs/experiment-01``. The runner calls the same clustering,
+prioritization, retrieval, and interpretation functions used by the complete
+application; it does not maintain a separate scientific implementation.
+
+Use custom host directories without copying data into the repository:
+
+```bash
+BILBO_AI_INPUT_DIR=/data/inputs BILBO_AI_OUTPUT_DIR=/data/results \
+  make ai-run DEG_FILE=DEG.xlsx SHEET="Treatment_vs_Control"
+```
 
 ## Environment Variables
 

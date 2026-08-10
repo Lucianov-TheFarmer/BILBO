@@ -140,7 +140,6 @@ def main() -> None:
     dense_vector_size = len(embed_texts([chunks[0]["text"]])[0])
     bm25_model = build_bm25_model([chunk["text"] for chunk in chunks])
     client = create_collection(dense_vector_size=dense_vector_size)
-    write_bm25_model(bm25_model)
     index_chunks(
         client=client,
         collection_name=COLLECTION_NAME,
@@ -149,6 +148,15 @@ def main() -> None:
         batch_size=BATCH_SIZE,
         annotator=annotator,
     )
+    indexed_points = int(client.count(collection_name=COLLECTION_NAME, exact=True).count)
+    if indexed_points != len(chunks):
+        raise RuntimeError(
+            f"Indexacao incompleta: esperado={len(chunks)}, indexado={indexed_points}. "
+            "Metadata BM25 nao foi publicada."
+        )
+    temporary_bm25_path = BM25_METADATA_PATH.with_suffix(BM25_METADATA_PATH.suffix + ".tmp")
+    write_bm25_model(bm25_model, metadata_path=temporary_bm25_path)
+    temporary_bm25_path.replace(BM25_METADATA_PATH)
     print(f"Colecao Qdrant salva em {QDRANT_URL}/{COLLECTION_NAME}")
     print(f"Metadata BM25 salva em {BM25_METADATA_PATH}")
 

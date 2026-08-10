@@ -88,6 +88,33 @@ services:
       qdrant:
         condition: service_started
 
+  cluster-rag:
+    build: .
+    profiles: ["ai"]
+    entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "backend.scripts.cluster_rag_cli"]
+    command: ["--help"]
+    volumes:
+      - ./app:/app/:ro
+      - ${BILBO_AI_INPUT_DIR:-./ai_data/input}:/input:ro
+      - ${BILBO_AI_OUTPUT_DIR:-./ai_data/output}:/output
+      - ./rag_data:/rag/:ro
+    networks:
+      - main-net
+    environment:
+      - PYTHONPATH=/app
+      - OLLAMA_HOST=http://ollama:11434
+      - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
+      - RAG_LLM_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
   rag-indexer:
     build: .
     profiles: ["rag-index"]
@@ -95,6 +122,7 @@ services:
     volumes:
       - ./app:/app/
       - ./rag_data:/rag/
+      - ../Bilbo/artigos:/rag/articles:ro
     networks:
       - main-net
     environment:
@@ -113,6 +141,26 @@ services:
         condition: service_started
       ollama:
         condition: service_healthy
+
+  rag-admin:
+    build: .
+    profiles: ["rag-admin"]
+    entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "backend.pipeline_rag.admin"]
+    command: ["--help"]
+    volumes:
+      - ./app:/app/:ro
+      - ./rag_data:/rag/
+    networks:
+      - main-net
+    environment:
+      - PYTHONPATH=/app
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+    depends_on:
+      qdrant:
+        condition: service_started
 
   redis:
     image: redis:7-alpine
