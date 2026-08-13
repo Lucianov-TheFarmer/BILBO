@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "description": "Entity-resolution contract. Unresolved entries must not be treated as validated orthologs.",
+  "genes": {
+    "Sh02_g028230": {"primary_name": "Probable xyloglucan 6-xylosyltransferase 5", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh10_g009020": {"primary_name": "Potassium channel KOR1", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved_high_risk"},
+    "Sh03_g012870": {"primary_name": "Carbamoyl-phosphate synthase large chain, chloroplastic", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh03_g000210": {"primary_name": "Indole-3-acetaldehyde oxidase", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved_high_risk"},
+    "Sh07_g001720": {"primary_name": "Ribulose bisphosphate carboxylase large chain", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh09_g009890": {"primary_name": "E3 ubiquitin-protein ligase KEG", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh03_g005290": {"primary_name": "17.8 kDa class I heat shock protein", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh10_g003830": {"primary_name": "F-box/LRR-repeat protein 17", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh01_g044020": {"primary_name": "ATP synthase subunit 9, mitochondrial", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved_high_risk"},
+    "Sh01_g023060": {"primary_name": "Proline dehydrogenase", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh01_g036120": {"primary_name": "Peroxidase 59", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh08_g011210": {"primary_name": "Transcription factor PIF3", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"},
+    "Sh_254E15_g000030": {"primary_name": "NAC transcription factor 29", "query_species": "", "stable_ids": [], "validated_orthologs": [], "status": "unresolved"}
+  }
+}

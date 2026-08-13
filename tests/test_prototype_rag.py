@@ -146,9 +146,13 @@ class RagTest(unittest.TestCase):
             [{"cluster": "BP:up:1", "interpretation": "cluster theme"}],
             result[0]["cluster_interpretations"],
         )
-        self.assertEqual("gene-1 ok: cluster theme", result[0]["interpretation"])
+        self.assertEqual("insufficient_evidence", result[0]["interpretation_status"])
+        self.assertEqual([], result[0]["claims"])
         self.assertEqual([], result[0]["chunk_interpretations"])
-        self.assertEqual("", result[0]["cross_chunk_synthesis"])
+        self.assertEqual(
+            "The retrieved literature is insufficient to support a gene-specific interpretation.",
+            result[0]["cross_chunk_synthesis"],
+        )
 
     def test_analyze_genes_adds_structured_interpretation_fields(self) -> None:
         genes = pd.DataFrame(
@@ -179,31 +183,27 @@ class RagTest(unittest.TestCase):
                 cluster_interpretations={"BP:up:1": "cluster theme"},
                 n_results=1,
                 interpreter=lambda gene, chunks, clusters: {
-                    "chunk_interpretations": [
+                    "claims": [
                         {
-                            "chunk_ref": "C1",
-                            "source": "source-1",
-                            "section": "Results",
-                            "supported_observation": "Cell wall metabolism is discussed.",
-                            "used_in_synthesis": True,
+                            "claim": "Gene One is discussed with cell wall metabolism.",
+                            "citations": ["C1"],
+                            "evidence_level": "general",
+                            "relationship_to_query": "unknown",
+                            "confidence": "low",
                         }
-                    ],
-                    "cross_chunk_synthesis": "The chunk supports cell wall context [C1].",
-                    "interpretation": "Gene One is supported by cell wall context [C1].",
+                    ]
                 },
             )
         finally:
             rag.search_chunks = original_search_chunks
 
+        self.assertEqual("supported_claims", result[0]["interpretation_status"])
+        self.assertEqual(1, len(result[0]["claims"]))
         self.assertEqual(
-            "The chunk supports cell wall context [C1].",
-            result[0]["cross_chunk_synthesis"],
-        )
-        self.assertEqual(
-            "Gene One is supported by cell wall context [C1].",
+            "Gene One is discussed with cell wall metabolism. [C1]",
             result[0]["interpretation"],
         )
-        self.assertEqual("C1", result[0]["chunk_interpretations"][0]["chunk_ref"])
+        self.assertEqual([], result[0]["chunk_interpretations"])
 
     def test_cluster_interpretations_are_loaded_by_represented_cluster_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -437,24 +437,185 @@ class RagTest(unittest.TestCase):
         response = """
         ```json
         {
-          "chunk_interpretations": [{"chunk_ref": "C1"}],
-          "cross_chunk_synthesis": "The article supports a process [C1].",
-          "interpretation": "The gene is connected to the process [C1]."
+          "claims": [{"claim": "A related family participates in a process.", "citations": ["C1"], "evidence_level": "family", "relationship_to_query": "family"}]
         }
         ```
         """
 
         parsed = rag.parse_interpretation_response(response)
 
-        self.assertEqual([{"chunk_ref": "C1"}], parsed["chunk_interpretations"])
-        self.assertEqual(
-            "The article supports a process [C1].",
-            parsed["cross_chunk_synthesis"],
+        self.assertTrue(parsed["model_output_valid"])
+        self.assertEqual("A related family participates in a process.", parsed["claims"][0]["claim"])
+
+    def test_parse_interpretation_response_rejects_truncated_json(self) -> None:
+        parsed = rag.parse_interpretation_response('{"claims": [{"claim": "truncated"')
+        self.assertFalse(parsed["model_output_valid"])
+        self.assertEqual([], parsed["claims"])
+        self.assertIn("truncated", parsed["raw_model_output"])
+
+    def test_atomic_claim_validator_rejects_uncited_and_unverified_direct_claims(self) -> None:
+        gene = pd.Series({"gene_id": "gene-1", "primary_name": "Gene One"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [
+                {
+                    "citation_id": "C1",
+                    "text": "Gene One was discussed in this study.",
+                    "payload_match": {"alias_text_matches": ["Gene One"]},
+                }
+            ],
         )
-        self.assertEqual(
-            "The gene is connected to the process [C1].",
-            parsed["interpretation"],
+        result = rag.finalize_interpretation_result(
+            gene,
+            chunks,
+            {
+                "claims": [
+                    {"claim": "Gene One is essential.", "citations": [], "evidence_level": "direct"},
+                    {
+                        "claim": "Gene One controls growth.",
+                        "citations": ["C1"],
+                        "evidence_level": "direct",
+                        "relationship_to_query": "same_gene",
+                    },
+                ]
+            },
         )
+        self.assertEqual("insufficient_evidence", result["status"])
+        reasons = {reason for item in result["rejected_claims"] for reason in item["reasons"]}
+        self.assertIn("missing_citation", reasons)
+        self.assertIn("unverified_direct_evidence", reasons)
+
+    def test_kor1_policy_blocks_korrigan_cellulose_chunk(self) -> None:
+        gene = pd.Series({"gene_id": "Sh10_g009020", "primary_name": "Potassium channel KOR1"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [{"citation_id": "C1", "text": "KORRIGAN1 (KOR1) participates in cellulose synthesis."}],
+        )
+        self.assertTrue(chunks[0]["evidence_assessment"]["blocked"])
+
+    def test_atomic_claim_validator_rejects_unverified_orthology(self) -> None:
+        gene = pd.Series({"gene_id": "Sh_gene", "primary_name": "Candidate protein"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [{"citation_id": "C1", "text": "Candidate protein was described in Arabidopsis."}],
+        )
+        result = rag.finalize_interpretation_result(
+            gene,
+            chunks,
+            {
+                "claims": [
+                    {
+                        "claim": "The Arabidopsis ortholog participates in growth.",
+                        "citations": ["C1"],
+                        "evidence_level": "ortholog",
+                        "relationship_to_query": "ortholog",
+                    }
+                ]
+            },
+        )
+        self.assertEqual("insufficient_evidence", result["status"])
+        self.assertIn("unverified_ortholog_attribution", result["rejected_claims"][0]["reasons"])
+
+    def test_atomic_claim_validator_accepts_explicit_family_claim_with_name_signal(self) -> None:
+        gene = pd.Series({"gene_id": "Sh_gene", "primary_name": "Candidate glycosyltransferase"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [
+                {
+                    "citation_id": "C1",
+                    "text": "Glycosyltransferase genes participate in cell wall polysaccharide biosynthesis.",
+                    "payload_match": {"alias_text_matches": ["glycosyltransferase"]},
+                }
+            ],
+        )
+        result = rag.finalize_interpretation_result(
+            gene,
+            chunks,
+            {
+                "claims": [
+                    {
+                        "claim": "Glycosyltransferase family members participate in cell wall polysaccharide biosynthesis.",
+                        "citations": ["C1"],
+                        "evidence_level": "general",
+                        "relationship_to_query": "family",
+                    }
+                ]
+            },
+        )
+        self.assertEqual("supported_claims", result["status"])
+
+    def test_atomic_claim_validator_rejects_family_evidence_attributed_to_query_gene(self) -> None:
+        gene = pd.Series({"gene_id": "Sh_gene", "primary_name": "Candidate glycosyltransferase"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [{"citation_id": "C1", "text": "Glycosyltransferase family members participate in cell walls.", "payload_match": {"alias_text_matches": ["glycosyltransferase"]}}],
+        )
+        result = rag.finalize_interpretation_result(
+            gene,
+            chunks,
+            {"claims": [{"claim": "The gene's function involves cell walls.", "citations": ["C1"], "evidence_level": "general", "relationship_to_query": "family"}]},
+        )
+        self.assertEqual("insufficient_evidence", result["status"])
+        self.assertIn("indirect_evidence_attributed_to_query_gene", result["rejected_claims"][0]["reasons"])
+
+    def test_retrieval_queries_are_split_into_facets(self) -> None:
+        gene = pd.Series(
+            {
+                "primary_name": "Gene One",
+                "search_query": "Gene One, enzyme activity, response to drought, nucleus",
+            }
+        )
+        queries = rag.retrieval_queries_for_gene(gene, [])
+        facets = {item["facet"] for item in queries["facets"]}
+        self.assertIn("identity", facets)
+        self.assertIn("molecular_function", facets)
+        self.assertIn("expression_or_stress", facets)
+        self.assertIn("localization", facets)
+
+    def test_validator_rejects_species_condition_combined_from_different_sentences(self) -> None:
+        gene = pd.Series({"gene_id": "Sh_gene", "primary_name": "Glycosyltransferase"})
+        chunks = rag.annotate_chunks_for_generation(
+            gene,
+            [
+                {
+                    "citation_id": "C1",
+                    "text": "Arabidopsis genes responded to IM. Glycosyltransferases responded to TBM in tomato.",
+                    "species_mentions": ["Arabidopsis", "tomato"],
+                    "payload_match": {"alias_text_matches": ["Glycosyltransferases"]},
+                }
+            ],
+        )
+        result = rag.finalize_interpretation_result(
+            gene,
+            chunks,
+            {
+                "claims": [
+                    {
+                        "claim": "Glycosyltransferases responded to TBM in Arabidopsis.",
+                        "citations": ["C1"],
+                        "evidence_level": "general",
+                        "relationship_to_query": "family",
+                        "species": "Arabidopsis",
+                        "conditions": ["TBM"],
+                    }
+                ]
+            },
+        )
+        self.assertEqual("insufficient_evidence", result["status"])
+        self.assertIn("unverified_species_condition_pair:Arabidopsis:TBM", result["rejected_claims"][0]["reasons"])
+
+    def test_atp9_ambiguous_alias_requires_mitochondrial_context(self) -> None:
+        gene = pd.Series({"gene_id": "Sh01_g044020", "primary_name": "ATP synthase subunit 9, mitochondrial"})
+        blocked = rag.annotate_chunks_for_generation(
+            gene,
+            [{"citation_id": "C1", "text": "A lipid-binding protein controls pollen fertility."}],
+        )
+        accepted = rag.annotate_chunks_for_generation(
+            gene,
+            [{"citation_id": "C1", "text": "The mitochondrial ATP9 lipid-binding protein is ATP synthase subunit 9."}],
+        )
+        self.assertTrue(blocked[0]["evidence_assessment"]["blocked"])
+        self.assertFalse(accepted[0]["evidence_assessment"]["blocked"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,40 @@
+{
+  "Sh10_g009020": {
+    "identity_status": "unresolved_high_risk",
+    "notes": "KOR1 must not be conflated with KORRIGAN1; GORK equivalence requires orthology validation.",
+    "blocked_chunk_rules": [
+      {
+        "any": ["korrigan", "korrigan1"],
+        "unless_any": ["potassium channel", "k+ channel", "gork"]
+      },
+      {
+        "all": ["kor1", "cellulose"],
+        "unless_any": ["potassium channel", "k+ channel", "gork"]
+      }
+    ]
+  },
+  "Sh01_g044020": {
+    "identity_status": "candidate",
+    "notes": "Lipid-binding protein is a validated but highly ambiguous ATP9 alias.",
+    "contextual_aliases": [
+      {
+        "alias": "lipid-binding protein",
+        "require_any": ["atp9", "atp synthase", "subunit 9", "f0", "mitochond"]
+      }
+    ],
+    "blocked_chunk_rules": [
+      {
+        "any": ["ms1", "male sterility", "male fertility", "pollen"],
+        "unless_any": ["atp9", "atp synthase", "subunit 9", "f0", "mitochond"]
+      }
+    ]
+  },
+  "Sh03_g000210": {
+    "identity_status": "unresolved_high_risk",
+    "notes": "Do not promote historical aldehyde-oxidase/IAA hypotheses to a central auxin pathway claim."
+  },
+  "Sh01_g036120": {
+    "identity_status": "candidate",
+    "notes": "Prevent class-III peroxidase family properties from becoming PER59-specific stress claims."
+  }
+}

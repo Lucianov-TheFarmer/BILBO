@@ -116,6 +116,34 @@ def context_phrases_from_query(text: str) -> tuple[str, ...]:
     return tuple(unique_texts([phrase for phrase in phrases if phrase]))
 
 
+def facet_queries_for_gene(gene: pd.Series) -> tuple[dict[str, str], ...]:
+    primary_name = usable_text(gene.get("primary_name", ""))
+    phrases = context_phrases_from_query(ontology_terms_from_search_query(gene))
+    facets = [{"facet": "identity", "query": primary_name}]
+    rules = (
+        ("localization", ("membrane", "nucleus", "cytoplasm", "chloroplast", "mitochond", "golgi", "localization")),
+        ("expression_or_stress", ("response", "stress", "drought", "salt", "cold", "heat", "infection", "expression")),
+        ("phenotype_or_development", ("development", "elongation", "germination", "growth", "senescence", "phenotype")),
+        ("molecular_function", ("activity", "binding", "channel", "enzyme", "transport")),
+    )
+    used = set()
+    for phrase in phrases:
+        if phrase.lower() == primary_name.lower():
+            continue
+        lowered = phrase.lower()
+        facet = "biological_process"
+        for candidate, terms in rules:
+            if any(term in lowered for term in terms):
+                facet = candidate
+                break
+        key = (facet, phrase.lower())
+        if key in used:
+            continue
+        used.add(key)
+        facets.append({"facet": facet, "query": f"{primary_name}, {phrase}"})
+    return tuple(facets[:5])
+
+
 def retrieval_queries_for_gene(
     gene: pd.Series,
     cluster_interpretations: list[dict[str, str]],
@@ -127,6 +155,7 @@ def retrieval_queries_for_gene(
         "embedding": embedding_query,
         "aliases": aliases_for_gene(gene),
         "context_phrases": context_phrases_from_query(embedding_query),
+        "facets": facet_queries_for_gene(gene),
     }
 
 
@@ -348,26 +377,29 @@ def search_chunks(
 ) -> list[dict[str, Any]]:
     from qdrant_client import models
 
-    dense_query = embed_texts([queries["embedding"]])[0]
+    facet_queries = [item["query"] for item in queries.get("facets", ()) if item.get("query")]
+    if not facet_queries:
+        facet_queries = [queries["embedding"]]
+    dense_queries = embed_texts(facet_queries)
     sparse_indices, sparse_values = bm25_sparse_vector(
         queries["bm25"],
         store["bm25_model"],
     )
     if sparse_indices:
+        prefetch = [
+            models.Prefetch(
+                query=models.SparseVector(indices=sparse_indices, values=sparse_values),
+                using=SPARSE_VECTOR_NAME,
+                limit=candidate_results,
+            )
+        ]
+        prefetch.extend(
+            models.Prefetch(query=dense_query, using=DENSE_VECTOR_NAME, limit=candidate_results)
+            for dense_query in dense_queries
+        )
         response = store["client"].query_points(
             collection_name=store["collection_name"],
-            prefetch=[
-                models.Prefetch(
-                    query=models.SparseVector(indices=sparse_indices, values=sparse_values),
-                    using=SPARSE_VECTOR_NAME,
-                    limit=candidate_results,
-                ),
-                models.Prefetch(
-                    query=dense_query,
-                    using=DENSE_VECTOR_NAME,
-                    limit=candidate_results,
-                ),
-            ],
+            prefetch=prefetch,
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=candidate_results,
             with_payload=True,
@@ -375,8 +407,11 @@ def search_chunks(
     else:
         response = store["client"].query_points(
             collection_name=store["collection_name"],
-            query=dense_query,
-            using=DENSE_VECTOR_NAME,
+            prefetch=[
+                models.Prefetch(query=dense_query, using=DENSE_VECTOR_NAME, limit=candidate_results)
+                for dense_query in dense_queries
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=candidate_results,
             with_payload=True,
         )
