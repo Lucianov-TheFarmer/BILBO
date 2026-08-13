@@ -1,4 +1,4 @@
-FROM continuumio/miniconda3
+FROM continuumio/miniconda3 AS runtime
 
 WORKDIR /app
 
@@ -48,3 +48,11 @@ ENV PATH=/opt/conda/envs/bioinfo/bin:/app/backend/scripts:$PATH
 EXPOSE 8890
 
 CMD ["conda", "run", "--no-capture-output", "-n", "bioinfo", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8890"]
+
+FROM runtime AS rag-benchmark
+
+COPY requirements/rag-benchmark-models.txt /app/requirements/rag-benchmark-models.txt
+RUN /opt/conda/envs/bioinfo/bin/python -m pip install --no-cache-dir \
+        torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
+    && /opt/conda/envs/bioinfo/bin/python -m pip install --no-cache-dir \
+        -r /app/requirements/rag-benchmark-models.txt

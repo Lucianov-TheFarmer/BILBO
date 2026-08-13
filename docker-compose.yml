@@ -1,6 +1,8 @@
 services:
   bioinfo:
-    build: .
+    build:
+      context: .
+      target: runtime
     container_name: bioinfo-container
     volumes:
       - ./app:/app/
@@ -49,7 +51,9 @@ services:
         condition: service_started
 
   worker:
-    build: .
+    build:
+      context: .
+      target: runtime
     container_name: bioinfo-worker
     command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1
     volumes:
@@ -89,7 +93,9 @@ services:
         condition: service_started
 
   cluster-rag:
-    build: .
+    build:
+      context: .
+      target: runtime
     profiles: ["ai"]
     entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "backend.scripts.cluster_rag_cli"]
     command: ["--help"]
@@ -116,7 +122,9 @@ services:
         condition: service_started
 
   rag-indexer:
-    build: .
+    build:
+      context: .
+      target: runtime
     profiles: ["rag-index"]
     command: conda run --no-capture-output -n bioinfo python -m backend.pipeline_rag.index
     volumes:
@@ -143,7 +151,9 @@ services:
         condition: service_healthy
 
   rag-admin:
-    build: .
+    build:
+      context: .
+      target: runtime
     profiles: ["rag-admin"]
     entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "backend.pipeline_rag.admin"]
     command: ["--help"]
@@ -162,6 +172,78 @@ services:
       qdrant:
         condition: service_started
 
+  rag-benchmark:
+    build:
+      context: .
+      target: rag-benchmark
+    profiles: ["rag-evaluation"]
+    entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "benchmarks.rag_evaluation.run_retrieval"]
+    command: ["--help"]
+    working_dir: /workspace
+    mem_limit: 5g
+    cpus: 4.0
+    volumes:
+      - ./app:/workspace/app:ro
+      - ./benchmarks:/workspace/benchmarks
+      - ./rag_data:/rag:ro
+      - ../Bilbo:/prototype:ro
+      - rag_benchmark_models:/root/.cache/huggingface
+    networks:
+      - main-net
+    environment:
+      - PYTHONPATH=/workspace
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_EMBEDDING_URL=http://ollama:11434/api/embed
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - MALLOC_ARENA_MAX=2
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - TOKENIZERS_PARALLELISM=false
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  # Memory-safe interpretation runner. It deliberately uses a separate Ollama
+  # service so `docker compose run` cannot start the 11 GiB CPU-oriented stack.
+  rag-interpretations-safe:
+    image: bilbo-rag-benchmark
+    build:
+      context: .
+      target: rag-benchmark
+    profiles: ["rag-interpretations-safe"]
+    entrypoint: ["conda", "run", "--no-capture-output", "-n", "bioinfo", "python", "-m", "benchmarks.rag_evaluation.run_interpretations"]
+    command: ["--help"]
+    working_dir: /workspace
+    mem_limit: 2g
+    memswap_limit: 3g
+    cpus: 2.0
+    pids_limit: 256
+    volumes:
+      - ./app:/workspace/app:ro
+      - ./benchmarks:/workspace/benchmarks
+      - ./rag_data:/rag:ro
+      - ../Bilbo:/prototype:ro
+    network_mode: host
+    environment:
+      - PYTHONPATH=/workspace
+      - OLLAMA_HOST=http://127.0.0.1:11436
+      - OLLAMA_EMBEDDING_URL=http://127.0.0.1:11436/api/embed
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - QDRANT_URL=http://127.0.0.1:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - MALLOC_ARENA_MAX=1
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - TOKENIZERS_PARALLELISM=false
+
   redis:
     image: redis:7-alpine
     container_name: redis-container
@@ -178,6 +260,7 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
+    mem_limit: 2g
     networks:
       - main-net
 
@@ -212,6 +295,10 @@ services:
       - OLLAMA_CLUSTER_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma4:e4b}
       - OLLAMA_RAG_MODEL=${RAG_LLM_MODEL:-gemma4:e4b}
       - OLLAMA_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-bge-m3:latest}
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KEEP_ALIVE=30s
+    mem_limit: 11g
     networks:
       - main-net
     healthcheck:
@@ -272,3 +359,4 @@ volumes:
   ssh_config:
   ollama_data:
   qdrant_storage:
+  rag_benchmark_models:

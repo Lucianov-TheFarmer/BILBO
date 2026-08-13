@@ -38,6 +38,12 @@ ai_data/input/*
 ai_data/output/*
 !ai_data/input/.gitkeep
 !ai_data/output/.gitkeep
+benchmarks/rag_evaluation/work/
+benchmarks/rag_evaluation/work-smoke/
+benchmarks/rag_evaluation/work-model-smoke/
+rag_data.zip
+.venv-rag-eval/
+.runtime/
 
 # Ignore the users directory
 /users/

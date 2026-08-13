@@ -34,3 +34,11 @@ The output JSON includes:
 - error messages when a stage fails.
 
 Intermediate cluster images, JSON files, LLM outputs, and temporary RAG bootstrap files are removed after the benchmark finishes.
+
+## Scientific RAG evaluation
+
+The timing helper above does not assess retrieval relevance or biological
+accuracy. The expert-annotated benchmark under ``benchmarks/rag_evaluation``
+compares BM25, BGE-M3, their hybrid, BioBERT, and PubMedBERT; generates blinded
+annotation sheets; and calculates retrieval and claim-level interpretation
+metrics. See ``benchmarks/rag_evaluation/README.md`` for the frozen protocol.

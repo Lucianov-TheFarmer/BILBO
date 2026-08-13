@@ -1,0 +1,11 @@
+.git
+.runtime
+.venv*
+__pycache__
+*.py[cod]
+*.zip
+ai_data
+benchmarks/rag_evaluation/work
+docs/build
+rag_data
+users
