@@ -8,6 +8,9 @@ This benchmark addresses three separate questions:
 
 It is an offline scientific benchmark. It is not executed during a user's RNA-seq analysis.
 
+The frozen results and the complete response to reviewer comment 3 are available
+in [`results/benchmark/`](results/benchmark/README.md).
+
 ## Fixed protocol
 
 - Select 20–30 representative genes before inspecting benchmark results.

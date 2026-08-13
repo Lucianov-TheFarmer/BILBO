@@ -1,0 +1,24 @@
+{
+  "seed": 20260811,
+  "queries": 13,
+  "corpus_chunks": 53037,
+  "full_corpus_chunks": 53037,
+  "smoke_test_corpus_limit": null,
+  "reportable_run": true,
+  "top_k": 10,
+  "candidate_k": 40,
+  "methods": [
+    "bge_m3",
+    "biobert",
+    "bm25",
+    "hybrid_bm25_bge_m3",
+    "pubmedbert"
+  ],
+  "biomedical_models": {
+    "biobert": "dmis-lab/biobert-base-cased-v1.2",
+    "pubmedbert": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
+  },
+  "biomedical_pooling": "attention-mask mean pooling followed by L2 normalization",
+  "biomedical_max_tokens": 512,
+  "production_postprocessing": "payload/name/context reranking and per-source diversification applied equally"
+}

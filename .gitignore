@@ -28,6 +28,7 @@ docker-compose.override.yml
 Thumbs.db
 
 # Project specific
+.~lock.*#
 app/frontend/__pycache__/
 app/backend/__pycache__/
 docs/build/

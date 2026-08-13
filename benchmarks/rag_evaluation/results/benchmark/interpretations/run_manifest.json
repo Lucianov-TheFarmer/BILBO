@@ -1,0 +1,12 @@
+{
+  "genes_interpreted": 13,
+  "claims_for_expert_review": 11,
+  "model": "gemma4:e4b",
+  "num_ctx": 8192,
+  "num_predict": 1536,
+  "top_k": 4,
+  "candidate_k": 30,
+  "max_chunks_per_source": 2,
+  "genes": "/prototype/outputs/prioritized_genes.csv",
+  "cluster_interpretations": "/prototype/clusters/interpretations.csv"
+}
