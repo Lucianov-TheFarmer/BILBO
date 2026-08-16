@@ -40,6 +40,204 @@ def extract_accession_from_name(name):
         return name.split("(")[-1].strip(")")
     return name
 
+
+# Feedback incremental do job DEG
+def _format_deg_progress(message, state, total_contrasts):
+    """Converte mensagens técnicas do R em feedback curto para o usuário."""
+    message = str(message).strip()
+
+    # Remove o timestamp gerado pelo DEG.R.
+    if message.startswith("[") and "] " in message:
+        message = message.split("] ", 1)[1].strip()
+
+    if not message:
+        return None
+
+    # Mensagens gerais do worker já chegam prontas para o usuário.
+    if message.startswith("PROGRESS:"):
+        return message.split(":", 1)[1].strip()
+
+    if message == state.get("last_raw"):
+        return None
+
+    state["last_raw"] = message
+    lowered = message.casefold()
+
+    # Saída de carregamento de pacotes R que não representa progresso.
+    ignored_fragments = (
+        "loading required package",
+        "attaching package",
+        "the following object is masked",
+        "gplots ",
+        "use citation",
+        "homepage:",
+        "report issues:",
+        "ask questions:",
+        "suppress this message",
+        "parâmetro contrast_vector",
+        "executando: lrt",
+        "executando: tt",
+        "executando: keep_sig",
+        "executando: sig_genes",
+    )
+
+    if any(fragment in lowered for fragment in ignored_fragments):
+        return None
+
+    if message == "Iniciando DEG.R":
+        return "DEG — preparando o ambiente de análise."
+
+    if "Lendo Targets.txt" in message:
+        return "DEG — lendo o desenho experimental."
+
+    if "Lendo matriz de contagem" in message:
+        return "DEG — carregando a matriz de contagens."
+
+    if message.startswith("Removed ") and "MetaTags" in message:
+        return "DEG — removendo linhas técnicas da quantificação."
+
+    if "number of genes before filter" in message:
+        return "DEG — " + message.replace(
+            "number of genes before filter:",
+            "genes antes do filtro:",
+        ).replace(
+            "after >=10 filter:",
+            "genes após o filtro:",
+        )
+
+    if "Obtendo contrastes" in message:
+        return (
+            f"DEG — preparando {total_contrasts} contraste(s) selecionado(s)."
+        )
+
+    if message.startswith("Processando contraste FULL:"):
+        state["full_index"] = state.get("full_index", 0) + 1
+        name = message.split(":", 1)[1].strip()
+
+        return (
+            "DEG — tabela completa "
+            f"{state['full_index']}/{total_contrasts}: {name}."
+        )
+
+    if message.startswith("Processando contraste:"):
+        state["contrast_index"] = state.get("contrast_index", 0) + 1
+        name = message.split(":", 1)[1].strip()
+
+        return (
+            "DEG — contraste "
+            f"{state['contrast_index']}/{total_contrasts}: {name}."
+        )
+
+    if message.startswith("Contraste FULL "):
+        return "DEG — " + message.replace(
+            " genes totais",
+            " genes registrados na tabela completa",
+        )
+
+    if message.startswith("Contraste ") and "genes DEG encontrados" in message:
+        return "DEG — " + message
+
+    if "Arquivo DEG.xlsx salvo com sucesso" in message:
+        return "DEG — resultados significativos salvos."
+
+    if "Criando DEG_full.xlsx" in message:
+        return "DEG — criando planilha completa de apoio."
+
+    if "Arquivo DEG_full.xlsx salvo com sucesso" in message:
+        return "DEG — planilha completa salva."
+
+    if (
+        "error" in lowered
+        or "erro" in lowered
+        or "execution halted" in lowered
+        or "grupo(s) ausente(s)" in lowered
+    ):
+        return "DEG — erro: " + message
+
+    return None
+
+
+async def wait_for_deg_job_with_progress(
+    page,
+    token,
+    job_id,
+    total_contrasts,
+):
+    """
+    Aguarda o job normalmente e, em paralelo, envia novas etapas do
+    DEG_R.log para o terminal da interface.
+    """
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "ngrok-skip-browser-warning": "true",
+    }
+    cursor = 0
+    state = {
+        "contrast_index": 0,
+        "full_index": 0,
+        "last_raw": None,
+    }
+
+    job_task = asyncio.create_task(
+        wait_for_job(token, job_id)
+    )
+
+    async def fetch_progress(client):
+        nonlocal cursor
+
+        response = await client.get(
+            f"http://localhost:8890/deg/jobs/{job_id}/progress",
+            headers=headers,
+            params={"cursor": cursor},
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            return
+
+        body = response.json()
+        cursor = body.get("cursor", cursor)
+
+        for raw_line in body.get("lines", []):
+            formatted = _format_deg_progress(
+                raw_line,
+                state,
+                total_contrasts,
+            )
+
+            if formatted:
+                await log_message(page, formatted)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            while not job_task.done():
+                try:
+                    await fetch_progress(client)
+                except Exception as progress_error:
+                    logger.debug(
+                        "Falha transitória ao consultar progresso DEG: %s",
+                        progress_error,
+                    )
+
+                await asyncio.sleep(1.5)
+
+            # Última leitura para não perder mensagens gravadas junto ao fim.
+            try:
+                await fetch_progress(client)
+            except Exception:
+                logger.debug(
+                    "Não foi possível realizar a leitura final do progresso DEG.",
+                    exc_info=True,
+                )
+
+        return await job_task
+
+    except Exception:
+        if not job_task.done():
+            job_task.cancel()
+        raise
+
+
 async def run_deg_analysis(page, token, user_id, refresh_callback=None):
     await log_message(page, "Selecione o genoma de referência e os contrastes para DEG.")
     # Buscar genomas de referência disponíveis
@@ -133,7 +331,12 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"DEG enfileirado (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
+                        result = await wait_for_deg_job_with_progress(
+                            page,
+                            token,
+                            job_id,
+                            len(selected_ids),
+                        )
                         status = result.get("status")
                         if status == "COMPLETED":
                             annotation = (result.get("result") or {}).get("annotation") or {}
@@ -727,8 +930,163 @@ async def show_deg_results(page, token, user_id, container_amostras):
                         download_url = f"http://localhost:8890/results/download_deg_sheets?sheets={sheets_param}&token={token}"
                         page.launch_url(download_url)
 
+
+                    async def delete_selected(e):
+                        del e
+                        selected = []
+                        for row in tabela.rows:
+                            try:
+                                checkbox = row.cells[1].content
+                                if (
+                                    isinstance(checkbox, ft.Checkbox)
+                                    and checkbox.value
+                                ):
+                                    selected.append(
+                                        row.cells[0].content.value
+                                    )
+                            except Exception:
+                                continue
+
+                        if not selected:
+                            await log_message(
+                                page,
+                                "Selecione ao menos uma aba para excluir.",
+                            )
+                            return
+
+                        async def cancel_delete(event):
+                            del event
+                            confirmation.open = False
+                            page.update()
+
+                        async def confirm_delete(event):
+                            del event
+                            try:
+                                async with httpx.AsyncClient(
+                                    timeout=120,
+                                ) as client:
+                                    delete_response = await client.request(
+                                        "DELETE",
+                                        "http://localhost:8890/deg/sheets",
+                                        json={"sheets": selected},
+                                        headers=headers,
+                                    )
+
+                                if delete_response.status_code != 200:
+                                    try:
+                                        detail = delete_response.json().get(
+                                            "detail",
+                                            delete_response.text,
+                                        )
+                                    except Exception:
+                                        detail = delete_response.text
+
+                                    await log_message(
+                                        page,
+                                        f"Erro ao excluir abas: {detail}",
+                                    )
+                                    return
+
+                                result = delete_response.json()
+                                confirmation.open = False
+                                page.update()
+
+                                deleted = result.get(
+                                    "deleted_sheets",
+                                    [],
+                                )
+                                await log_message(
+                                    page,
+                                    "Abas excluídas: "
+                                    + ", ".join(deleted),
+                                )
+
+                                remaining = result.get(
+                                    "remaining_sheets",
+                                    [],
+                                )
+                                if remaining:
+                                    await show_deg_results(
+                                        page,
+                                        token,
+                                        user_id,
+                                        container_amostras,
+                                    )
+                                else:
+                                    container_amostras.content.controls = [
+                                        ft.Container(
+                                            padding=20,
+                                            alignment=ft.alignment.center,
+                                            content=ft.Text(
+                                                "Todas as abas de análise "
+                                                "diferencial foram excluídas.",
+                                                text_align=ft.TextAlign.CENTER,
+                                            ),
+                                        )
+                                    ]
+                                    page.update()
+
+                            except Exception as ex:
+                                await log_message(
+                                    page,
+                                    f"Erro ao excluir abas DEG: {ex}",
+                                )
+
+                        confirmation = ft.AlertDialog(
+                            modal=True,
+                            title=ft.Text(
+                                "Excluir abas?"
+                            ),
+                            content=ft.Column(
+                                tight=True,
+                                controls=[
+                                    ft.Text(
+                                        "Esta operação removerá as abas:"
+                                    ),
+                                    ft.Text(
+                                        ", ".join(selected),
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                    ft.Text(
+                                        "Também serão removidos os gráficos, "
+                                        "clusterizações e relatórios LLM/RAG "
+                                        "associados a essas abas.",
+                                        color="red",
+                                    ),
+                                ],
+                            ),
+                            actions=[
+                                ft.TextButton(
+                                    "Cancelar",
+                                    on_click=cancel_delete,
+                                ),
+                                ft.ElevatedButton(
+                                    "Excluir",
+                                    icon="delete",
+                                    color="white",
+                                    bgcolor="red",
+                                    on_click=confirm_delete,
+                                ),
+                            ],
+                            actions_alignment=ft.MainAxisAlignment.END,
+                        )
+
+                        page.open(confirmation)
+                        page.update()
+
                     from ..components.general_components import create_button
-                    btn_download = create_button("Baixar abas selecionadas", download_selected, color="green", expand=True)
+                    btn_download = create_button(
+                        "Baixar abas",
+                        download_selected,
+                        color="green",
+                        expand=True,
+                    )
+                    btn_delete = create_button(
+                        "Excluir abas",
+                        delete_selected,
+                        color="red",
+                        expand=True,
+                    )
 
                     # Place table + centered, full-width button in the actions area
                     container_amostras.content.controls = [
@@ -736,7 +1094,11 @@ async def show_deg_results(page, token, user_id, container_amostras):
                             controls=[
                                 tabela_com_scroll,
                                 ft.Container(height=8),
-                                ft.Row([btn_download], alignment=ft.MainAxisAlignment.CENTER, expand=True),
+                                ft.Row(
+                                    [btn_download, btn_delete],
+                                    alignment=ft.MainAxisAlignment.CENTER,
+                                    expand=True,
+                                ),
                             ],
                             expand=True,
                         )

@@ -1,4 +1,5 @@
 FROM continuumio/miniconda3 AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 WORKDIR /app
 

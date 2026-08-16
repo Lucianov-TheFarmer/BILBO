@@ -111,34 +111,194 @@ go_similarity <- function(terms_a, terms_b, sem_data) {
   ifelse(is.na(score), 0, score)
 }
 
+# BILBO_WANG_PARALLEL_BEGIN
+
+wang_cpu_fraction <- suppressWarnings(
+  as.numeric(Sys.getenv("BILBO_WANG_CPU_FRACTION", "0.50"))
+)
+
+if (
+  is.na(wang_cpu_fraction) ||
+  !is.finite(wang_cpu_fraction) ||
+  wang_cpu_fraction <= 0
+) {
+  wang_cpu_fraction <- 0.50
+}
+
+wang_cpu_fraction <- min(wang_cpu_fraction, 1.0)
+
+physical_cores <- suppressWarnings(
+  parallel::detectCores(logical = FALSE)
+)
+
+if (is.na(physical_cores) || physical_cores < 1) {
+  physical_cores <- suppressWarnings(
+    parallel::detectCores(logical = TRUE)
+  )
+}
+
+if (is.na(physical_cores) || physical_cores < 1) {
+  physical_cores <- 1L
+}
+
+wang_workers <- max(
+  1L,
+  as.integer(floor(physical_cores * wang_cpu_fraction))
+)
+
+cat(
+  sprintf(
+    paste0(
+      "Wang: %d nucleos fisicos detectados; ",
+      "usando %d processos (%.0f%%).
+"
+    ),
+    physical_cores,
+    wang_workers,
+    wang_cpu_fraction * 100
+  )
+)
+flush.console()
+
 write_wang_matrix <- function(ontology) {
-  ontology_gene2go <- gene2go[gene2go$ontology == ontology, ]
-  gene_ids <- genes$gene_id[genes$gene_id %in% unique(ontology_gene2go$gene_id)]
+  ontology_gene2go <- gene2go[
+    gene2go$ontology == ontology,
+  ]
+
+  gene_ids <- genes$gene_id[
+    genes$gene_id %in% unique(ontology_gene2go$gene_id)
+  ]
+
   gene_ids <- unique(as.character(gene_ids))
-  by_gene <- split(ontology_gene2go$go_id, ontology_gene2go$gene_id)
-  sem_data <- suppressMessages(GOSemSim::godata(ont = ontology, computeIC = FALSE))
+  by_gene <- split(
+    ontology_gene2go$go_id,
+    ontology_gene2go$gene_id
+  )
+
+  sem_data <- suppressMessages(
+    GOSemSim::godata(
+      ont = ontology,
+      computeIC = FALSE
+    )
+  )
+
+  gene_count <- length(gene_ids)
+
   matrix_wang <- matrix(
     0,
-    nrow = length(gene_ids),
-    ncol = length(gene_ids),
+    nrow = gene_count,
+    ncol = gene_count,
     dimnames = list(gene_ids, gene_ids)
   )
-  if (length(gene_ids) > 0) {
+
+  if (gene_count > 0) {
     diag(matrix_wang) <- 1
   }
 
-  if (length(gene_ids) > 1) {
-    for (i in seq_len(length(gene_ids) - 1)) {
-      for (j in seq.int(i + 1, length(gene_ids))) {
-        score <- go_similarity(by_gene[[gene_ids[[i]]]], by_gene[[gene_ids[[j]]]], sem_data)
-        matrix_wang[i, j] <- score
-        matrix_wang[j, i] <- score
-      }
+  if (gene_count > 1) {
+    row_indexes <- seq_len(gene_count - 1L)
+    ontology_workers <- min(
+      wang_workers,
+      length(row_indexes)
+    )
+
+    comparison_count <- gene_count * (gene_count - 1) / 2
+
+    cat(
+      sprintf(
+        "Wang %s: %d genes, %.0f comparacoes, %d processos.
+",
+        ontology,
+        gene_count,
+        comparison_count,
+        ontology_workers
+      )
+    )
+    flush.console()
+
+    calculate_row <- function(i) {
+      column_indexes <- seq.int(
+        i + 1L,
+        gene_count
+      )
+
+      scores <- vapply(
+        column_indexes,
+        function(j) {
+          go_similarity(
+            by_gene[[gene_ids[[i]]]],
+            by_gene[[gene_ids[[j]]]],
+            sem_data
+          )
+        },
+        numeric(1)
+      )
+
+      list(
+        row = i,
+        columns = column_indexes,
+        scores = scores
+      )
     }
+
+    if (
+      ontology_workers > 1 &&
+      identical(.Platform$OS.type, "unix")
+    ) {
+      row_results <- parallel::mclapply(
+        row_indexes,
+        calculate_row,
+        mc.cores = ontology_workers,
+        mc.preschedule = TRUE
+      )
+    } else {
+      row_results <- lapply(
+        row_indexes,
+        calculate_row
+      )
+    }
+
+    for (result in row_results) {
+      matrix_wang[
+        result$row,
+        result$columns
+      ] <- result$scores
+
+      matrix_wang[
+        result$columns,
+        result$row
+      ] <- result$scores
+    }
+  } else {
+    cat(
+      sprintf(
+        "Wang %s: nenhum par de genes para comparar.
+",
+        ontology
+      )
+    )
+    flush.console()
   }
 
-  write.csv(matrix_wang, file.path(features_dir, paste0("GO_Wang_", ontology, ".csv")))
+  write.csv(
+    matrix_wang,
+    file.path(
+      features_dir,
+      paste0("GO_Wang_", ontology, ".csv")
+    )
+  )
+
+  cat(
+    sprintf(
+      "Wang %s: matriz concluida.
+",
+      ontology
+    )
+  )
+  flush.console()
 }
+
+# BILBO_WANG_PARALLEL_END
 
 wang_start <- proc.time()[["elapsed"]]
 invisible(lapply(names(go_columns), write_wang_matrix))

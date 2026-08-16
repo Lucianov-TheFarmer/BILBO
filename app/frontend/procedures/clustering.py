@@ -8,6 +8,72 @@ from .jobs import wait_for_job
 from .utils import log_message
 
 
+
+async def wait_for_clustering_job_with_progress(
+    page,
+    token,
+    job_id,
+):
+    """Aguarda o job e envia seu progresso ao terminal."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "ngrok-skip-browser-warning": "true",
+    }
+    cursor = "0:0"
+    last_message = None
+
+    job_task = asyncio.create_task(
+        wait_for_job(token, job_id)
+    )
+
+    async def fetch_progress(client):
+        nonlocal cursor, last_message
+
+        response = await client.get(
+            f"http://localhost:8890/pipeline/jobs/{job_id}/progress",
+            headers=headers,
+            params={"cursor": cursor},
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            return
+
+        body = response.json()
+        cursor = body.get("cursor", cursor)
+
+        for raw_line in body.get("lines", []):
+            message = str(raw_line).strip()
+
+            if message.startswith("[") and "] " in message:
+                message = message.split("] ", 1)[1].strip()
+
+            if message.startswith("PROGRESS:"):
+                message = message.split(":", 1)[1].strip()
+
+            if not message or message == last_message:
+                continue
+
+            last_message = message
+            await log_message(page, message)
+
+    async with httpx.AsyncClient() as client:
+        while not job_task.done():
+            try:
+                await fetch_progress(client)
+            except Exception:
+                pass
+
+            await asyncio.sleep(1.5)
+
+        try:
+            await fetch_progress(client)
+        except Exception:
+            pass
+
+    return await job_task
+
+
 async def show_clustering(
     page, token, user_id, container_amostras, container_pre_visualizacao, refresh_stage_counts=None
 ):
@@ -67,7 +133,23 @@ async def show_clustering(
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
-                return ft.Text(f"Erro ao baixar imagem: {resp.status_code}", color="red")
+                return ft.Column(
+                    controls=[
+                        ft.Icon("error_outline", color="red"),
+                        ft.Text(
+                            f"Não foi possível abrir esta visualização "
+                            f"(HTTP {resp.status_code}).",
+                            color="red",
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        ft.Text(
+                            "Use o seletor acima para tentar outra figura "
+                            "ou feche o visualizador.",
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                )
             data = resp.content
             import base64
 
@@ -119,7 +201,7 @@ async def show_clustering(
                 job_id = body.get("job_id")
                 if job_id:
                     await log_message(page, f"Clusterização enfileirada (job {job_id}).")
-                    result = await wait_for_job(token, job_id)
+                    result = await wait_for_clustering_job_with_progress(page, token, job_id)
                     status = result.get("status")
                     if status == "COMPLETED":
                         await log_message(page, "Clusterização, interpretação e RAG concluídos com sucesso.")
@@ -164,13 +246,169 @@ async def show_clustering(
         ]
     else:
         rows = []
+        result_checkboxes = []
+
+        async def _sync_all_results(e):
+            select_all_results.value = (
+                bool(result_checkboxes)
+                and all(
+                    checkbox.value
+                    for checkbox in result_checkboxes
+                )
+            )
+            page.update()
+
+        async def _toggle_all_results(e):
+            selected = bool(e.control.value)
+
+            for checkbox in result_checkboxes:
+                checkbox.value = selected
+
+            page.update()
+
+        select_all_results = ft.Checkbox(
+            value=False,
+            tooltip="Selecionar todas as clusterizações",
+            on_change=_toggle_all_results,
+        )
+
+        async def _delete_selected(e):
+            selected = [
+                checkbox.data
+                for checkbox in result_checkboxes
+                if checkbox.value
+            ]
+
+            if not selected:
+                await log_message(
+                    page,
+                    "Nenhuma clusterização selecionada.",
+                )
+                return
+
+            async def _cancel_delete(ev):
+                dialog.open = False
+                page.update()
+
+            async def _confirm_delete(ev):
+                dialog.open = False
+                page.update()
+
+                deleted = []
+                failures = []
+
+                async with httpx.AsyncClient(
+                    timeout=60.0
+                ) as client:
+                    for sheet_name in selected:
+                        try:
+                            response = await client.delete(
+                                (
+                                    "http://localhost:8890"
+                                    f"/clustering/{sheet_name}"
+                                ),
+                                headers=headers,
+                            )
+
+                            if response.status_code == 200:
+                                deleted.append(sheet_name)
+                            else:
+                                failures.append(
+                                    (
+                                        sheet_name,
+                                        response.status_code,
+                                        response.text,
+                                    )
+                                )
+                        except Exception as error:
+                            failures.append(
+                                (
+                                    sheet_name,
+                                    "exception",
+                                    str(error),
+                                )
+                            )
+
+                if deleted:
+                    await log_message(
+                        page,
+                        (
+                            "Clusterizações excluídas: "
+                            + ", ".join(deleted)
+                        ),
+                    )
+
+                for (
+                    sheet_name,
+                    status,
+                    detail,
+                ) in failures:
+                    await log_message(
+                        page,
+                        (
+                            "Erro ao excluir "
+                            f"{sheet_name}: "
+                            f"{status} - {detail}"
+                        ),
+                    )
+
+                await _refresh_stage_counts_if_needed()
+
+                await show_clustering(
+                    page,
+                    token,
+                    user_id,
+                    container_amostras,
+                    container_pre_visualizacao,
+                    refresh_stage_counts,
+                )
+
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(
+                    "Excluir clusterizações"
+                ),
+                content=ft.Text(
+                    (
+                        "Confirma a exclusão de "
+                        f"{len(selected)} resultado(s)?\n\n"
+                        + "\n".join(selected)
+                    )
+                ),
+                actions=[
+                    ft.TextButton(
+                        "Cancelar",
+                        on_click=_cancel_delete,
+                    ),
+                    ft.ElevatedButton(
+                        "Excluir",
+                        on_click=_confirm_delete,
+                    ),
+                ],
+                actions_alignment="end",
+            )
+
+            page.open(dialog)
+            page.update()
+
         for entry in files:
             sheet = entry.get("sheet", "")
+
+            result_checkbox = ft.Checkbox(
+                value=False,
+                data=sheet,
+                on_change=_sync_all_results,
+            )
+            result_checkboxes.append(
+                result_checkbox
+            )
 
             # build URLs for cluster and metrics
             # icon buttons: view (opens dropdown+viewer+download) and delete (call backend)
             async def _open_viewer(e, sheet_name=sheet):
-                # Render viewer directly into the preview container instead of a modal
+                # Permite voltar mesmo quando a imagem retorna erro.
+                previous_preview_content = container_pre_visualizacao.content
+
                 dropdown = ft.Dropdown(
                     options=[ft.dropdown.Option("Cluster"), ft.dropdown.Option("Metrics")],
                     value="Cluster",
@@ -186,6 +424,18 @@ async def show_clustering(
                     page.update()
 
                 dropdown.on_change = on_change
+
+                async def close_viewer(e):
+                    container_pre_visualizacao.content = (
+                        previous_preview_content
+                    )
+                    page.update()
+
+                close_icon_btn = ft.IconButton(
+                    icon="close",
+                    tooltip="Fechar visualizador",
+                    on_click=close_viewer,
+                )
 
                 async def download_current_image(e):
                     try:
@@ -218,7 +468,12 @@ async def show_clustering(
                     content=ft.Column(
                         controls=[
                             ft.Row(
-                                [dropdown, ft.Container(width=8), download_icon_btn],
+                                [
+                                    dropdown,
+                                    ft.Container(width=8),
+                                    download_icon_btn,
+                                    close_icon_btn,
+                                ],
                                 alignment=ft.MainAxisAlignment.CENTER,
                             ),
                             ft.Container(height=10),
@@ -251,11 +506,35 @@ async def show_clustering(
                 except Exception as ex:
                     await log_message(page, f"Erro ao excluir clusterização: {ex}")
 
-            view_btn = ft.IconButton(icon="visibility", tooltip="Ver figuras", on_click=_open_viewer)
-            delete_btn = ft.IconButton(icon="delete", tooltip="Excluir", on_click=_delete_sheet)
+            async def _open_cluster_report(e, sheet_name=sheet):
+                try:
+                    from urllib.parse import quote
+
+                    report_url = (
+                        "http://localhost:8890/clustering/report"
+                        f"?sheet={quote(str(sheet_name))}"
+                        f"&token={quote(str(token))}"
+                    )
+                    page.launch_url(report_url)
+                except Exception as ex:
+                    await log_message(
+                        page,
+                        f"Erro ao abrir detalhes da clusterização: {ex}",
+                    )
+
+            view_btn = ft.IconButton(
+                icon="visibility",
+                tooltip="Ver figuras",
+                on_click=_open_viewer,
+            )
+            report_btn = ft.IconButton(
+                icon="account_tree",
+                tooltip="Explorar genes e clusters",
+                on_click=_open_cluster_report,
+            )
 
             rows.append(
-                ft.DataRow(cells=[ft.DataCell(ft.Text(sheet)), ft.DataCell(ft.Row(controls=[view_btn, delete_btn]))])
+                ft.DataRow(cells=[ft.DataCell(ft.Text(sheet)), ft.DataCell(result_checkbox), ft.DataCell(ft.Row(controls=[view_btn, report_btn]))])
             )
 
         tabela = ft.DataTable(
@@ -263,16 +542,45 @@ async def show_clustering(
             data_row_color="surface",
             border=ft.border.all(0.5, "#000000"),
             columns=[
-                ft.DataColumn(ft.Text("Contraste", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Actions", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(
+                    ft.Text(
+                        "Contraste",
+                        weight=ft.FontWeight.BOLD,
+                    )
+                ),
+                ft.DataColumn(select_all_results),
+                ft.DataColumn(
+                    ft.Text(
+                        "Actions",
+                        weight=ft.FontWeight.BOLD,
+                    )
+                ),
             ],
             rows=rows,
+            expand=False,
+        )
+
+        table_scroll = ft.Row(
+            controls=[tabela],
+            scroll=ft.ScrollMode.AUTO,
             expand=True,
+            wrap=False,
         )
 
         container_amostras.content.controls = [
-            tabela,
-            create_button("Executar Pipeline Completo", _start_clustering, color="primary", expand=False),
+            table_scroll,
+            create_button(
+                "Excluir",
+                _delete_selected,
+                color="red",
+                expand=False,
+            ),
+            create_button(
+                "Executar Pipeline Completo",
+                _start_clustering,
+                color="primary",
+                expand=False,
+            ),
         ]
 
     page.update()

@@ -7,7 +7,7 @@ test:
 	pytest
 
 run:
-	uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+	uvicorn backend.main:app --host 0.0.0.0 --port 8890 --reload
 
 worker:
 	celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1

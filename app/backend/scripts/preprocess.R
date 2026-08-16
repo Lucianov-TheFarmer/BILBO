@@ -146,19 +146,37 @@ save_png <- function(filename, width=12, height=8, expr) {
 save_png("libraries_sizes.png", width=12, height=8, expr={
   library(ggplot2)
   lib_sizes <- data.frame(
-    Sample = rownames(fit$samples),
-    Size = fit$samples$lib.size
+    Library = as.character(seq_len(nrow(fit$samples))),
+    Treatment = as.character(fit$samples$group),
+    Size = fit$samples$lib.size,
+    stringsAsFactors = FALSE
   )
-  # Ordena por tamanho para melhor visualização
-  lib_sizes$Sample <- factor(lib_sizes$Sample, levels = lib_sizes$Sample[order(lib_sizes$Size, decreasing = TRUE)])
+
+  # Cada biblioteca continua sendo uma barra independente. O eixo X mostra
+  # o tratamento correspondente, preservando as réplicas individualmente.
+  size_order <- order(lib_sizes$Size, decreasing = TRUE)
+  lib_sizes$Library <- factor(
+    lib_sizes$Library,
+    levels = lib_sizes$Library[size_order]
+  )
+  treatment_labels <- setNames(
+    lib_sizes$Treatment,
+    as.character(lib_sizes$Library)
+  )
+
   mean_size <- mean(lib_sizes$Size)
   sd_size <- sd(lib_sizes$Size)
-  gg <- ggplot(lib_sizes, aes(x=Sample, y=Size, fill=Size)) +
+
+  gg <- ggplot(
+    lib_sizes,
+    aes(x=Library, y=Size, fill=Size)
+  ) +
     geom_bar(stat="identity", color="black", width=0.7) +
     scale_fill_gradient(low="skyblue", high="navy") +
+    scale_x_discrete(labels=treatment_labels) +
     geom_hline(yintercept=mean_size, linetype="dashed", color="red", size=1) +
     geom_hline(yintercept=mean_size-2*sd_size, linetype="solid", color="black", size=1) +
-    labs(title="Library Sizes", y="Library size", x="Sample") +
+    labs(title="Library Sizes", y="Library size", x="Treatment") +
     theme_minimal(base_size=18) +
     theme(
       axis.text.x = element_text(angle=60, hjust=1, vjust=1, size=ifelse(nrow(lib_sizes) > 20, 8, 12)),

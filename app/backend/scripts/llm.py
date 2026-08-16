@@ -9,6 +9,7 @@ import pandas as pd
 
 from ..pipeline_rag.run import run_rag
 from .cluster_interpretation import run_cluster_interpretation
+from .generate_rag_html import generate_report_bundle
 from .prioritize_genes import run_prioritization
 
 
@@ -144,6 +145,7 @@ def run_llm(
     rag_output_path = output_dir / "rag_gene_evidence.json"
     combined_output_path = output_dir / "data.json"
     report_path = output_dir / "report.md"
+    html_report_path = output_dir / "report.html"
 
     cluster_model = os.getenv("CLUSTER_INTERPRETATION_MODEL", "gemma4:e4b")
     rag_model = os.getenv("RAG_LLM_MODEL", "gemma4:e4b")
@@ -198,14 +200,19 @@ def run_llm(
         "prioritized_genes": prioritized_records,
         "rag_gene_evidence": rag_results,
     }
-    combined_output_path.write_text(
-        json.dumps(combined, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    generate_report_bundle(
+        base_payload=combined,
+        clustering_dir=clustering_dir,
+        output_dir=output_dir,
+        title=(
+            "BILBO - Semantic clustering and "
+            f"traceable RAG report - {sheet_name}"
+        ),
     )
-    _write_report(report_path, cluster_interpretations, prioritized_records, rag_results)
 
     return {
         "report": str(report_path),
+        "html": str(html_report_path),
         "json": str(combined_output_path),
         "rag_json": str(rag_output_path),
         "cluster_interpretations": str(cluster_interpretations_path),

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import datetime, timezone
 import os
@@ -163,6 +164,22 @@ def get_job_status(
         progress_data = _samples_download_progress(job)
         if progress_data:
             result_payload.update(progress_data)
+
+    # BILBO_GENERIC_JOB_PROGRESS
+    try:
+        progress_path = (
+            Path('/users')
+            / str(current_user.id)
+            / 'logs'
+            / 'jobs'
+            / f'{job.id}.progress.log'
+        )
+        if progress_path.is_file():
+            progress_log = _tail_text_file(str(progress_path))
+            if progress_log:
+                result_payload['progress_log'] = progress_log
+    except OSError:
+        pass
 
     return JobStatusResponse(
         job_id=job.id,

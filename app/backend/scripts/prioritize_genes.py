@@ -13,9 +13,9 @@ INTERPRETATIONS_FILE = CLUSTERS_DIR / "interpretations.csv"
 OUTPUT_FILE = Path("outputs/prioritized_genes.csv")
 
 ONTOLOGIES = {
-    "BP": "Uniprot BP",
-    "MF": "Uniprot MF",
-    "CC": "Uniprot CC",
+    "BP": "go_terms",  # BILBO_CANONICAL_GO_TERMS_CONTRACT,
+    "MF": "go_terms",
+    "CC": "go_terms",
 }
 DIRECTIONS = {
     "down": "downregulated",
