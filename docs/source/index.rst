@@ -26,10 +26,6 @@ The current codebase implements the following major stages:
 10. Functional clustering of DEG-derived annotations.
 11. Local retrieval-augmented interpretation using Ollama and curated literature retrieval.
 
-.. note::
-
-   The README currently describes quantification as "featureCounts"; the implemented pipeline uses ``htseq-count`` in ``app/backend/scripts/quantification.sh``. This documentation follows the implemented behavior.
-
 Documentation Contents
 ----------------------
 

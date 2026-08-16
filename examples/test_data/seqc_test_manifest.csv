@@ -1,0 +1,5 @@
+sample_id,group,replicate,gsm_accession,srx_accession,sra_accession,library_layout,strandedness,reference,reference_release
+A1,A,1,GSM1158245,SRX303578,SRR898111,PAIRED,unstranded,GRCh38,112
+A2,A,2,GSM1158253,SRX303586,SRR898119,PAIRED,unstranded,GRCh38,112
+B1,B,1,GSM1158277,SRX303610,SRR898143,PAIRED,unstranded,GRCh38,112
+B2,B,2,GSM1158285,SRX303618,SRR898151,PAIRED,unstranded,GRCh38,112

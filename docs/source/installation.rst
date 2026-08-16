@@ -13,6 +13,23 @@ BILBO is designed to run through Docker Compose. A typical deployment requires:
 * Network access for SRA/genome downloads and initial Ollama model acquisition.
 * A shared Qdrant index and matching BM25 metadata generated from the literature corpus.
 
+Cloning and Configuring the Repository
+--------------------------------------
+
+Clone the versioned repository and enter its root directory:
+
+.. code-block:: bash
+
+   git clone https://github.com/Lucianov-TheFarmer/BILBO.git
+   cd BILBO
+
+Environment-specific settings can be supplied through a local ``.env`` file.
+Before startup, inspect the resolved service configuration with:
+
+.. code-block:: bash
+
+   docker compose config
+
 Starting the Platform
 ---------------------
 
@@ -135,6 +152,23 @@ Reference Genome Requirements
 -----------------------------
 
 BILBO expects downloaded reference directories under ``users/ref_genomes/<accession>/`` with genome FASTA and annotation files. Quantification searches for ``genomic.gff``, ``genomic.gff3``, or ``genomic.gtf``.
+
+Public Test Dataset
+-------------------
+
+A four-run subset of the real SEQC dataset is documented under
+``examples/test_data``. It contains two paired-end runs from group A and two
+from group B, providing a replicated two-group example for exercising the
+BILBO workflow.
+
+The versioned manifest records the public SRA accessions, experimental groups,
+library layout, strandedness, and reference release. Raw reads are retrieved
+directly from SRA and are not stored in the repository. The specified reference
+is Ensembl GRCh38 release 112.
+
+After deployment, register the four accessions listed in
+``examples/test_data/seqc_test_manifest.csv``, assign the indicated groups, and
+execute the workflow according to ``examples/test_data/README.md``.
 
 Read the Docs Build
 -------------------

@@ -29,7 +29,7 @@ BILBO covers the complete RNA-Seq processing and interpretation lifecycle:
 3. Pre- and post-trimming quality control (FastQC-based steps).
 4. Adapter trimming and quality filtering (Trimmomatic).
 5. Reference indexing and read alignment (STAR).
-6. Quantification and count matrix generation (featureCounts).
+6. Quantification and count matrix generation (HTSeq-count).
 7. Differential expression analysis (EdgeR in R).
 8. Scientific visual outputs (heatmaps, Venn diagrams, barplots, DEG artifacts).
 9. Semantic clustering for downstream biological grouping.
@@ -169,6 +169,19 @@ make full-down
 The complete and standalone modes share the same Ollama model volume, Qdrant
 collection, and BM25 metadata. Consequently, an index built or imported for one
 mode is immediately available to the other.
+
+## Public test dataset
+
+A versioned manifest for a four-run subset of the real, publicly accessible
+SEQC dataset (GSE47774) is provided in `examples/test_data`. The subset contains
+two paired-end replicates from group A and two from group B and uses Ensembl
+GRCh38 release 112, as adopted in the BILBO benchmark.
+
+The repository records the accessions, experimental groups, reference files,
+and execution instructions. Raw sequencing files are retrieved directly from
+SRA and are not duplicated in the repository.
+
+See [`examples/test_data/README.md`](examples/test_data/README.md) for details.
 
 ## Repository Organization
 

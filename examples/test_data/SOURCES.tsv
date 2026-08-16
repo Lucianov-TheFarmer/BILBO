@@ -1,0 +1,9 @@
+resource	identifier_or_url
+GEO series	GSE47774
+SRA run	SRR898111
+SRA run	SRR898119
+SRA run	SRR898143
+SRA run	SRR898151
+Ensembl release	https://ftp.ensembl.org/pub/release-112/
+Reference FASTA	https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+Reference GTF	https://ftp.ensembl.org/pub/release-112/gtf/homo_sapiens/Homo_sapiens.GRCh38.112.gtf.gz
