@@ -10,6 +10,41 @@ from .utils import log_message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+UPLOAD_COPY = {
+    "en": {
+        "Selecione arquivos FASTQ": "Select FASTQ files",
+        "Clique aqui ou arraste arquivos": "Click here or drag files",
+        "Formatos:": "Formats:",
+        "Enviar Arquivos": "Upload files",
+        "Análise dos arquivos:": "File preview:",
+        "Nenhum arquivo analisado!": "No files selected!",
+        "Iniciando upload...": "Starting upload...",
+        "Processando grupo:": "Processing group:",
+        "Grupo ${basename} concluído": "Group ${basename} complete",
+        "Finalizando upload...": "Finishing upload...",
+        "Aviso: Erro ao finalizar lote": "Warning: batch finalization failed",
+        "Aviso:": "Warning:",
+        "Upload completo!": "Upload complete!",
+        "Adicionar arquivos FASTQ": "Add FASTQ files",
+    },
+    "es": {
+        "Selecione arquivos FASTQ": "Seleccione archivos FASTQ",
+        "Clique aqui ou arraste arquivos": "Haga clic o arrastre archivos",
+        "Formatos:": "Formatos:",
+        "Enviar Arquivos": "Cargar archivos",
+        "Análise dos arquivos:": "Vista previa de archivos:",
+        "Nenhum arquivo analisado!": "¡No se seleccionaron archivos!",
+        "Iniciando upload...": "Iniciando carga...",
+        "Processando grupo:": "Procesando grupo:",
+        "Grupo ${basename} concluído": "Grupo ${basename} terminado",
+        "Finalizando upload...": "Finalizando carga...",
+        "Aviso: Erro ao finalizar lote": "Aviso: error al finalizar el lote",
+        "Aviso:": "Aviso:",
+        "Upload completo!": "¡Carga terminada!",
+        "Adicionar arquivos FASTQ": "Añadir archivos FASTQ",
+    },
+}
+
 # UPLOAD_PERSISTENT_GLOBAL_START
 _upload_panels = {}
 # UPLOAD_PERSISTENT_GLOBAL_END
@@ -169,7 +204,9 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                 let originalBasename = basename;
                 
                 // Detectar paired-end
-                if (/_1$/i.test(basename)) {
+                if (/_R[12]_001$/i.test(basename)) {
+                    basename = basename.replace(/_R[12]_001$/i, '');
+                } else if (/_1$/i.test(basename)) {
                     basename = basename.replace(/_1$/i, '');
                 } else if (/_2$/i.test(basename)) {
                     basename = basename.replace(/_2$/i, '');
@@ -327,6 +364,8 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     </script>
 </body>
 </html>"""
+    for source, translated in sorted(UPLOAD_COPY.get(page.session.get("lang") or "pt", {}).items(), key=lambda item: -len(item[0])):
+        html_content = html_content.replace(source, translated)
     
     # Criar data URL com o HTML
     import base64
@@ -372,7 +411,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Text(
-                            "Adicionar arquivos FASTQ",
+                            {"pt": "Adicionar arquivos FASTQ", "en": "Add FASTQ files", "es": "Añadir archivos FASTQ"}.get(page.session.get("lang") or "pt", "Adicionar arquivos FASTQ"),
                             size=22,
                             weight="bold",
                         ),

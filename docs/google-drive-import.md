@@ -1,0 +1,50 @@
+# Importação de FASTQ do Google Drive
+
+O menu **Gestão de Amostras → Importar do Google Drive** abre uma nova autorização
+Google a cada uso. Após a autorização em uma aba do navegador, o usuário
+seleciona arquivos no Google Picker exibido dentro do modal; um botão oferece
+abertura em outra aba caso o WebView do navegador não o suporte. O worker do
+BILBO transfere os pares R1/R2 diretamente para `/users/<id>/samples/<amostra>`.
+O computador do usuário não recebe os arquivos.
+
+## Configuração
+
+1. Crie um projeto Google Cloud, habilite **Google Drive API** e **Google Picker API**.
+2. Configure a tela de consentimento OAuth e um cliente do tipo **Aplicação Web**
+   com o escopo `https://www.googleapis.com/auth/drive.file`.
+3. Cadastre exatamente `http://localhost:8890/drive/oauth/callback` como URI de
+   redirecionamento e `http://localhost:8890` como origem JavaScript autorizada
+   para o uso pelo túnel SSH. Para acesso público, use um
+   domínio HTTPS e atualize `GOOGLE_DRIVE_REDIRECT_URI`.
+4. Crie uma chave de API para o Picker e anote o número do projeto (`appId`).
+5. Defina no `.env` do Compose, sem commitar os valores:
+
+   ```text
+   GOOGLE_DRIVE_CLIENT_ID=...
+   GOOGLE_DRIVE_CLIENT_SECRET=...
+   GOOGLE_DRIVE_API_KEY=...
+   GOOGLE_DRIVE_APP_ID=...
+   GOOGLE_DRIVE_REDIRECT_URI=http://localhost:8890/drive/oauth/callback
+   ```
+
+O `SECRET_KEY` do BILBO deve estar definido e ser estável entre API e worker.
+Ele é usado para cifrar as credenciais temporárias armazenadas no Redis. O
+usuário autoriza novamente cada vez que abre o modal. Uma credencial de tarefa
+permanece por até 72 horas para que downloads em andamento possam terminar.
+
+## Regras de importação
+
+- Somente pares completos de `.fastq.gz` ou `.fq.gz` são aceitos.
+- `A01-F_S2_R1_001.fastq.gz` e `A01-F_S2_R2_001.fastq.gz` são salvos como
+  `A01-F_S2_1.fastq.gz` e `A01-F_S2_2.fastq.gz`.
+- O nome original, ID e tamanho do Drive ficam no registro da tarefa; a amostra
+  só entra em `sample_stages` após os dois downloads passarem na verificação de
+  tamanho e MD5 do Drive.
+- Arquivos parciais terminam em `.part` e podem ser retomados por intervalo de
+  bytes. O limite de espaço é checado antes do download de cada par.
+- O Google Picker faz a seleção na conta que o usuário escolher. O modal do
+  BILBO e a página auxiliar têm textos em português, inglês e espanhol.
+
+Na tela de consentimento em modo **Testing**, tokens de atualização para escopos
+Drive podem expirar em sete dias. Isso não impede o teste de uma biblioteca,
+mas o projeto deve ser configurado para uso regular antes de importações longas.

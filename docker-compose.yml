@@ -20,6 +20,11 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID:-}
+      - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      - GOOGLE_DRIVE_API_KEY=${GOOGLE_DRIVE_API_KEY:-}
+      - GOOGLE_DRIVE_APP_ID=${GOOGLE_DRIVE_APP_ID:-}
+      - GOOGLE_DRIVE_REDIRECT_URI=${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:8890/drive/oauth/callback}
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
@@ -78,6 +83,8 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID:-}
+      - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET:-}
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432

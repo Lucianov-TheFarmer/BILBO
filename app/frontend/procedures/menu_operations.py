@@ -24,6 +24,7 @@ from .results import (
     show_heatmap_modal,
 )
 from .upload import show_upload_fastq_modal
+from .drive_import import show_drive_import_modal
 
 
 def _get_image_64(path):
@@ -162,6 +163,10 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
                     create_menu_item(
                         t("menu_add_sra", lang),
                         on_click=lambda e: asyncio.run(adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local))
+                    ),
+                    create_menu_item(
+                        t("menu_import_drive", lang),
+                        on_click=lambda e: asyncio.run(show_drive_import_modal(page, token, atualizar_tabela, container_menu_direita, tabela_amostras_local)),
                     ),
                 ],
             ),
