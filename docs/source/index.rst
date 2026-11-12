@@ -5,6 +5,15 @@ BILBO RNA-seq Workflow Documentation
 
 This documentation is written for two complementary purposes. First, it provides practical guidance for users who run BILBO through the graphical interface. Second, it documents the methodological assumptions and parameter choices that influence quantification and differential expression results.
 
+Scientific publication
+----------------------
+
+If you use BILBO in your research, please cite:
+
+   da Silva, V. L. C., Alvarenga, J. V. R., Linhares-Neto, M. V., Noman, M., & Chalfun-Junior, A. (2026). BILBO: a self-hosted platform for large-scale RNA-Seq analysis with a functional annotation clustering framework. *Functional & Integrative Genomics*, **26**, 306. https://doi.org/10.1007/s10142-026-02091-9
+
+`Read the article <https://doi.org/10.1007/s10142-026-02091-9>`_ · `Privacy policy <privacy.html>`_
+
 .. warning::
 
    A graphical interface can reduce operational friction, but it does not remove the need for statistical and experimental judgment. Users should understand library layout, strandedness, annotation structure, biological replication, contrast design, duplicate handling, and quality-control diagnostics before interpreting differential expression results as biological evidence.
@@ -45,6 +54,7 @@ Documentation Contents
    results
    troubleshooting
    interface_links
+   privacy
 
 .. toctree::
    :maxdepth: 1
