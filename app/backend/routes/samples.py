@@ -280,6 +280,13 @@ async def update_sample_status_endpoint(
 @router.post("/samples/calculate_size")
 async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     logger.info(f"Iniciando cálculo de tamanho para {sra_code}")
+    existing_files = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code, SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id,
+        SampleStage.name.in_([f"{sra_code}_1.fastq", f"{sra_code}_2.fastq"]),
+    ).all()
+    if existing_files and all(row.status == "COMPLETED" for row in existing_files):
+        return {"message": "Sample sizes already recorded", "files": [row.name for row in existing_files]}
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
     ).first()

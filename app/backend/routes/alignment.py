@@ -38,7 +38,13 @@ def _resolve_trimmed_pair(base_path: str, basename: str):
         if os.path.isfile(path1) and os.path.isfile(path2):
             return path1, path2
 
-    return candidates[0]
+    for suffix in ("_trimmed", "_1_trimmed", "_R1_trimmed", "_2_trimmed", "_R2_trimmed"):
+        for extension in (".fastq.gz", ".fastq"):
+            path = os.path.join(base_path, f"{basename}{suffix}{extension}")
+            if os.path.isfile(path):
+                return path, None
+
+    return candidates[0][0], None
 
 
 
@@ -51,6 +57,7 @@ def _trimmed_base(name: str) -> str:
         value,
         flags=re.IGNORECASE,
     )
+    value = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "", value, flags=re.IGNORECASE)
     return value
 
 
@@ -138,7 +145,7 @@ def add_samples(
     for basename in basenames:
         sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
-        if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+        if not os.path.exists(sample_path_1):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
@@ -188,7 +195,7 @@ async def start_alignment(
     basename = ensure_safe_component(_trimmed_base(sample), "sample")
     sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
-    if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+    if not os.path.exists(sample_path_1):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",

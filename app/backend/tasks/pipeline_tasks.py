@@ -577,9 +577,28 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
                 SampleStage.user_id == user_id)
         .first()
     )
-    if sample:
-        sample.status = "COMPLETED" if rc == 0 else "FAILED"
-        db.commit()
+    output_dir = _abs_users(str(user_id), "samples", sra_code)
+    output_files = [output_dir / f"{sra_code}_{mate}.fastq" for mate in (1, 2)]
+    output_files = [path for path in output_files if path.is_file() and path.stat().st_size > 0]
+    if rc == 0 and not output_files:
+        rc = 4
+    if rc == 0:
+        for path in output_files:
+            existing = (
+                db.query(SampleStage)
+                .filter(SampleStage.stage_id == 1, SampleStage.user_id == user_id,
+                        SampleStage.name == path.name)
+                .first()
+            )
+            if existing is None:
+                db.add(SampleStage(stage_id=1, name=path.name, sra_code=sra_code,
+                                   size=f"{path.stat().st_size / 1024**3:.2f} GB",
+                                   status="COMPLETED", user_id=user_id))
+        if sample and sample.name == sra_code:
+            db.delete(sample)
+    elif sample:
+        sample.status = "FAILED"
+    db.commit()
 
     log_tail = _log_tail()
     result = {

@@ -434,8 +434,6 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             result = await wait_for_job(token, job_id, on_update=update_download_progress)
                             final_status = result.get("status")
                             await log_message(page, f"Download da amostra {sample_name} finalizado com status {final_status}.")
-                            if final_status == "COMPLETED":
-                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()

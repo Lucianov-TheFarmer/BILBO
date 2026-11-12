@@ -42,6 +42,7 @@ def _trimmed_base(name):
         value,
         flags=re.IGNORECASE,
     )
+    value = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "", value, flags=re.IGNORECASE)
     return value
 
 
