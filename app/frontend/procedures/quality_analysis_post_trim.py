@@ -2,7 +2,8 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
+from .translations import t
 from .utils import log_message
 from .viewer import create_dropdown_menu, display_graph
 
@@ -226,7 +227,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"QC pós-trim enfileirado (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
+                        result = await wait_with_progress(page, token, job_id, t("qc_post_progress", page.session.get("lang") or "pt"))
                         status = result.get("status")
                         await log_message(page, f"QC pós-trim finalizado com status {status}.")
                     logger.info(f"Análise de qualidade pós-trimmagem iniciada para {selected_samples} com sucesso!")

@@ -26,6 +26,7 @@ UPLOAD_COPY = {
         "Aviso:": "Warning:",
         "Upload completo!": "Upload complete!",
         "Adicionar arquivos FASTQ": "Add FASTQ files",
+        "Enviando": "Uploading",
     },
     "es": {
         "Selecione arquivos FASTQ": "Seleccione archivos FASTQ",
@@ -42,6 +43,7 @@ UPLOAD_COPY = {
         "Aviso:": "Aviso:",
         "Upload completo!": "¡Carga terminada!",
         "Adicionar arquivos FASTQ": "Añadir archivos FASTQ",
+        "Enviando": "Subiendo",
     },
 }
 
@@ -180,6 +182,8 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
         
         <button onclick="processAndSend()" id="uploadBtn" style="display: none;">Enviar Arquivos</button>
         
+        <progress id="uploadProgress" max="100" value="0" style="width:100%;display:none"></progress>
+        <div id="uploadProgressText"></div>
         <div id="output"></div>
     </div>
     
@@ -308,19 +312,27 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                         const formData = new FormData();
                         formData.append("file", file, file.name);
 
-                        const response = await fetch("http://localhost:8890/upload/fastq", {
-                            method: "POST",
-                            headers: {
-                                "Authorization": "Bearer """ + token + """"
-                            },
-                            body: formData
+                        const progressBar = document.getElementById('uploadProgress');
+                        const progressText = document.getElementById('uploadProgressText');
+                        progressBar.style.display = 'block';
+                        const result = await new Promise((resolve, reject) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open('POST', 'http://localhost:8890/upload/fastq');
+                            xhr.setRequestHeader('Authorization', 'Bearer """ + token + """');
+                            xhr.upload.onprogress = event => {
+                                if (event.lengthComputable) {
+                                    progressBar.value = Math.round(100 * event.loaded / event.total);
+                                    progressText.textContent = `Enviando ${file.name}: ${formatFileSize(event.loaded)}/${formatFileSize(event.total)}`;
+                                }
+                            };
+                            xhr.onload = () => {
+                                if (xhr.status < 200 || xhr.status >= 300) reject(new Error(`HTTP ${xhr.status}: ${xhr.responseText}`));
+                                else { try { resolve(JSON.parse(xhr.responseText)); } catch (err) { reject(err); } }
+                            };
+                            xhr.onerror = () => reject(new Error('Upload failed'));
+                            xhr.send(formData);
                         });
-                        
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}`);
-                        }
-                        
-                        const result = await response.json();
+                        progressText.textContent = `${file.name}: ${formatFileSize(file.size)}/${formatFileSize(file.size)}`;
                         
                         if (result.status === 'saved') {
                             output.textContent += ` ✅\\n`;

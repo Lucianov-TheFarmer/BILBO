@@ -22,6 +22,7 @@ from .routes import (
     preprocess,
     quality_analysis,
     quality_analysis_post_trim,
+    reference_import,
     quantification,
     results,
     samples,
@@ -68,6 +69,7 @@ app.include_router(deg.router, tags=["deg"])
 app.include_router(results.router, tags=["results"])
 app.include_router(upload.router, tags=["upload"])
 app.include_router(drive_import.router, tags=["drive_import"])
+app.include_router(reference_import.router, tags=["reference_import"])
 app.include_router(clustering_route.router, tags=["clustering"])
 app.include_router(llm_route.router, tags=["llm"])
 app.include_router(jobs_route.router, tags=["jobs"])

@@ -585,11 +585,23 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
     )
 
 
+def _record_sample_progress(db: Session, job_id: str, completed: int, total: int, current: str) -> None:
+    job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+    if job is None:
+        return
+    job.result = {"progress_percent": round(100 * completed / max(total, 1), 1),
+                  "completed_samples": completed, "total_samples": total,
+                  "progress_message": current}
+    db.add(job)
+    db.commit()
+
+
 def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
     outputs: list[dict[str, Any]] = []
-    for sample in samples:
+    for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
+        _record_sample_progress(db, job_id, index, len(samples), safe_sample)
         rc, stdout, stderr = _run(
             ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
         )
@@ -612,6 +624,7 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
+        _record_sample_progress(db, job_id, index + 1, len(samples), safe_sample)
 
     failed = [x for x in outputs if x["rc"] != 0]
     _finalize_job(
@@ -629,8 +642,9 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
 def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
     outputs: list[dict[str, Any]] = []
-    for sample in samples:
+    for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
+        _record_sample_progress(db, job_id, index, len(samples), safe_sample)
         rc, stdout, stderr = _run(
             ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800
         )
@@ -657,6 +671,7 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
+        _record_sample_progress(db, job_id, index + 1, len(samples), safe_sample)
 
     failed = [x for x in outputs if x["rc"] != 0]
     _finalize_job(

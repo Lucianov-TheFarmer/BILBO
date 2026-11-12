@@ -24,4 +24,4 @@ celery_app.conf.update(
 )
 
 # Ensure task modules are imported when worker boots.
-celery_app.conf.imports = ("backend.tasks.pipeline_tasks", "backend.tasks.drive_import")
+celery_app.conf.imports = ("backend.tasks.pipeline_tasks", "backend.tasks.drive_import", "backend.tasks.reference_import")

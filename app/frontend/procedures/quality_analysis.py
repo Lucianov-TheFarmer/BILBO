@@ -2,7 +2,8 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
+from .translations import t
 from .utils import log_message
 from .viewer import create_dropdown_menu, display_graph
 
@@ -41,7 +42,7 @@ async def update_quality_analysis_table(page, token, user_id):
                 tabela_amostras_qc.rows.clear()
                 for sample in samples:
                     def view_sample_details_handler(e, s=sample["name"]):
-                        asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC"))
+                        asyncio.run(view_sample_details(page, token, s, user_id, analysis_type=t("qc_progress", page.session.get("lang") or "pt")))
                     
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade1/{s}?token={token}"
@@ -210,7 +211,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"QC enfileirado (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
+                        result = await wait_with_progress(page, token, job_id, t("qc_progress", page.session.get("lang") or "pt"))
                         status = result.get("status")
                         await log_message(page, f"QC finalizado com status {status}.")
                     logger.info(f"Análise de qualidade iniciada para {selected_samples} com sucesso!")
