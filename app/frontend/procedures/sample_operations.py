@@ -4,6 +4,7 @@ import logging
 import asyncio
 from .jobs import wait_for_job
 from .utils import log_message
+from .translations import t
 from .quality_analysis import update_quality_analysis_table
 from ..components.general_components import create_table  # Import reusable table
 
@@ -171,7 +172,8 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
 
     async def toggle_select_all(e):
         for row in tabela_amostras_local.rows:
-            row.cells[3].content.value = e.control.value
+            if not row.cells[3].content.disabled:
+                row.cells[3].content.value = e.control.value
         page.update()
 
     tabela_amostras_local.rows.clear()
@@ -213,6 +215,35 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
                 ],
             )
         )
+
+    # Drive imports are jobs until both FASTQ files pass verification. Show
+    # their live state without presenting an incomplete file as a ready sample.
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            drive_response = await client.get("http://bioinfo-container:8890/drive/jobs", headers=headers)
+            drive_response.raise_for_status()
+            drive_jobs = drive_response.json()
+        lang = page.session.get("lang") or "pt"
+        for job in drive_jobs:
+            if job["status"] not in ("PENDING", "RUNNING"):
+                continue
+            progress = job.get("progress") or {}
+            status_key = "drive_queued" if job["status"] == "PENDING" else "drive_downloading"
+            status_text = t(status_key, lang)
+            if job["status"] == "RUNNING" and progress.get("total"):
+                mate = "R2" if str(progress.get("file", "")).endswith("_2.fastq.gz") else "R1"
+                done = int(progress.get("bytes", 0)) / 1024**3
+                total = int(progress["total"]) / 1024**3
+                status_text += f" {mate} ({done:.1f}/{total:.1f} GiB)"
+            tabela_amostras_local.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(f"Drive: {job['base']}", size=12)),
+                ft.DataCell(ft.Text(f"{job['size'] / 1024**3:.1f} GiB", size=12)),
+                ft.DataCell(ft.Text(status_text, size=12)),
+                ft.DataCell(ft.Checkbox(disabled=True)),
+                ft.DataCell(ft.Row([])),
+            ]))
+    except Exception as exc:
+        logger.warning("Could not load active Drive imports: %s", exc)
 
     stage_counts = {}
     # Fetch counts for stages 1..10

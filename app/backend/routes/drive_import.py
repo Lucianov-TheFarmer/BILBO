@@ -225,7 +225,14 @@ def recent_imports(user: User = Depends(get_current_user), db: Session = Depends
     jobs = db.query(PipelineJob).filter(
         PipelineJob.user_id == user.id, PipelineJob.stage == "drive_import"
     ).order_by(PipelineJob.created_at.desc()).limit(20).all()
-    return [{"id": job.id, "base": job.payload.get("base"), "status": job.status} for job in jobs]
+    r = redis_client()
+    return [{
+        "id": job.id,
+        "base": (job.payload or {}).get("base"),
+        "status": job.status,
+        "size": sum(int(file.get("size", 0)) for file in (job.payload or {}).get("files", [])),
+        "progress": r.hgetall(f"bilbo:drive:job:{job.id}") if job.status == "RUNNING" else {},
+    } for job in jobs]
 
 
 @router.get("/jobs/{job_id}")
