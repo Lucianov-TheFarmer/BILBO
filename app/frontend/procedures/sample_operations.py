@@ -377,10 +377,13 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         if progress_visible:
                             terminal_listview.controls.append(progress_container)
 
+                        last_table_status = None
+
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
 
                         async def update_download_progress(job_payload):
+                            nonlocal last_table_status
                             if not progress_visible:
                                 return
 
@@ -388,6 +391,7 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             result_payload = job_payload.get("result") or {}
                             progress_percent = result_payload.get("progress_percent")
                             progress_message = str(result_payload.get("progress_message") or "").strip()
+                            progress_phase = str(result_payload.get("progress_phase") or "").strip()
                             error_message = str(job_payload.get("error_message") or "").strip()
 
                             try:
@@ -406,7 +410,9 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             progress_bar.value = percent / 100.0 if percent is not None else None
                             progress_title.value = f"Download {sample_name}: {percent:.1f}%" if percent is not None else f"Download {sample_name}: {t('drive_queued', lang) if status == 'PENDING' else t('status_running', lang)}"
 
-                            if progress_message:
+                            if status == "RUNNING" and progress_phase and percent is not None:
+                                progress_detail.value = f"{t('sra_phase', lang)} {progress_phase}: {percent:.1f}%"
+                            elif progress_message:
                                 progress_detail.value = progress_message
                             elif status == "PENDING":
                                 progress_detail.value = t("sra_waiting_worker", lang)
@@ -420,6 +426,9 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                                 progress_detail.value = t("sra_canceled", lang)
 
                             page.update()
+                            if status != last_table_status:
+                                last_table_status = status
+                                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
                         if job_id:
                             result = await wait_for_job(token, job_id, on_update=update_download_progress)

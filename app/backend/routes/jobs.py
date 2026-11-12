@@ -86,7 +86,7 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
         return None
 
     log_path = f"/app/backend/logs/{sra_code}_download.log"
-    log_text = _tail_text_file(log_path) if job.started_at else ""
+    log_text = _tail_text_file(log_path, 1024 * 1024) if job.started_at else ""
     status_value = str(job.status or "")
 
     percent = _extract_progress_percent(log_text) if log_text else None
@@ -114,8 +114,12 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     if percent is None and not progress_message:
         return None
 
+    phases = re.findall(r"([A-Za-z]+)\s*:\|", log_text)
+    phase = phases[-1].lower() if phases else None
+
     return {
         "progress_percent": percent,
+        "progress_phase": phase,
         "progress_source": "samples_download_log",
     }
 
