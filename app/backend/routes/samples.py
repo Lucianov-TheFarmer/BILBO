@@ -172,6 +172,8 @@ def delete_sample(
     if not all_samples:
         raise HTTPException(status_code=404, detail="Sample not found")
 
+    deleted_names = [sample.name for sample in all_samples]
+
     sample_dir = safe_resolve_user_path(
         settings.users_root,
         current_user.id,
@@ -196,7 +198,11 @@ def delete_sample(
         metadata_json={"sra_code": sra_code_basename},
     )
 
-    return {"message": "Sample and associated files deleted successfully"}
+    return {
+        "message": "Sample and associated files deleted successfully",
+        "sra_code": sra_code_basename,
+        "deleted_names": deleted_names,
+    }
 
 
 @router.get("/samples/status/{sra_code}")

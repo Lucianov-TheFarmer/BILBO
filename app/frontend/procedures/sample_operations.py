@@ -82,9 +82,9 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
 async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, tabela_amostras_local):
     async def confirmar_exclusao():
         amostras_selecionadas_para_exclusao = []
-        dlg_modal_excluir_amostra.open = False
+        page.close(dlg_modal_excluir_amostra)
         for row in tabela_amostras_local.rows:
-            if isinstance(row.cells[3].content, ft.Checkbox) and row.cells[3].content.value:
+            if isinstance(row.cells[3].content, ft.Checkbox) and not row.cells[3].content.disabled and row.cells[3].content.value:
                 sample_name = row.cells[0].content.value
                 if isinstance(sample_name, str):
                     amostras_selecionadas_para_exclusao.append(sample_name)
@@ -94,20 +94,23 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
             return
 
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+        deleted_names = set()
         try:
             async with httpx.AsyncClient() as client:
-                for sra_code in amostras_selecionadas_para_exclusao:
-                    response = await client.delete(f"http://bioinfo-container:8890/samples/{sra_code}", headers=headers)
+                for sample_name in amostras_selecionadas_para_exclusao:
+                    if sample_name in deleted_names:
+                        continue
+                    response = await client.delete(f"http://bioinfo-container:8890/samples/{sample_name}", headers=headers)
                     if response.status_code == 200:
-                        logger.info(f"Amostra {sra_code} excluída com sucesso!")
-                        await log_message(page, f"Amostra {sra_code} excluída com sucesso!")
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        page.update()
+                        result = response.json()
+                        deleted_names.update(result.get("deleted_names") or [sample_name])
+                        sample_code = result.get("sra_code") or sample_name
+                        logger.info("Amostra %s excluída com sucesso!", sample_code)
+                        await log_message(page, f"Amostra {sample_code} excluída com sucesso!")
                     else:
-                        logger.error(f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
-                        await log_message(page, f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        page.update()
+                        logger.error("Erro ao excluir amostra %s: %s - %s", sample_name, response.status_code, response.text)
+                        await log_message(page, f"Erro ao excluir amostra {sample_name}: {response.status_code} - {response.text}")
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
             
         except Exception as e:
             logger.error(f"Erro ao excluir amostras: {e}", exc_info=True)
