@@ -50,7 +50,7 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                 data = response.json()
             state["session"] = data["session_id"]
             update_status(t("drive_wait", lang))
-            await page.launch_url(data["authorization_url"])
+            page.launch_url(data["authorization_url"])
             page.run_task(poll_selection)
         except Exception as exc:
             connect_button.disabled = False
