@@ -100,7 +100,14 @@ def import_reference(job_id: str) -> None:
 
 
 def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> None:
-    percent = min(99, round(80 * written / total, 1)) if total and phase.startswith("download") else None
+    if total and phase == "download_fasta":
+        percent = round(35 * written / total, 1)
+    elif total and phase == "download_annotation":
+        percent = round(35 + 35 * written / total, 1)
+    elif phase == "validating":
+        percent = 75
+    else:
+        percent = None
     job.result = {"phase": phase, "bytes": written, "total_bytes": total,
                   "progress_percent": percent, "progress_message": phase}
     db.add(job)

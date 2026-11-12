@@ -38,12 +38,12 @@ async def wait_for_job(
     raise TimeoutError(f"Job {job_id} did not finish within {timeout} seconds")
 
 
-async def wait_with_progress(page, token: str, job_id: str, title: str):
+async def wait_with_progress(page, token: str, job_id: str, title: str, on_update=None):
     """Show per-sample job progress in the existing terminal panel."""
     container = getattr(page, "container_terminal", None)
     terminal = container if isinstance(container, ft.ListView) else getattr(container, "content", None)
     if not isinstance(terminal, ft.ListView):
-        return await wait_for_job(token, job_id)
+        return await wait_for_job(token, job_id, on_update=on_update)
     label = ft.Text(title)
     detail = ft.Text("0%", size=11)
     bar = ft.ProgressBar(value=0, width=260)
@@ -54,6 +54,8 @@ async def wait_with_progress(page, token: str, job_id: str, title: str):
     page.update()
 
     def update(payload):
+        if on_update is not None:
+            on_update(payload)
         result = payload.get("result") or {}
         status = payload.get("status") or "PENDING"
         percent = result.get("progress_percent")

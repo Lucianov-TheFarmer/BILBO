@@ -38,7 +38,18 @@ async def show_reference_url_modal(page, token):
             status.value = t("reference_queued", lang)
             progress.visible = True
             page.update()
-            result = await wait_with_progress(page, token, job_id, t("reference_import", lang))
+            def update(payload):
+                data = payload.get("result") or {}
+                percent = data.get("progress_percent")
+                progress.value = percent / 100 if isinstance(percent, (int, float)) else None
+                phase = data.get("phase") or ""
+                phase_key = {"download_fasta": "reference_downloading_fasta",
+                             "download_annotation": "reference_downloading_annotation",
+                             "validating": "reference_validating", "indexing": "reference_indexing"}.get(phase)
+                status.value = t(phase_key, lang) if phase_key else str(payload.get("status") or "")
+                page.update()
+
+            result = await wait_with_progress(page, token, job_id, t("reference_import", lang), on_update=update)
             status.value = (t("reference_ready", lang) if result["status"] == "COMPLETED"
                             else str(result.get("error_message") or t("reference_failed", lang)))
             progress.value = 1 if result["status"] == "COMPLETED" else 0
@@ -78,7 +89,7 @@ xhr.onload=()=>{if(xhr.status!==202){document.getElementById('status').textConte
 const job=JSON.parse(xhr.responseText).job_id;document.getElementById('status').textContent=c[6];const timer=setInterval(async()=>{
 try{const r=await fetch('http://localhost:8890/genomes/import/jobs/'+job,{headers:{Authorization:'Bearer '+token}});
 const p=await r.json();if(p.status==='COMPLETED'||p.status==='FAILED'){clearInterval(timer);document.getElementById('status').textContent=p.status==='COMPLETED'?c[7]:c[8]+': '+p.error_message;}
-else {document.getElementById('status').textContent=c[6]+': '+((p.result||{}).phase||p.status);}}
+else {document.getElementById('status').textContent=c[6];}}
 catch(err){document.getElementById('status').textContent=err.message;}},2000);};xhr.onerror=()=>{document.getElementById('status').textContent=c[8];};
 xhr.send(new FormData(e.target));};</script></body></html>""".replace("COPY", json.dumps(copy)).replace("TOKEN", json.dumps(token))
     url = "data:text/html;charset=utf-8;base64," + base64.b64encode(html.encode()).decode()
