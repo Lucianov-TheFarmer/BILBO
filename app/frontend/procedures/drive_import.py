@@ -15,10 +15,10 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
     lang = page.session.get("lang") or "pt"
     headers = {"Authorization": f"Bearer {bilbo_token}"}
     status_text = ft.Text("")
-    selection = ft.Column(scroll=ft.ScrollMode.AUTO, height=300)
+    selection = ft.Column(scroll=ft.ScrollMode.AUTO, height=0)
     picker_holder = ft.Container(height=0)
     picker_fallback = ft.TextButton(t("drive_picker_tab", lang), visible=False)
-    recent = ft.Column(scroll=ft.ScrollMode.AUTO, height=100)
+    recent = ft.Column(scroll=ft.ScrollMode.AUTO, height=0)
     import_button = ft.ElevatedButton(t("drive_import", lang), disabled=True)
     state = {"session": None, "open": True, "jobs": []}
     status_labels = {
@@ -64,6 +64,7 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                 jobs = response.json()
             recent.controls = [ft.Text(t("drive_recent", lang))]
             recent.controls.extend(ft.Text(f"{job['base']}: {status_labels.get(job['status'], job['status'])}") for job in jobs)
+            recent.height = 100 if jobs else 0
             page.update()
         except Exception:
             pass
@@ -94,6 +95,7 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                     for file in files:
                         groups.setdefault(file["base"], {})[file["mate"]] = file
                     selection.controls = [ft.Text(t("drive_select", lang))]
+                    selection.height = 300
                     for base, pair in sorted(groups.items()):
                         names = "  |  ".join(f"R{mate}: {pair[mate]['name']}" for mate in sorted(pair))
                         total = sum(item["size"] for item in pair.values()) / 1024**3
@@ -151,7 +153,11 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Text(t("menu_import_drive", lang)),
-        content=ft.Container(width=750, content=ft.Column(tight=True, scroll=ft.ScrollMode.AUTO, controls=[connect_button, status_text, picker_holder, picker_fallback, selection, import_button, recent])),
+        content=ft.Container(width=750, content=ft.Column(tight=True, scroll=ft.ScrollMode.AUTO, controls=[
+            ft.Text(t("drive_intro", lang)),
+            ft.Text(t("drive_no_setup", lang), size=12, italic=True),
+            connect_button, status_text, picker_holder, picker_fallback, selection, import_button, recent,
+        ])),
         actions=[ft.TextButton(t("menu_close", lang), on_click=close)],
     )
     page.open(dialog)

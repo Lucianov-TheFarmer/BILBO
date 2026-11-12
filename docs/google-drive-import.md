@@ -7,9 +7,24 @@ abertura em outra aba caso o WebView do navegador não o suporte. O worker do
 BILBO transfere os pares R1/R2 diretamente para `/users/<id>/samples/<amostra>`.
 O computador do usuário não recebe os arquivos.
 
-## Configuração
+## Para quem vai importar amostras
 
-1. Crie um projeto Google Cloud, habilite **Google Drive API** e **Google Picker API**.
+1. Abra **Gestão de Amostras → Importar do Google Drive**.
+2. Clique em **Conectar ao Google Drive**, escolha sua conta Google e autorize
+   o BILBO. A autorização é solicitada novamente sempre que o modal é aberto.
+3. Selecione arquivos `FASTQ.gz` em pares R1/R2, confira os pares e clique em
+   **Importar pares**. A transferência ocorre diretamente entre o Drive e o
+   servidor do BILBO. Acompanhe o progresso no modal.
+
+Você não precisa criar um projeto Google Cloud, instalar o Google Drive na sua
+máquina nem baixar os arquivos antes. Se a conexão aparecer desabilitada, peça
+ao administrador do BILBO para concluir a configuração única abaixo.
+
+## Configuração única para quem mantém o BILBO
+
+1. Crie **um único projeto Google Cloud para a instalação do BILBO** e habilite
+   **Google Drive API** e **Google Picker API**. Cada usuário autoriza a própria
+   conta no modal, sem configurar o Google Cloud.
 2. Configure a tela de consentimento OAuth e um cliente do tipo **Aplicação Web**
    com o escopo `https://www.googleapis.com/auth/drive.file`.
 3. Cadastre exatamente `http://localhost:8890/drive/oauth/callback` como URI de
@@ -17,6 +32,8 @@ O computador do usuário não recebe os arquivos.
    para o uso pelo túnel SSH. Para acesso público, use um
    domínio HTTPS e atualize `GOOGLE_DRIVE_REDIRECT_URI`.
 4. Crie uma chave de API para o Picker e anote o número do projeto (`appId`).
+   Restrinja a chave às APIs necessárias e às origens utilizadas pelo Picker,
+   incluindo `https://docs.google.com/*` conforme a documentação do Google.
 5. Defina no `.env` do Compose, sem commitar os valores:
 
    ```text
@@ -31,6 +48,9 @@ O `SECRET_KEY` do BILBO deve estar definido e ser estável entre API e worker.
 Ele é usado para cifrar as credenciais temporárias armazenadas no Redis. O
 usuário autoriza novamente cada vez que abre o modal. Uma credencial de tarefa
 permanece por até 72 horas para que downloads em andamento possam terminar.
+Não inclua segredos OAuth, a chave de API nem o `.env` no Git. Para ativar uma
+configuração nova numa instalação existente, recrie somente os serviços `bioinfo`
+e `worker` do Compose; os modelos e volumes de dados não precisam ser reinstalados.
 
 ## Regras de importação
 
