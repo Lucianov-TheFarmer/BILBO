@@ -182,6 +182,9 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     tabela_amostras_local.rows.clear()
     tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))
     for sample in samples:
+        lang = page.session.get("lang") or "pt"
+        display_size = t("sra_size_pending", lang) if str(sample.get("size") or "").lower() in ("unknown", "none", "") else sample["size"]
+        display_status = {"PENDING": t("drive_queued", lang), "RUNNING": t("status_running", lang)}.get(str(sample.get("status") or "").upper(), sample["status"])
         
         async def download_sample_file(e, sample_name=sample["name"]):
             try:
@@ -211,8 +214,8 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
             ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(display_size, style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(display_status, style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
                     ft.DataCell(ft.Row(actions)),
                 ],
@@ -357,9 +360,10 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
 
                         terminal_listview = _get_terminal_listview(page)
-                        progress_bar = ft.ProgressBar(value=0, width=260, color="green")
-                        progress_title = ft.Text(f"Download {sample_name}: 0%")
-                        progress_detail = ft.Text("Aguardando início do download...", size=11, color="black54")
+                        lang = page.session.get("lang") or "pt"
+                        progress_bar = ft.ProgressBar(value=None, width=260, color="green")
+                        progress_title = ft.Text(f"Download {sample_name}: {t('drive_queued', lang)}")
+                        progress_detail = ft.Text(t("sra_waiting_worker", lang), size=11, color="black54")
                         progress_container = ft.Container(
                             border=ft.border.all(1, "black12"),
                             border_radius=8,
@@ -387,12 +391,10 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             error_message = str(job_payload.get("error_message") or "").strip()
 
                             try:
-                                percent = float(progress_percent)
+                                percent = max(0.0, min(float(progress_percent), 100.0))
                             except (TypeError, ValueError):
-                                percent = (progress_bar.value or 0.0) * 100.0
-
-                            percent = max(0.0, min(percent, 100.0))
-                            if status == "RUNNING" and percent >= 100.0:
+                                percent = None
+                            if status == "RUNNING" and percent is not None and percent >= 100.0:
                                 percent = 99.0
 
                             if status == "COMPLETED":
@@ -401,19 +403,21 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             elif status in {"FAILED", "CANCELED"}:
                                 progress_bar.color = "red"
 
-                            progress_bar.value = percent / 100.0
-                            progress_title.value = f"Download {sample_name}: {percent:.1f}%"
+                            progress_bar.value = percent / 100.0 if percent is not None else None
+                            progress_title.value = f"Download {sample_name}: {percent:.1f}%" if percent is not None else f"Download {sample_name}: {t('drive_queued', lang) if status == 'PENDING' else t('status_running', lang)}"
 
                             if progress_message:
                                 progress_detail.value = progress_message
+                            elif status == "PENDING":
+                                progress_detail.value = t("sra_waiting_worker", lang)
                             elif status == "RUNNING":
-                                progress_detail.value = "Baixando..."
+                                progress_detail.value = t("sra_downloading", lang)
                             elif status == "COMPLETED":
-                                progress_detail.value = "Download concluído."
+                                progress_detail.value = t("sra_completed", lang)
                             elif status == "FAILED":
-                                progress_detail.value = error_message or "Download falhou."
+                                progress_detail.value = error_message or t("sra_failed", lang)
                             elif status == "CANCELED":
-                                progress_detail.value = "Download cancelado."
+                                progress_detail.value = t("sra_canceled", lang)
 
                             page.update()
 

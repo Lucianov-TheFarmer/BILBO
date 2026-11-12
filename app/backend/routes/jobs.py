@@ -86,7 +86,7 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
         return None
 
     log_path = f"/app/backend/logs/{sra_code}_download.log"
-    log_text = _tail_text_file(log_path)
+    log_text = _tail_text_file(log_path) if job.started_at else ""
     status_value = str(job.status or "")
 
     percent = _extract_progress_percent(log_text) if log_text else None
@@ -118,6 +118,46 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
         "progress_percent": percent,
         "progress_source": "samples_download_log",
     }
+
+
+def _fastqc_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Read FastQC's own periodic percentages from the shared sample log."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    samples = (job.payload or {}).get("samples") or []
+    if not samples:
+        return None
+    result = job.result or {}
+    completed = min(int(result.get("completed_samples") or 0), len(samples))
+    if completed >= len(samples):
+        return None
+    sample = str(samples[completed])
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", sample):
+        return None
+    if job.stage == "quality_analysis":
+        stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
+        base = re.sub(r"_[12]$", "", stem)
+        path = Path("/users") / str(job.user_id) / "QC" / base / f"{sample}_quality_analysis.log"
+    else:
+        stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
+        base = re.sub(r"_R?[12]_trimmed$", "", stem)
+        path = Path("/users") / str(job.user_id) / "QC_PostTrim" / base / f"{stem}_quality_analysis_post_trim.log"
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        started = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+        if modified < started:
+            return None
+    except OSError:
+        return None
+    text = _tail_text_file(str(path), 8192)
+    matches = re.findall(r"Approx\s+(\d+(?:\.\d+)?)% complete", text)
+    current = float(matches[-1]) if matches else 0.0
+    if "Analysis complete for" in text:
+        current = 100.0
+    percent = min(99.9, round(100 * (completed + current / 100) / len(samples), 1))
+    return {"progress_percent": percent, "progress_message": f"{sample}: {current:.0f}%",
+            "completed_samples": completed, "total_samples": len(samples),
+            "progress_source": "fastqc_log"}
 
 
 @router.post("/jobs/{stage}/enqueue", status_code=status.HTTP_202_ACCEPTED, response_model=JobEnqueueResponse)
@@ -162,6 +202,10 @@ def get_job_status(
     result_payload = dict(job.result or {})
     if job.stage == "samples_download":
         progress_data = _samples_download_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage in ("quality_analysis", "quality_analysis_post_trim"):
+        progress_data = _fastqc_progress(job)
         if progress_data:
             result_payload.update(progress_data)
 

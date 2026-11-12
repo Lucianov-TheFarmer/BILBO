@@ -214,7 +214,7 @@ def queue_import(session_id: str, user: User = Depends(get_current_user), db: Se
         raise HTTPException(409, "One of these samples is already being imported")
     for base, group in groups.items():
         job = create_job(db, "drive_import", user.id, {"base": base, "files": [group[1], group[2]]})
-        import_drive_pair.delay(job.id, session_id)
+        import_drive_pair.apply_async(args=[job.id, session_id], queue="drive")
         jobs.append(job.id)
     redis_client().hset(session_key(session_id), "status", "queued")
     return {"job_ids": jobs}
@@ -241,4 +241,6 @@ def import_status(job_id: str, user: User = Depends(get_current_user), db: Sessi
     if not job:
         raise HTTPException(404, "Import job not found")
     progress = redis_client().hgetall(f"bilbo:drive:job:{job_id}")
-    return {"id": job.id, "base": job.payload.get("base"), "status": job.status, "result": job.result, "error": job.error_message, "progress": progress}
+    return {"id": job.id, "base": job.payload.get("base"), "status": job.status,
+            "result": job.result, "error": job.error_message, "progress": progress,
+            "files": [{"mate": file["mate"], "size": file["size"]} for file in job.payload.get("files", [])]}

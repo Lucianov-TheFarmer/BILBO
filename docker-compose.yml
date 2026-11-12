@@ -60,7 +60,7 @@ services:
       qdrant:
         condition: service_started
 
-  worker:
+  worker: &pipeline_worker
     build:
       context: .
       target: runtime
@@ -113,6 +113,12 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+
+  drive-worker:
+    <<: *pipeline_worker
+    image: bilbo-worker
+    container_name: bioinfo-drive-worker
+    command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1 --queues=drive --hostname=drive@%h
 
   cluster-rag:
     build:

@@ -3,6 +3,7 @@ import inspect
 from typing import Optional
 import httpx
 import flet as ft
+from .translations import t
 
 
 async def wait_for_job(
@@ -58,6 +59,9 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
             on_update(payload)
         result = payload.get("result") or {}
         status = payload.get("status") or "PENDING"
+        lang = page.session.get("lang") or "pt"
+        status_label = t({"PENDING": "drive_queued", "RUNNING": "status_running",
+                          "COMPLETED": "drive_job_complete", "FAILED": "drive_job_failed"}.get(status, status), lang)
         percent = result.get("progress_percent")
         if status == "COMPLETED":
             percent = 100
@@ -69,7 +73,7 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
         completed = result.get("completed_samples")
         total = result.get("total_samples")
         count = f"{completed}/{total} · " if completed is not None and total else ""
-        detail.value = f"{count}{current} · {status}"
+        detail.value = f"{count}{current} · {status_label}"
         if status in ("FAILED", "CANCELED"):
             bar.color = "red"
             detail.value = str(payload.get("error_message") or detail.value)

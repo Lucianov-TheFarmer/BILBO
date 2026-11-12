@@ -26,6 +26,10 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
     if monitoring is None:
         monitoring = set()
         page._drive_monitoring = monitoring
+    cards = getattr(page, "_drive_progress_cards", None)
+    if cards is None:
+        cards = {}
+        page._drive_progress_cards = cards
     status_labels = {
         "pt": {"PENDING": "Na fila", "RUNNING": "Baixando", "COMPLETED": "Concluído", "FAILED": "Falhou", "CANCELED": "Cancelado"},
         "en": {"PENDING": "Queued", "RUNNING": "Downloading", "COMPLETED": "Complete", "FAILED": "Failed", "CANCELED": "Canceled"},
@@ -42,6 +46,45 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
         if job["status"] == "RUNNING" and progress.get("total"):
             transferred = f" — {progress['file']}: {int(progress['bytes']) / 1024**3:.1f}/{int(progress['total']) / 1024**3:.1f} GiB"
         return f"{job['base']}: {status_labels.get(job['status'], job['status'])}{transferred}" + (f" — {job['error']}" if job.get("error") else "")
+
+    def update_terminal_card(job):
+        container = getattr(page, "container_terminal", None)
+        terminal = container if isinstance(container, ft.ListView) else getattr(container, "content", None)
+        if not isinstance(terminal, ft.ListView):
+            return
+        job_id = job["id"]
+        if job_id not in cards:
+            title = ft.Text(f"Google Drive — {job['base']}")
+            bar = ft.ProgressBar(value=None, width=260)
+            detail = ft.Text(t("drive_queued", lang), size=11)
+            terminal.controls.append(ft.Container(
+                border=ft.border.all(1, "black12"), border_radius=8,
+                padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                content=ft.Column(spacing=4, controls=[title, bar, detail])))
+            cards[job_id] = (bar, detail)
+        bar, detail = cards[job_id]
+        state_name = job["status"]
+        progress = job.get("progress") or {}
+        files = job.get("files") or []
+        if state_name == "RUNNING" and progress.get("total"):
+            mate = 2 if str(progress.get("file", "")).endswith("_2.fastq.gz") else 1
+            done = int(progress.get("bytes") or 0)
+            current_total = int(progress["total"])
+            total = sum(int(file["size"]) for file in files)
+            previous = sum(int(file["size"]) for file in files if int(file["mate"]) < mate)
+            bar.value = min(0.99, (previous + done) / total) if total else None
+            detail.value = f"{t('drive_downloading', lang)} R{mate} ({done / 1024**3:.1f}/{current_total / 1024**3:.1f} GiB)"
+        elif state_name == "COMPLETED":
+            bar.value = 1
+            bar.color = "green"
+            detail.value = t("drive_job_complete", lang)
+        elif state_name in ("FAILED", "CANCELED"):
+            bar.color = "red"
+            detail.value = str(job.get("error") or t("drive_job_failed", lang))
+        else:
+            bar.value = None
+            detail.value = t("drive_queued", lang) if state_name == "PENDING" else t("drive_downloading", lang)
+        page.update()
 
     async def close(_):
         state["open"] = False
@@ -163,6 +206,7 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                     jobs = [response.json() for response in responses]
                     changed = False
                     for job in jobs:
+                        update_terminal_card(job)
                         progress = job.get("progress") or {}
                         file_name = progress.get("file", "") if job["status"] == "RUNNING" else ""
                         current = (job["status"], file_name)
