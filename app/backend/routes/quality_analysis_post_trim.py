@@ -84,7 +84,7 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
         job_id=job.id,
         metadata_json={"samples": to_process},
     )
-    enqueue_pipeline_job(job.id)
+    enqueue_pipeline_job(job.id, queue="quality")
     return {"job_id": job.id, "status": "PENDING", "message": "Post-trim quality analysis job enqueued"}
 
 @router.post("/quality_analysis_post_trim/update_status")

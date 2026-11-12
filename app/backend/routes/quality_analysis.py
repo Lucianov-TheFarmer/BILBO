@@ -75,7 +75,7 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
         job_id=job.id,
         metadata_json={"samples": to_process},
     )
-    enqueue_pipeline_job(job.id)
+    enqueue_pipeline_job(job.id, queue="quality")
     return {"job_id": job.id, "status": "PENDING", "message": "Quality analysis job enqueued"}
         
 @router.post("/quality_analysis/update_status")

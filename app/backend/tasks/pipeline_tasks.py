@@ -521,8 +521,9 @@ def execute_pipeline_job(self, job_id: str):
         db.close()
 
 
-def enqueue_pipeline_job(job_id: str) -> None:
-    execute_pipeline_job.apply_async(args=[job_id], task_id=job_id)
+def enqueue_pipeline_job(job_id: str, *, queue: Optional[str] = None) -> None:
+    options = {"queue": queue} if queue else {}
+    execute_pipeline_job.apply_async(args=[job_id], task_id=job_id, **options)
 
 
 def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
@@ -553,6 +554,13 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
             ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000
         )
     except Exception as exc:
+        db.rollback()
+        sample = (
+            db.query(SampleStage)
+            .filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1,
+                    SampleStage.user_id == user_id)
+            .first()
+        )
         if sample:
             sample.status = "FAILED"
             db.commit()
@@ -561,6 +569,14 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
             raise RuntimeError(f"Samples download failed for {sra_code}. Log tail:\n{log_tail}") from exc
         raise
 
+    # The row may have been replaced while a long SRA download was running.
+    db.expire_all()
+    sample = (
+        db.query(SampleStage)
+        .filter(SampleStage.sra_code == sra_code, SampleStage.stage_id == 1,
+                SampleStage.user_id == user_id)
+        .first()
+    )
     if sample:
         sample.status = "COMPLETED" if rc == 0 else "FAILED"
         db.commit()

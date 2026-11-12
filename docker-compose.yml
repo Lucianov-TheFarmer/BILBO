@@ -120,6 +120,12 @@ services:
     container_name: bioinfo-drive-worker
     command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1 --queues=drive --hostname=drive@%h
 
+  quality-worker:
+    <<: *pipeline_worker
+    image: bilbo-worker
+    container_name: bioinfo-quality-worker
+    command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1 --queues=quality --hostname=quality@%h
+
   cluster-rag:
     build:
       context: .
