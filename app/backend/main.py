@@ -17,6 +17,7 @@ from .routes import (
     alignment,
     analysis_design,
     auth,
+    contrast_design,
     contrasts,
     deg,
     drive_import,
@@ -68,6 +69,7 @@ app.include_router(analysis_design.router, tags=["analysis_design"])
 app.include_router(pipeline_runs.router, tags=["pipeline"])
 app.include_router(quantification.router, tags=["quantification"])
 app.include_router(contrasts.router, tags=["contrasts"])
+app.include_router(contrast_design.router, tags=["contrasts"])
 app.include_router(preprocess.router, tags=["preprocess"])
 app.include_router(deg.router, tags=["deg"])
 app.include_router(results.router, tags=["results"])

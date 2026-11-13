@@ -396,7 +396,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
 # Reference Genome Management
 # ----------------------------------------
 
-async def show_genomes_modal(page, token, user_id):
+async def show_genomes_modal(page, token, user_id, on_closed=None):
     """Exibe o modal para visualizar e excluir genomas de referência."""
     global tabela_genomas_referencia, tabela_genomas_disponiveis
 
@@ -574,6 +574,17 @@ async def show_genomes_modal(page, token, user_id):
         dlg_modal_genomas.open = False
         page.update()
         await download_genome(page, token, accession, organism_name, sjdb_overhang, threads)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
+
+    async def close_genomes():
+        page.close(dlg_modal_genomas)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
 
     def update_rows_with_checkboxes(data):
         tabela_genomas_disponiveis.rows.clear()
@@ -612,7 +623,12 @@ async def show_genomes_modal(page, token, user_id):
             ),
             width=800,
         ),
-        actions=[ft.TextButton(t("genome_index", page.session.get("lang") or "pt"), on_click=indexar_genoma_handler)],
+        actions=[
+            ft.TextButton(t("menu_close", page.session.get("lang") or "pt"),
+                          on_click=lambda _: page.run_task(close_genomes)),
+            ft.TextButton(t("genome_index", page.session.get("lang") or "pt"),
+                          on_click=indexar_genoma_handler),
+        ],
         actions_alignment="center",
     )
     page.open(dlg_modal_genomas)

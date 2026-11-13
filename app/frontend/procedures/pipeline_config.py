@@ -6,7 +6,9 @@ import re
 import flet as ft
 import httpx
 
-from .analysis_design import show_analysis_design_modal
+from .alignment import show_genomes_modal
+from .contrasts import show_contrasts_modal
+from .reference_import import show_reference_upload_modal, show_reference_url_modal
 from .translations import t
 
 API = "http://bioinfo-container:8890"
@@ -16,7 +18,7 @@ STAR_FIELDS = ("outFilterType", "outFilterMultimapNmax", "alignSJoverhangMin",
                "alignMatesGapMax")
 
 
-async def show_pipeline_config_modal(page, token):
+async def show_pipeline_config_modal(page, token, user_id):
     lang = page.session.get("lang") or "pt"
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=30) as client:
@@ -30,30 +32,72 @@ async def show_pipeline_config_modal(page, token):
     saved_design = design_response.json().get("config") if design_response.status_code == 200 else None
     status_text = ft.Text("")
     name_field = ft.TextField(label=t("pipeline_name", lang), value=t("pipeline_default_name", lang))
-    sample_checks = {name: ft.Checkbox(label=name, value=False) for name in sorted(options["samples"])}
-    sample_pair_checks = {}
-    sample_rows = []
-    for name, select in sample_checks.items():
-        files = [item["name"] for item in options["samples"][name]
-                 if item.get("status") == "COMPLETED"]
-        has_pair = (any(re.search(r"(?:_1|_R1)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files)
-                    and any(re.search(r"(?:_2|_R2)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files))
-        pair = ft.Checkbox(label="R1/R2", value=has_pair or not files)
-        sample_pair_checks[name] = pair
-        sample_rows.append(ft.Row([select, pair]))
-    sample_choices = ft.Column(sample_rows, spacing=0)
-    planned_field = ft.TextField(label=t("pipeline_planned_samples", lang),
-                                 hint_text="SRR12345, A01-F_S2", multiline=True, min_lines=2)
-    planned_source = ft.Dropdown(label=t("pipeline_planned_source", lang), value="sra",
-                                 options=[ft.dropdown.Option("sra", "SRA"),
-                                          ft.dropdown.Option("drive", "Google Drive"),
-                                          ft.dropdown.Option("upload", t("pipeline_upload", lang))])
-    paired = ft.Checkbox(label=t("pipeline_paired", lang), value=True)
+    sample_checks = {}
+    sample_specs = {}
+    editing_samples = {}
+    sample_data = dict(options["samples"])
+    sample_choices = ft.Column(spacing=2, height=170, scroll=ft.ScrollMode.AUTO)
+    sample_count = ft.Text("")
+    editing_label = ft.Text("")
+    editing = {"id": None}
+
+    def localized_status(value):
+        key = {"COMPLETED": "pipeline_completed", "RUNNING": "pipeline_running",
+               "PENDING": "pipeline_queued", "FAILED": "pipeline_failed"}.get(
+                   str(value or "").upper())
+        return t(key, lang) if key else str(value or "")
+
+    def show_samples(data, select_names=None):
+        selected = (set(select_names) if select_names is not None else
+                    {name for name, check in sample_checks.items() if check.value})
+        data = dict(data)
+        for name, spec in editing_samples.items():
+            data.setdefault(name, [{"name": name, "status": "PENDING",
+                                    "source": spec.get("source")}])
+        sample_checks.clear()
+        sample_specs.clear()
+        sample_choices.controls.clear()
+        for name, records in sorted(data.items()):
+            states = {str(item.get("status") or "").upper() for item in records}
+            state = ("COMPLETED" if "COMPLETED" in states else
+                     "RUNNING" if "RUNNING" in states else
+                     "PENDING" if "PENDING" in states else next(iter(states), ""))
+            label = f"{name} · {localized_status(state)}"
+            check = ft.Checkbox(label=label, value=name in selected, on_change=lambda _: update_selection())
+            sample_checks[name] = check
+            sample_choices.controls.append(check)
+            files = [item["name"] for item in records]
+            first = any(re.search(r"(?:_1|_R1)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files)
+            second = any(re.search(r"(?:_2|_R2)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files)
+            source = ("drive" if any(item.get("source") == "drive" for item in records) else
+                      "sra" if re.fullmatch(r"(?:SRR|ERR|DRR)\d+", name, re.I) and
+                      state in ("PENDING", "RUNNING") else "existing")
+            sample_specs[name] = {"name": name, "source": source,
+                                  "paired": first or second or state != "COMPLETED"}
+            if name in editing_samples:
+                sample_specs[name] = dict(editing_samples[name])
+        if not sample_checks:
+            sample_choices.controls.append(ft.Text(t("pipeline_no_samples", lang), size=12))
+        update_selection()
+
+    def update_selection():
+        count = sum(bool(check.value) for check in sample_checks.values())
+        sample_count.value = t("pipeline_selected_count", lang).format(count=count)
+        select_all.value = bool(sample_checks) and count == len(sample_checks)
+        page.update()
+
+    def toggle_all(_):
+        for check in sample_checks.values():
+            check.value = select_all.value
+        update_selection()
+
+    select_all = ft.Checkbox(label=t("pipeline_select_all", lang), on_change=toggle_all)
+    show_samples(sample_data)
     stage_checks = {stage: ft.Checkbox(label=t("pipeline_stage_" + stage, lang),
                                        value=stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification"))
                     for stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg")}
     genome_field = ft.Dropdown(label=t("pipeline_genome", lang),
-                               options=[ft.dropdown.Option(g["id"], f"{g['name']} ({g['status']})")
+                               options=[ft.dropdown.Option(g["id"], f"{g['name']} ({localized_status(g['status'])})")
                                         for g in options["genomes"] if g.get("id")])
     trim_fields = {key: ft.TextField(label=t("pipeline_trim_" + key, lang), value=value, width=215)
                    for key, value in {"threads": "4", "phred": "autodetect", "adapter": "TruSeq3-PE.fa",
@@ -61,8 +105,19 @@ async def show_pipeline_config_modal(page, token):
                                       "window": "4", "quality": "15", "target": "40", "strictness": "0.5",
                                       "leading": "3", "trailing": "3", "crop": "", "headcrop": "",
                                       "minlen": "36", "avgqual": ""}.items()}
+    trim_fields["phred"] = ft.Dropdown(label=t("pipeline_trim_phred", lang), value="autodetect",
+        width=215, options=[ft.dropdown.Option(key) for key in ("autodetect", "phred33", "phred64")])
+    trim_fields["adapter"] = ft.Dropdown(label=t("pipeline_trim_adapter", lang),
+        value="TruSeq3-PE.fa", width=215,
+        options=[ft.dropdown.Option(key) for key in ("TruSeq3-PE.fa", "TruSeq3-PE-2.fa",
+                "TruSeq3-SE.fa", "TruSeq2-PE.fa", "TruSeq2-SE.fa", "NexteraPE-PE.fa",
+                "Personalizado")])
     adapter_content = ft.TextField(label=t("pipeline_custom_adapter", lang), multiline=True,
-                                    min_lines=2)
+                                    min_lines=2, visible=False)
+    def adapter_changed(_):
+        adapter_content.visible = trim_fields["adapter"].value == "Personalizado"
+        page.update()
+    trim_fields["adapter"].on_change = adapter_changed
     alignment_threads = ft.TextField(label=t("pipeline_threads", lang), value="8", width=200)
     star_fields = {key: ft.TextField(label=key, width=200) for key in STAR_FIELDS}
     feature_type = ft.TextField(label=t("pipeline_feature_type", lang), value="gene", width=200)
@@ -73,14 +128,8 @@ async def show_pipeline_config_modal(page, token):
     recent = ft.Column(spacing=5)
     state = {"open": True}
 
-    def planned_names():
-        return [part.strip() for part in re.split(r"[,;\n]+", planned_field.value or "") if part.strip()]
-
     def build_plan():
-        samples = [{"name": name, "source": "existing", "paired": sample_pair_checks[name].value}
-                   for name, check in sample_checks.items() if check.value]
-        samples.extend({"name": name, "source": planned_source.value, "paired": paired.value}
-                       for name in planned_names())
+        samples = [sample_specs[name] for name, check in sample_checks.items() if check.value]
         trim = {"threads": trim_fields["threads"].value,
                 "phred": trim_fields["phred"].value,
                 "illumina_clip": {"Arquivo adaptadores": trim_fields["adapter"].value,
@@ -107,21 +156,78 @@ async def show_pipeline_config_modal(page, token):
                 "design": saved_design if stage_checks["deg"].value else None,
                 "reuse_existing": True}
 
+    def load_draft(run):
+        nonlocal saved_design
+        config = run["config"]
+        editing["id"] = run["id"]
+        editing_samples.clear()
+        editing_samples.update({sample["name"]: sample for sample in config.get("samples") or []})
+        name_field.value = config.get("name") or ""
+        show_samples(sample_data, select_names=editing_samples)
+        for key, check in stage_checks.items():
+            check.value = bool((config.get("stages") or {}).get(key))
+        genome_field.value = config.get("genome")
+        trim = config.get("trimming") or {}
+        adapter = trim.get("illumina_clip") or {}
+        window = trim.get("sliding_window") or {}
+        max_info = trim.get("max_info") or {}
+        nested = {"adapter": adapter.get("Arquivo adaptadores"),
+                  "seed": adapter.get("Seed mismatches"),
+                  "palindrome": adapter.get("Threshold palindromo"),
+                  "simple": adapter.get("Threshold simples"),
+                  "adapter_min": adapter.get("Comprimento minimo adaptador"),
+                  "window": window.get("Tamanho janela"),
+                  "quality": window.get("Qualidade minima"),
+                  "target": max_info.get("Comprimento alvo"),
+                  "strictness": max_info.get("Strictness")}
+        for key, field in trim_fields.items():
+            value = nested.get(key) if key in nested else trim.get(key)
+            if value is not None:
+                field.value = str(value)
+        adapter_content.value = str(adapter.get("Conteudo personalizado") or "")
+        adapter_changed(None)
+        alignment = config.get("alignment") or {}
+        alignment_threads.value = str(alignment.get("threads", 8))
+        for key, field in star_fields.items():
+            field.value = str(alignment.get(key) or "")
+        quant = config.get("quantification") or {}
+        feature_type.value = str(quant.get("feature_type") or "gene")
+        id_attribute.value = str(quant.get("id_attribute") or "ID")
+        saved_design = config.get("design")
+        design_summary.value = (t("pipeline_design_missing", lang) if not saved_design else
+                                "~0+group" + "".join("+" + variable["name"]
+                                                    for variable in saved_design.get("variables") or []))
+        editing_label.value = t("pipeline_editing_draft", lang).format(name=name_field.value)
+        status_text.value = t("pipeline_draft_loaded", lang)
+        page.update()
+
     async def save(start=False):
         try:
+            plan = build_plan()
+            if not plan["samples"]:
+                status_text.value = t("pipeline_choose_samples", lang)
+                page.update()
+                return
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(f"{API}/pipeline/runs", json=build_plan(), headers=headers)
+                if editing["id"]:
+                    response = await client.put(f"{API}/pipeline/runs/{editing['id']}",
+                                                json=plan, headers=headers)
+                else:
+                    response = await client.post(f"{API}/pipeline/runs", json=plan, headers=headers)
                 if response.status_code not in (200, 201):
                     status_text.value = response.json().get("detail", response.text)
                     page.update()
                     return
                 run = response.json()
+                editing["id"] = run["id"]
                 if start:
                     response = await client.post(f"{API}/pipeline/runs/{run['id']}/start", headers=headers)
                     if response.status_code != 200:
                         status_text.value = response.json().get("detail", response.text)
                         page.update()
                         return
+                    editing["id"] = None
+                    editing_label.value = ""
             status_text.value = t("pipeline_started", lang) if start else t("pipeline_saved", lang)
             await load_runs()
         except Exception as exc:
@@ -134,6 +240,30 @@ async def show_pipeline_config_modal(page, token):
         status_text.value = (t("pipeline_action_done", lang) if response.status_code == 200 else
                              response.json().get("detail", response.text))
         await load_runs()
+
+    async def delete_draft(run_id, confirm_dialog):
+        page.close(confirm_dialog)
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.delete(f"{API}/pipeline/runs/{run_id}", headers=headers)
+        if response.status_code == 200:
+            if editing["id"] == run_id:
+                editing["id"] = None
+                editing_label.value = ""
+                editing_samples.clear()
+            status_text.value = t("pipeline_draft_deleted", lang)
+        else:
+            status_text.value = response.json().get("detail", response.text)
+        await load_runs()
+
+    def confirm_delete(run_id):
+        confirm_dialog = ft.AlertDialog(
+            modal=True, title=ft.Text(t("pipeline_delete_draft", lang)),
+            content=ft.Text(t("pipeline_delete_draft_hint", lang)),
+            actions=[ft.TextButton(t("btn_cancel", lang),
+                                   on_click=lambda _: page.close(confirm_dialog)),
+                     ft.ElevatedButton(t("btn_delete", lang),
+                                       on_click=lambda _: page.run_task(delete_draft, run_id, confirm_dialog))])
+        page.open(confirm_dialog)
 
     async def load_runs():
         try:
@@ -156,8 +286,12 @@ async def show_pipeline_config_modal(page, token):
                 run_status = t(labels.get(run["status"], run["status"]), lang)
                 controls = [ft.Text(f"{run['config']['name']} · {run_status} · {detail}", expand=True)]
                 if run["status"] == "DRAFT":
+                    controls.append(ft.TextButton(t("pipeline_edit_draft", lang),
+                        on_click=lambda _, selected=run: load_draft(selected)))
                     controls.append(ft.TextButton(t("pipeline_start", lang),
                         on_click=lambda _, rid=run["id"]: page.run_task(action, rid, "start")))
+                    controls.append(ft.TextButton(t("btn_delete", lang),
+                        on_click=lambda _, rid=run["id"]: confirm_delete(rid)))
                 if run["status"] == "FAILED":
                     controls.append(ft.TextButton(t("pipeline_retry", lang),
                         on_click=lambda _, rid=run["id"]: page.run_task(action, rid, "retry")))
@@ -183,7 +317,26 @@ async def show_pipeline_config_modal(page, token):
                     if step.get("error_message"):
                         message += f" · {step['error_message']}"
                     step_lines.append(ft.Text(message, size=11))
-                recent.controls.append(ft.Column([ft.Row(controls), progress, *step_lines], spacing=3))
+                recent.controls.append(ft.Column([ft.Row(controls, wrap=True, spacing=8),
+                                                  progress, *step_lines], spacing=3))
+            page.update()
+        except Exception:
+            pass
+
+    async def refresh_options():
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(f"{API}/pipeline/options", headers=headers)
+            if response.status_code != 200:
+                return
+            data = response.json()
+            sample_data.clear()
+            sample_data.update(data.get("samples") or {})
+            show_samples(sample_data)
+            current_genome = genome_field.value
+            genome_field.options = [ft.dropdown.Option(g["id"], f"{g['name']} ({localized_status(g['status'])})")
+                                    for g in data.get("genomes") or [] if g.get("id")]
+            genome_field.value = current_genome
             page.update()
         except Exception:
             pass
@@ -191,41 +344,105 @@ async def show_pipeline_config_modal(page, token):
     async def poll_runs():
         while state["open"]:
             await load_runs()
+            await refresh_options()
             await asyncio.sleep(8)
 
-    async def edit_design(_):
+    async def open_related(kind):
         page.close(dialog)
-        async def after_save(config):
+        async def restore_pipeline():
             nonlocal saved_design
-            saved_design = config
-            design_summary.value = "~0+group" + "".join("+" + v["name"] for v in config["variables"])
+            if kind == "contrasts":
+                try:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        response = await client.get(f"{API}/analysis-design", headers=headers)
+                    if response.status_code == 200:
+                        saved_design = response.json().get("config")
+                        design_summary.value = (t("pipeline_design_missing", lang) if not saved_design else
+                            "~0+group" + "".join("+" + variable["name"]
+                                                for variable in saved_design.get("variables") or []))
+                except Exception:
+                    pass
+            await refresh_options()
             page.open(dialog)
-        await show_analysis_design_modal(page, token, after_save,
-                                         on_closed=lambda: page.open(dialog))
+        try:
+            if kind == "url":
+                await show_reference_url_modal(page, token, on_closed=restore_pipeline)
+            elif kind == "upload":
+                await show_reference_upload_modal(page, token, on_closed=restore_pipeline)
+            elif kind == "ncbi":
+                await show_genomes_modal(page, token, user_id, on_closed=restore_pipeline)
+            elif kind == "contrasts":
+                await show_contrasts_modal(page, token, user_id, on_closed=restore_pipeline)
+        except Exception as exc:
+            status_text.value = str(exc)
+            page.open(dialog)
 
     def close(_):
         state["open"] = False
         page.close(dialog)
 
+    def section(stage, controls):
+        return ft.Container(
+            content=ft.Column([stage_checks[stage], *controls], spacing=10),
+            padding=ft.padding.all(14),
+            border=ft.border.all(1, "outline"),
+            border_radius=10,
+        )
+
+    genome_field.width = 415
+    reference_controls = ft.Row([
+        genome_field,
+        ft.IconButton(icon="link", tooltip=t("menu_reference_url", lang),
+                      on_click=lambda _: page.run_task(open_related, "url")),
+        ft.IconButton(icon="upload_file", tooltip=t("menu_reference_upload", lang),
+                      on_click=lambda _: page.run_task(open_related, "upload")),
+        ft.IconButton(icon="download", tooltip=t("pipeline_reference_ncbi", lang),
+                      on_click=lambda _: page.run_task(open_related, "ncbi")),
+        ft.IconButton(icon="refresh", tooltip=t("pipeline_refresh", lang),
+                      on_click=lambda _: page.run_task(refresh_options)),
+    ], wrap=True, spacing=6)
+
     dialog = ft.AlertDialog(modal=True,
         title=ft.Text(t("pipeline_configure", lang)),
-        content=ft.Container(width=950, height=620, content=ft.ListView(controls=[
-            ft.Text(t("pipeline_intro", lang)), name_field,
-            ft.Text(t("pipeline_samples", lang), weight=ft.FontWeight.BOLD), sample_choices,
-            planned_field, planned_source, paired,
+        content=ft.Container(width=910, height=650, content=ft.ListView(controls=[
+            ft.Text(t("pipeline_intro", lang), size=12),
+            name_field, editing_label,
+            ft.Divider(),
+            ft.Row([ft.Text(t("pipeline_samples", lang), weight=ft.FontWeight.BOLD),
+                    sample_count], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            select_all,
+            sample_choices,
             ft.Text(t("pipeline_import_hint", lang), size=12),
+            ft.TextButton(t("pipeline_refresh", lang), icon="refresh",
+                          on_click=lambda _: page.run_task(refresh_options)),
+            ft.Divider(),
             ft.Text(t("pipeline_stages", lang), weight=ft.FontWeight.BOLD),
-            ft.Row(list(stage_checks.values()), wrap=True), genome_field,
-            ft.Text(t("pipeline_trim_params", lang), weight=ft.FontWeight.BOLD),
-            ft.Row(list(trim_fields.values()), wrap=True), adapter_content,
-            ft.Text(t("pipeline_alignment_params", lang), weight=ft.FontWeight.BOLD),
-            alignment_threads, ft.Row(list(star_fields.values()), wrap=True),
-            ft.Text(t("pipeline_quant_params", lang), weight=ft.FontWeight.BOLD),
-            ft.Row([feature_type, id_attribute]),
-            ft.Text(t("design_title", lang), weight=ft.FontWeight.BOLD), design_summary,
-            ft.TextButton(t("pipeline_edit_design", lang), on_click=edit_design),
-            status_text, ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,
-        ])),
+            section("qc_raw", []),
+            section("trimming", [
+                ft.Text(t("pipeline_trim_params", lang), size=12),
+                ft.Row(list(trim_fields.values()), wrap=True, spacing=10), adapter_content,
+            ]),
+            section("qc_trim", []),
+            section("alignment", [
+                reference_controls,
+                ft.Text(t("pipeline_reference_hint", lang), size=11),
+                ft.Text(t("pipeline_alignment_params", lang), size=12),
+                ft.Row([alignment_threads, *star_fields.values()], wrap=True, spacing=10),
+            ]),
+            section("quantification", [
+                ft.Text(t("pipeline_quant_params", lang), size=12),
+                ft.Row([feature_type, id_attribute], wrap=True, spacing=10),
+            ]),
+            section("deg", [
+                design_summary,
+                ft.Text(t("pipeline_deg_samples_hint", lang), size=11),
+                ft.TextButton(t("pipeline_open_contrasts", lang),
+                              on_click=lambda _: page.run_task(open_related, "contrasts")),
+            ]),
+            status_text,
+            ft.Divider(),
+            ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,
+        ], spacing=12)),
         actions=[ft.TextButton(t("menu_close", lang), on_click=close),
                  ft.TextButton(t("pipeline_save_draft", lang), on_click=lambda _: page.run_task(save)),
                  ft.ElevatedButton(t("pipeline_start", lang), on_click=lambda _: page.run_task(save, True))],

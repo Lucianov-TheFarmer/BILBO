@@ -12,7 +12,7 @@ from .translations import t
 from .utils import log_message
 
 
-async def show_reference_url_modal(page, token):
+async def show_reference_url_modal(page, token, on_closed=None):
     lang = page.session.get("lang") or "pt"
     name = ft.TextField(label=t("reference_name", lang), width=550)
     fasta = ft.TextField(label=t("reference_fasta_url", lang), width=550)
@@ -83,18 +83,25 @@ async def show_reference_url_modal(page, token):
             page.update()
 
     submit_button = ft.TextButton(t("reference_import", lang), on_click=submit)
+    async def close_dialog():
+        page.close(dialog)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
+
     dialog = ft.AlertDialog(
         title=ft.Text(t("reference_url_title", lang)),
         content=ft.Container(width=580, height=460, content=ft.Column(scroll=ft.ScrollMode.AUTO, controls=[
             ft.Text(t("reference_help", lang), size=12), name, fasta, annotation,
             ft.Row(controls=[threads, overhang]), progress, status, recent])),
-        actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.close(dialog)),
+        actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.run_task(close_dialog)),
                  submit_button])
     page.open(dialog)
     page.run_task(load_recent)
 
 
-async def show_reference_upload_modal(page, token):
+async def show_reference_upload_modal(page, token, on_closed=None):
     lang = page.session.get("lang") or "pt"
     copy = {
         "pt": ["Enviar genoma de referência", "Nome do genoma", "FASTA genômico", "Anotação GFF3 ou GTF", "Enviar e indexar", "Enviando", "Validando e criando índice", "Concluído", "Erro"],
@@ -119,7 +126,14 @@ else {document.getElementById('status').textContent=c[6];}}
 catch(err){document.getElementById('status').textContent=err.message;}},2000);};xhr.onerror=()=>{document.getElementById('status').textContent=c[8];};
 xhr.send(new FormData(e.target));};</script></body></html>""".replace("COPY", json.dumps(copy)).replace("TOKEN", json.dumps(token))
     url = "data:text/html;charset=utf-8;base64," + base64.b64encode(html.encode()).decode()
+    async def close_dialog():
+        page.close(dialog)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
+
     dialog = ft.AlertDialog(title=ft.Text(copy[0]),
                             content=ft.Container(width=600, height=340, content=ft.WebView(url=url)),
-                            actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.close(dialog))])
+                            actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.run_task(close_dialog))])
     page.open(dialog)

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db.database import get_db
-from ..db.models import PipelineRun, PipelineStep, SampleStage, User
+from ..db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, User
 from ..services.analysis_design import SAMPLE_NAME, validate_design
 from ..core.settings import settings
 from ..utils import get_current_user, get_current_user_compat
@@ -163,6 +163,17 @@ def options(db: Session = Depends(get_db), user: User = Depends(get_current_user
     for row in rows:
         if row.sra_code:
             samples.setdefault(row.sra_code, []).append({"name": row.name, "status": row.status})
+    active_drive = db.query(PipelineJob).filter(
+        PipelineJob.user_id == user.id, PipelineJob.stage == "drive_import",
+        PipelineJob.status.in_(["PENDING", "RUNNING"])).all()
+    for job in active_drive:
+        payload = job.payload or {}
+        base = payload.get("base")
+        if not base or base in samples:
+            continue
+        samples[base] = [{"name": f"{base}_{file['mate']}.fastq.gz",
+                          "status": job.status, "source": "drive"}
+                         for file in payload.get("files", []) if file.get("mate") in (1, 2)]
     genomes = db.query(SampleStage).filter(SampleStage.user_id == user.id,
                                             SampleStage.stage_id == 7).all()
     return {"samples": samples, "genomes": [{"id": row.sra_code, "name": row.name,
@@ -178,6 +189,13 @@ def create_run(plan: PipelinePlan, db: Session = Depends(get_db), user: User = D
         raise HTTPException(422, str(exc)) from exc
     run = PipelineRun(id=uuid.uuid4().hex, user_id=user.id, status="DRAFT", config=config)
     db.add(run)
+    _add_steps(db, run, config)
+    db.commit()
+    db.refresh(run)
+    return _detail(run)
+
+
+def _add_steps(db: Session, run: PipelineRun, config: dict):
     enabled = {name for name, value in config["stages"].items() if value}
     for sample in config["samples"]:
         for stage in ("input", *[stage for stage in STAGES if stage in enabled and stage != "deg"]):
@@ -186,9 +204,6 @@ def create_run(plan: PipelinePlan, db: Session = Depends(get_db), user: User = D
     if "deg" in enabled:
         db.add(PipelineStep(id=uuid.uuid4().hex, run_id=run.id,
                             sample="__all__", stage="deg", status="WAITING"))
-    db.commit()
-    db.refresh(run)
-    return _detail(run)
 
 
 @router.get("/runs")
@@ -205,6 +220,45 @@ def get_run(run_id: str, db: Session = Depends(get_db), user: User = Depends(get
     if row is None:
         raise HTTPException(404, "Pipeline run not found")
     return _detail(row)
+
+
+@router.put("/runs/{run_id}")
+def update_draft(run_id: str, plan: PipelinePlan, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    run = db.query(PipelineRun).filter(PipelineRun.id == run_id,
+                                       PipelineRun.user_id == user.id).first()
+    if run is None:
+        raise HTTPException(404, "Pipeline run not found")
+    if run.status != "DRAFT":
+        raise HTTPException(409, "Only a draft can be edited")
+    try:
+        config = _validated_plan(db, user.id, plan)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    for step in list(run.steps):
+        db.delete(step)
+    db.flush()
+    run.config = config
+    _add_steps(db, run, config)
+    db.commit()
+    db.refresh(run)
+    return _detail(run)
+
+
+@router.delete("/runs/{run_id}")
+def delete_draft(run_id: str, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    run = db.query(PipelineRun).filter(PipelineRun.id == run_id,
+                                       PipelineRun.user_id == user.id).first()
+    if run is None:
+        raise HTTPException(404, "Pipeline run not found")
+    if run.status != "DRAFT":
+        raise HTTPException(409, "Only a draft can be deleted")
+    for step in list(run.steps):
+        db.delete(step)
+    db.delete(run)
+    db.commit()
+    return {"status": "deleted"}
 
 
 @router.post("/runs/{run_id}/start")

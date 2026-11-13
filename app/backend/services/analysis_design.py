@@ -61,6 +61,11 @@ def validate_design(db: Session, user_id: int, config: dict) -> dict:
     if not isinstance(ids, list) or not all(isinstance(x, int) for x in ids):
         raise ValueError("Select at least one contrast")
     context = contrast_context(db, user_id, ids)
+    return validate_design_context(context, config)
+
+
+def validate_design_context(context: dict, config: dict) -> dict:
+    """Validate a proposed model before contrast rows are written to the database."""
     samples = sorted(context["samples"])
     if len(samples) < 3:
         raise ValueError("At least three samples are required to estimate dispersion")

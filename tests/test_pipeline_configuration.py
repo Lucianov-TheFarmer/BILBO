@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from fastapi import HTTPException
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -18,7 +19,11 @@ from backend.db.database import Base  # noqa: E402
 from backend.db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, Stage, User  # noqa: E402
 from backend.services.analysis_design import validate_design  # noqa: E402
 from backend.tasks.orchestrator import _advance_run  # noqa: E402
-from backend.routes.pipeline_runs import PipelinePlan, SamplePlan, create_run, start_run  # noqa: E402
+from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run,
+                                          update_draft, delete_draft)  # noqa: E402
+from backend.routes.pipeline_runs import options as pipeline_options  # noqa: E402
+from backend.routes.contrast_design import (ContrastConfiguration, preview_configuration,
+                                            save_configuration)  # noqa: E402
 
 
 class PipelineConfigurationTest(unittest.TestCase):
@@ -128,6 +133,49 @@ class PipelineConfigurationTest(unittest.TestCase):
                 self.db.commit()
                 _advance_run(self.db, run)
                 self.assertEqual(["trimming", "alignment"], dispatched)
+
+    def test_pending_drive_sample_can_be_selected_for_inline_model(self):
+        for name in ("D3", "C2", "C3"):
+            self.db.add(SampleStage(user_id=7, stage_id=1, sra_code=name,
+                                    name=name, status="PENDING"))
+        self.db.add(PipelineJob(id="drive-D2", user_id=7, stage="drive_import",
+                                status="PENDING", payload={"base": "D2", "files": [
+                                    {"mate": 1}, {"mate": 2}]}))
+        self.db.commit()
+        plan = ContrastConfiguration(known_ids=[80], contrasts=[{
+            "id": 80, "group_1": "Seca", "group_2": "Controle",
+            "repetitions_1": ["D2", "D3"], "repetitions_2": ["C2", "C3"],
+        }], variables=[{"name": "bloco", "kind": "categorical",
+                       "values": {"D2": "2", "D3": "3", "C2": "2", "C3": "3"}}])
+        self.assertIn("D2", pipeline_options(self.db, self.db.get(User, 7))["samples"])
+        preview = preview_configuration(plan, self.db, self.db.get(User, 7))
+        self.assertEqual("~0+group+bloco", preview["formula"])
+        saved = save_configuration(plan, self.db, self.db.get(User, 7))
+        self.assertEqual([80], saved["config"]["contrast_ids"])
+        save_configuration(plan, self.db, self.db.get(User, 7))
+        self.assertEqual(1, self.db.query(SampleStage).filter_by(stage_id=8, user_id=7).count())
+
+    def test_empty_contrast_preview_has_useful_error(self):
+        with self.assertRaises(HTTPException) as raised:
+            preview_configuration(ContrastConfiguration(contrasts=[]),
+                                  self.db, self.db.get(User, 7))
+        self.assertEqual(422, raised.exception.status_code)
+        self.assertIn("Add at least one contrast", raised.exception.detail)
+
+    def test_draft_can_be_edited_and_deleted_without_starting(self):
+        user = self.db.get(User, 7)
+        first = PipelinePlan(name="First", samples=[SamplePlan(name="D2")],
+                             stages={"qc_raw": True})
+        draft = create_run(first, self.db, user)
+        changed = PipelinePlan(name="Updated", samples=[SamplePlan(name="D2")],
+                               stages={"qc_raw": True, "trimming": True})
+        updated = update_draft(draft["id"], changed, self.db, user)
+        self.assertEqual(draft["id"], updated["id"])
+        self.assertEqual("Updated", updated["config"]["name"])
+        self.assertEqual(3, len(updated["steps"]))
+        self.assertEqual("DRAFT", updated["status"])
+        self.assertEqual("deleted", delete_draft(draft["id"], self.db, user)["status"])
+        self.assertIsNone(self.db.get(PipelineRun, draft["id"]))
 
 
 if __name__ == "__main__":
