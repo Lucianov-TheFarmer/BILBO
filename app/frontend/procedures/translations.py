@@ -989,6 +989,26 @@ for _language, _entries in _PIPELINE_REFINEMENTS.items():
 for _language, _entries in _ADDITIONAL_UI.items():
     TRADUCOES[_language].update(_entries)
 
+_PIPELINE_MONITOR = {
+    "pt": {
+        "pipeline_progress_title": "Pipeline",
+        "pipeline_progress_summary": "{status} · {done}/{total} etapas concluídas · {running} em execução · {queued} na fila · {waiting} aguardando · {failed} falharam",
+        "pipeline_progress_unavailable": "Não foi possível atualizar o progresso: {error}",
+    },
+    "en": {
+        "pipeline_progress_title": "Pipeline",
+        "pipeline_progress_summary": "{status} · {done}/{total} steps done · {running} running · {queued} queued · {waiting} waiting · {failed} failed",
+        "pipeline_progress_unavailable": "Could not update progress: {error}",
+    },
+    "es": {
+        "pipeline_progress_title": "Pipeline",
+        "pipeline_progress_summary": "{status} · {done}/{total} etapas completadas · {running} en ejecución · {queued} en cola · {waiting} esperando · {failed} fallidas",
+        "pipeline_progress_unavailable": "No se pudo actualizar el progreso: {error}",
+    },
+}
+for _language, _entries in _PIPELINE_MONITOR.items():
+    TRADUCOES[_language].update(_entries)
+
 
 def t(key, lang="pt"):
     if lang not in TRADUCOES:

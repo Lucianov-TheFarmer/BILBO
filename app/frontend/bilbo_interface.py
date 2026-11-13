@@ -11,6 +11,7 @@ from .procedures.alignment import show_alignment_modal, show_genomes_modal, crea
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
 from .procedures.contrasts import show_contrasts_modal
 from .procedures.pipeline_config import show_pipeline_config_modal
+from .procedures.pipeline_monitor import monitor_pipeline
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
 from .procedures.deg import run_deg_analysis, show_deg_results
@@ -243,7 +244,10 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     async def refresh_stage_counts():
         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
+    current_stage = {"id": 1}
+
     async def atualizar_tabela_por_estagio_handler(e, stage_id):
+        current_stage["id"] = stage_id
         logger.info(f"Alterando para o estágio: {stage_id}")
         # Estágios 7, 9 e 10 possuem visualizações próprias.
         if stage_id not in (7, 9, 10):
@@ -582,6 +586,23 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     )
     page.container_terminal = container_terminal
 
+    async def refresh_pipeline_tables():
+        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+        stage_id = current_stage["id"]
+        if stage_id == 1:
+            await atualizar_tabela_por_estagio(None, page, token, 1, tabela_amostras_local, user_id)
+        elif stage_id == 2:
+            await update_quality_analysis_table(page, token, user_id)
+        elif stage_id == 3:
+            await update_trimmagem_table(page, token)
+        elif stage_id == 4:
+            await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita,
+                                                        tabela_amostras_local, atualizar_tabela, user_id)
+        elif stage_id == 5:
+            await update_tabela_alinhamento(page, token, user_id)
+        elif stage_id == 6:
+            await update_tabela_quantificacao(page, token, user_id)
+
     container_pre_visualizacao = ft.Container(
         expand=1,
         key="container_preview",
@@ -707,3 +728,4 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 page.update()
 
     page.run_task(connect_websocket)
+    page.run_task(monitor_pipeline, page, token, container_terminal, refresh_pipeline_tables)
