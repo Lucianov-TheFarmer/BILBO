@@ -132,6 +132,18 @@ services:
     container_name: bioinfo-samples-worker
     command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=3 --queues=samples --hostname=samples@%h
 
+  trimming-worker:
+    <<: *pipeline_worker
+    image: bilbo-worker
+    container_name: bioinfo-trimming-worker
+    command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --loglevel=info --concurrency=2 --queues=trimming --hostname=trimming@%h
+
+  pipeline-scheduler:
+    <<: *pipeline_worker
+    image: bilbo-worker
+    container_name: bioinfo-pipeline-scheduler
+    command: conda run --no-capture-output -n bioinfo celery -A backend.tasks.celery_app.celery_app worker --beat --loglevel=info --concurrency=1 --queues=pipeline --hostname=pipeline@%h
+
   quality-worker:
     <<: *pipeline_worker
     image: bilbo-worker

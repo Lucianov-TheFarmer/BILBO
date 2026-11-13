@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import asyncio
@@ -253,7 +254,7 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
         selected_genome[0] = e.control.value
 
     genome_dropdown = ft.Dropdown(
-        label="Genoma de referência",
+        label=t("reference_genome", page.session.get("lang") or "pt"),
         options=genome_options,
         value=genome_options[0].key,
         on_change=on_genome_change,
@@ -380,7 +381,7 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
             await log_message(page, f"Erro ao executar DEG: {ex}")
 
     dlg_modal_deg = ft.AlertDialog(
-        title=ft.Text("Análise DEG"),
+        title=ft.Text(t("deg_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.Column(
                 controls=[
@@ -391,7 +392,7 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
                         controls=[
                             ft.DataTable(
                                 columns=[
-                                    ft.DataColumn(ft.Text("Contraste", expand=True)),
+                                    ft.DataColumn(ft.Text(t("contrast_label", page.session.get("lang") or "pt"), expand=True)),
                                     ft.DataColumn(select_all_checkbox),
                                 ],
                                 rows=data_rows,
@@ -453,7 +454,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
                                         ft.Container(
                                             expand=True,
                                             content=ft.Text(
-                                                "Nenhum dado disponível nesta aba.",
+                                                t("deg_empty_sheet", page.session.get("lang") or "pt"),
                                                 color="red",
                                                 size=16,
                                                 weight=ft.FontWeight.BOLD,
@@ -766,7 +767,7 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                                         filename = fname.format(sheet=sheet_name)
                                         break
                                 if not filename:
-                                    return ft.Text("Figura não encontrada.", color="red")
+                                    return ft.Text(t("deg_figure_missing", page.session.get("lang") or "pt"), color="red")
                                 img_path = os.path.join(deg_dir, filename)
                                 if not os.path.exists(img_path):
                                     return ft.Text(f"Figura não encontrada: {filename}", color="red")
@@ -862,7 +863,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
                         columns=[
                             ft.DataColumn(ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD, width=160)),
                             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
-                            ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+                            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                         ],
                         rows=[],
                         expand=True,
@@ -1035,13 +1036,13 @@ async def show_deg_results(page, token, user_id, container_amostras):
                         confirmation = ft.AlertDialog(
                             modal=True,
                             title=ft.Text(
-                                "Excluir abas?"
+                                t("deg_delete_sheets", page.session.get("lang") or "pt")
                             ),
                             content=ft.Column(
                                 tight=True,
                                 controls=[
                                     ft.Text(
-                                        "Esta operação removerá as abas:"
+                                        t("deg_delete_sheets_info", page.session.get("lang") or "pt")
                                     ),
                                     ft.Text(
                                         ", ".join(selected),
@@ -1061,7 +1062,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                     on_click=cancel_delete,
                                 ),
                                 ft.ElevatedButton(
-                                    "Excluir",
+                                    t("delete_selected", page.session.get("lang") or "pt"),
                                     icon="delete",
                                     color="white",
                                     bgcolor="red",

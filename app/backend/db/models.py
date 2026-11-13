@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 
 from ..schemas.common import PipelineStatus
@@ -94,3 +94,42 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User")
+
+
+class AnalysisDesign(Base):
+    __tablename__ = "analysis_designs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    config = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(32), nullable=False, index=True)
+    config = Column(JSON, nullable=False)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    steps = relationship("PipelineStep", back_populates="run", cascade="all, delete-orphan")
+
+
+class PipelineStep(Base):
+    __tablename__ = "pipeline_steps"
+    __table_args__ = (UniqueConstraint("run_id", "sample", "stage", name="uq_pipeline_step"),)
+
+    id = Column(String(64), primary_key=True)
+    run_id = Column(String(64), ForeignKey("pipeline_runs.id"), nullable=False, index=True)
+    sample = Column(String(181), nullable=False)
+    stage = Column(String(64), nullable=False)
+    status = Column(String(32), nullable=False, index=True)
+    job_id = Column(String(64), ForeignKey("pipeline_jobs.id"))
+    error_message = Column(Text)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    run = relationship("PipelineRun", back_populates="steps")

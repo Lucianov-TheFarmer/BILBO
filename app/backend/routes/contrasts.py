@@ -11,6 +11,7 @@ router = APIRouter()
 def get_completed_samples(
     stage_id: int = 6,
     status: str = "COMPLETED",
+    include_early: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -20,14 +21,21 @@ def get_completed_samples(
     status_values = [status]
     if status.upper() == "COMPLETED":
         status_values.extend(["Completed"])
-    samples = db.query(SampleStage).filter(
-        SampleStage.stage_id == stage_id,
-        SampleStage.user_id == current_user.id,
-        SampleStage.status.in_(status_values),
-    ).all()
+    if include_early:
+        rows = db.query(SampleStage).filter(
+            SampleStage.stage_id.in_([1, 6]), SampleStage.user_id == current_user.id,
+        ).order_by(SampleStage.stage_id.desc()).all()
+        samples = list({row.sra_code: row for row in reversed(rows) if row.sra_code}.values())
+    else:
+        samples = db.query(SampleStage).filter(
+            SampleStage.stage_id == stage_id,
+            SampleStage.user_id == current_user.id,
+            SampleStage.status.in_(status_values),
+        ).all()
     if not samples:
         raise HTTPException(status_code=404, detail="No samples found.")
-    return [{"id": sample.id, "name": sample.name} for sample in samples]
+    return [{"id": sample.id, "name": sample.sra_code if include_early else sample.name}
+            for sample in samples]
 
 @router.get("/contrasts/")
 def list_contrasts(
@@ -81,7 +89,9 @@ async def save_contrasts(
 
     id_to_sra = {}
     if all_ids:
-        samples = db.query(SampleStage).filter(SampleStage.id.in_(all_ids)).all()
+        samples = db.query(SampleStage).filter(SampleStage.id.in_(all_ids),
+                                               SampleStage.user_id == user_id,
+                                               SampleStage.stage_id.in_([1, 6])).all()
         id_to_sra = {str(sample.id): sample.sra_code for sample in samples}
 
     for contrast in contrasts:

@@ -49,9 +49,9 @@ def create_tabela_quantificacao(page, token):
     tabela_quantificacao = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text("Log", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_quantification)),
         ],
@@ -133,9 +133,9 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
     tabela_quantificacao_modal = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
         ],
         rows=[],
@@ -153,10 +153,10 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
     tabela_genomas_referencia_modal = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Selecionar")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_select", page.session.get("lang") or "pt"))),
         ],
         rows=[],
     )
@@ -310,21 +310,21 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
             logger.error(f"Erro ao iniciar quantificação: {e}", exc_info=True)
 
     dlg_modal_quantificacao = ft.AlertDialog(
-        title=ft.Text("Iniciar Quantificação"),
+        title=ft.Text(t("quant_start", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
-                    ft.Text("Amostras Alinhadas", weight="bold", size=14),
+                    ft.Text(t("quant_aligned", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_quantificacao_modal,
                     ft.Container(height=10),
                     ft.Divider(height=1, thickness=1, color="black38"),
                     ft.Container(height=10),
-                    ft.Text("Genomas de Referência", weight="bold", size=14),
+                    ft.Text(t("genomes_title", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_genomas_referencia_modal,
                     ft.Container(height=10),
                     ft.Divider(height=1, thickness=1, color="black38"),
                     ft.Container(height=10),
-                    ft.Text("Parâmetros do htseq-count", weight="bold", size=14),
+                    ft.Text(t("quant_params", page.session.get("lang") or "pt"), weight="bold", size=14),
                     ft.Row(
                         controls=[
                             feature_type_field,
@@ -338,7 +338,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
         ),
         actions=[
             ft.TextButton(
-                "Iniciar Quantificação",
+                t("quant_start", page.session.get("lang") or "pt"),
                 on_click=start_quantification,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
             ),
@@ -374,17 +374,17 @@ async def excluir_quantificacao(page, token, user_id, selected_samples, containe
         page.update()
 
     confirmation_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=4,
         multiline=False,
         expand=1,
     )
     dlg_modal_excluir_quantificacao = ft.AlertDialog(
-        title=ft.Text("Confirmar Exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirmation_field,
         actions=[
             ft.TextButton(
-                "Excluir",
+                t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=confirm_delete,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,

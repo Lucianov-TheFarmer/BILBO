@@ -59,7 +59,7 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         page.update()
 
     sra_code_field = ft.TextField(
-        hint_text="Insira um ou mais códigos SRA separados por vírgulas",
+        hint_text=t("sample_sra_hint", page.session.get("lang") or "pt"),
         border_radius=ft.border_radius.all(4),
         multiline=False,
         min_lines=1,
@@ -116,7 +116,7 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
             logger.error(f"Erro ao excluir amostras: {e}", exc_info=True)
 
     confirm_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=ft.border_radius.all(4),
         multiline=False,
         expand=1
@@ -127,10 +127,10 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
             await confirmar_exclusao()
 
     dlg_modal_excluir_amostra = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirm_field,
         actions=[
-            ft.TextButton("Excluir", on_click=confirmar_exclusao_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton(t("delete_selected", page.session.get("lang") or "pt"), on_click=confirmar_exclusao_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER,
     )
@@ -164,6 +164,10 @@ def _get_terminal_listview(page):
     return None
 
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
+    lang = page.session.get("lang") or "pt"
+    for column, key in zip(tabela_amostras.columns,
+                           ("table_identification", "table_size", "table_status")):
+        column.label.value = t(key, lang)
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     if not first_check_done:

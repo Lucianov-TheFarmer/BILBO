@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import asyncio
 import httpx
@@ -14,7 +15,8 @@ async def fetch_samples(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get("http://localhost:8890/contrasts/samples", headers=headers)
+            response = await client.get("http://localhost:8890/contrasts/samples",
+                                        params={"include_early": "true"}, headers=headers)
             response.raise_for_status()
             samples = response.json()
             logger.info(f"Fetched samples: {samples}")
@@ -267,12 +269,12 @@ async def show_contrasts_modal(page, token, user_id):
         left_buttons_row = ft.Row(
             controls=[
                 ft.TextButton(
-                    "Adicionar repetição",
+                    t("contrast_add_rep", page.session.get("lang") or "pt"),
                     on_click=lambda e: run_async(add_repetition_handler(new_row, "left")),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 ),
                 ft.TextButton(
-                    "Limpar repetições",
+                    t("contrast_clear_rep", page.session.get("lang") or "pt"),
                     on_click=lambda e: clear_repetitions(new_row, "left"),
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=10),
@@ -304,12 +306,12 @@ async def show_contrasts_modal(page, token, user_id):
         right_buttons_row = ft.Row(
             controls=[
                 ft.TextButton(
-                    "Adicionar repetição",
+                    t("contrast_add_rep", page.session.get("lang") or "pt"),
                     on_click=lambda e: run_async(add_repetition_handler(new_row, "right")),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 ),
                 ft.TextButton(
-                    "Limpar repetições",
+                    t("contrast_clear_rep", page.session.get("lang") or "pt"),
                     on_click=lambda e: clear_repetitions(new_row, "right"),
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=10),
@@ -593,7 +595,7 @@ async def show_contrasts_modal(page, token, user_id):
         page.update()
 
     dlg_modal_contrasts = ft.AlertDialog(
-        title=ft.Text("Definir Contrastes"),
+        title=ft.Text(t("contrast_define", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
@@ -601,7 +603,7 @@ async def show_contrasts_modal(page, token, user_id):
                     contrast_rows,
                     ft.Container(
                         content=ft.TextButton(
-                            "Adicionar contraste",
+                            t("contrast_add", page.session.get("lang") or "pt"),
                             on_click=add_contrast_handler,
                             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                         ),

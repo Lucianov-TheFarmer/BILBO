@@ -10,6 +10,8 @@ from .procedures.quality_analysis_post_trim import show_quality_analysis_post_tr
 from .procedures.alignment import show_alignment_modal, show_genomes_modal, create_tabela_alinhamento, update_tabela_alinhamento, excluir_alinhamento
 from .procedures.quantification import show_quantification_modal, update_tabela_quantificacao, create_tabela_quantificacao, excluir_quantificacao
 from .procedures.contrasts import show_contrasts_modal
+from .procedures.analysis_design import show_analysis_design_modal
+from .procedures.pipeline_config import show_pipeline_config_modal
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
 from .procedures.deg import run_deg_analysis, show_deg_results
@@ -131,6 +133,12 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
     async def show_contrasts_modal_handler(e):
         await show_contrasts_modal(page, token, user_id)
+
+    async def show_analysis_design_handler(e):
+        await show_analysis_design_modal(page, token)
+
+    async def show_pipeline_config_handler(e):
+        await show_pipeline_config_modal(page, token)
 
 
     async def atualizar_contagem_deg(quantidade):
@@ -326,13 +334,17 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             expand=1,
             spacing=15,
             controls=[
+                ft.Row(controls=[
+                    create_button(t("pipeline_configure", lang), show_pipeline_config_handler, expand=True),
+                    create_button(t("design_title", lang), show_analysis_design_handler, expand=True),
+                ]),
                 ft.DataTable(
                     heading_row_color="primary",
                     data_row_color="surface",
                     border=ft.border.all(0.5, "outline"),
                     columns=[
-                        ft.DataColumn(ft.Text("Stage", weight=ft.FontWeight.BOLD)),
-                        ft.DataColumn(ft.Text("Qty", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
+                        ft.DataColumn(ft.Text(t("stage_label", lang), weight=ft.FontWeight.BOLD)),
+                        ft.DataColumn(ft.Text(t("quantity_label", lang), weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)),
                     ],
                     rows=[
                         ft.DataRow(
@@ -417,7 +429,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                             cells=[
                                 ft.DataCell(
                                     ft.Container(
-                                        content=ft.Text("Contrastes"),
+                                    content=ft.Text(t("menu_contrasts", lang)),
                                         on_click=show_contrasts_modal_handler,
                                     )
                                 ),
@@ -447,7 +459,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Clusterização Semântica"),
+                                    content=ft.Text(t("menu_clustering", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=9)
                                 )),
                                 ft.DataCell(ft.Container(
@@ -460,7 +472,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Container(
-                                    content=ft.Text("Interpretação por LLM"),
+                                    content=ft.Text(t("menu_llm_interpretation", lang)),
                                     on_click=partial(atualizar_tabela_por_estagio_handler, stage_id=10)
                                 )),
                                 ft.DataCell(ft.Container(

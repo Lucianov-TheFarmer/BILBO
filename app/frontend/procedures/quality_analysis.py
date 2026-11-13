@@ -22,10 +22,10 @@ def create_tabela_amostras_qc(page, token):
     tabela_amostras_qc = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_qc)),
-            ft.DataColumn(ft.Text("Ações", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight="bold")),
         ],
         rows=[],
     )
@@ -138,15 +138,15 @@ async def delete_quality_analysis_results(page, token, container_menu_direita, t
         page.update()
 
     dlg_modal_excluir_analise = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=ft.TextField(
-            hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
+            hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
             border_radius=4,
             multiline=False,
             expand=1
         ),
         actions=[
-            ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton(t("delete_selected", page.session.get("lang") or "pt"), on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
         actions_alignment="center",
     )
@@ -234,9 +234,9 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
     tabela_analise_qualidade = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
         ],
         rows=[
@@ -255,7 +255,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         empty_message = ft.Column(
             controls=[
                 ft.Divider(height=1, thickness=1, color="black38"),
-                ft.Text("Nenhuma amostra disponível para análise de qualidade", size=16, text_align="center"),
+                ft.Text(t("qc_empty", page.session.get("lang") or "pt"), size=16, text_align="center"),
                 ft.Divider(height=1, thickness=1, color="black38"),
             ],
             alignment="center",
@@ -267,7 +267,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         iniciar_analise_disabled = False
 
     dlg_modal_analise_qualidade = ft.AlertDialog(
-        title=ft.Text("Análise de Qualidade"),
+        title=ft.Text(t("qc_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 spacing=10,
@@ -280,7 +280,7 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
         actions=[
             ft.Container(
                 content=ft.TextButton(
-                    "Iniciar análise de qualidade",
+                    t("qc_start", page.session.get("lang") or "pt"),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=200,
                     height=40,

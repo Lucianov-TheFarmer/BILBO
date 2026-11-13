@@ -1,6 +1,7 @@
 import asyncio
 from urllib.parse import quote
 
+from .translations import t
 import flet as ft
 import httpx
 
@@ -193,7 +194,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     results_select_all = ft.Checkbox(
         value=False,
-        tooltip="Selecionar todos os resultados",
+        tooltip=t("llm_select_all_results", page.session.get("lang") or "pt"),
         on_change=_toggle_all_results,
     )
 
@@ -256,14 +257,14 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         columns=[
             ft.DataColumn(
                 ft.Text(
-                    "Contraste",
+                    t("contrast_label", page.session.get("lang") or "pt"),
                     weight=ft.FontWeight.BOLD,
                 )
             ),
             ft.DataColumn(results_select_all),
             ft.DataColumn(
                 ft.Text(
-                    "Ações",
+                    t("table_actions", page.session.get("lang") or "pt"),
                     weight=ft.FontWeight.BOLD,
                 )
             ),
@@ -362,12 +363,12 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
         confirmation = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Excluir resultados?"),
+            title=ft.Text(t("llm_delete_results", page.session.get("lang") or "pt")),
             content=ft.Column(
                 tight=True,
                 controls=[
                     ft.Text(
-                        "Serão removidas as interpretações:"
+                        t("llm_delete_info", page.session.get("lang") or "pt")
                     ),
                     ft.Text(
                         ", ".join(selected),
@@ -385,7 +386,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     on_click=_cancel_delete,
                 ),
                 ft.ElevatedButton(
-                    "Excluir",
+                    t("delete_selected", page.session.get("lang") or "pt"),
                     icon="delete",
                     color="white",
                     bgcolor="red",
@@ -576,7 +577,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 page.update()
 
             select_all_llm = ft.Checkbox(
-                label="Selecionar todos",
+                label=t("llm_select_all", page.session.get("lang") or "pt"),
                 value=False,
                 on_change=_toggle_all_llm,
             )
@@ -687,7 +688,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 page.update()
 
             dlg = ft.AlertDialog(
-                title=ft.Text("Iniciar Interpretação por LLM"),
+                title=ft.Text(t("llm_start", page.session.get("lang") or "pt")),
                 content=ft.Column(
                     controls=[
                         select_all_llm,

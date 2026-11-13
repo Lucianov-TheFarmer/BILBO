@@ -1,5 +1,6 @@
 import asyncio
 
+from .translations import t
 import flet as ft
 import httpx
 
@@ -224,11 +225,11 @@ async def show_clustering(
             page.update()
 
         dlg = ft.AlertDialog(
-            title=ft.Text("Iniciar Clusterização Semântica"),
+            title=ft.Text(t("clustering_start_semantic", page.session.get("lang") or "pt")),
             content=ft.Column(controls=checkboxes),
             actions=[
                 ft.TextButton("Cancelar", on_click=_cancel),
-                ft.ElevatedButton("Iniciar Clusterização", on_click=_confirm_start),
+                ft.ElevatedButton(t("clustering_start", page.session.get("lang") or "pt"), on_click=_confirm_start),
             ],
             actions_alignment="end",
         )
@@ -366,7 +367,7 @@ async def show_clustering(
             dialog = ft.AlertDialog(
                 modal=True,
                 title=ft.Text(
-                    "Excluir clusterizações"
+                    t("clustering_delete", page.session.get("lang") or "pt")
                 ),
                 content=ft.Text(
                     (
@@ -381,7 +382,7 @@ async def show_clustering(
                         on_click=_cancel_delete,
                     ),
                     ft.ElevatedButton(
-                        "Excluir",
+                        t("delete_selected", page.session.get("lang") or "pt"),
                         on_click=_confirm_delete,
                     ),
                 ],
@@ -544,7 +545,7 @@ async def show_clustering(
             columns=[
                 ft.DataColumn(
                     ft.Text(
-                        "Contraste",
+                        t("contrast_label", page.session.get("lang") or "pt"),
                         weight=ft.FontWeight.BOLD,
                     )
                 ),

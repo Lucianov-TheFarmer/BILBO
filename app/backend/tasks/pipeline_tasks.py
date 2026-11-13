@@ -446,6 +446,8 @@ def execute_pipeline_job(self, job_id: str):
             _handle_quality_analysis(db, job_id, user_id, payload)
         elif stage == "quality_analysis_post_trim":
             _handle_quality_analysis_post_trim(db, job_id, user_id, payload)
+        elif stage == "trimming":
+            _handle_trimming(db, job_id, user_id, payload)
         elif stage == "alignment":
             _handle_alignment(db, job_id, user_id, payload)
         elif stage == "quantification":
@@ -532,6 +534,7 @@ def enqueue_pipeline_job(job_id: str, *, queue: Optional[str] = None) -> None:
                 "quantification": "samples",
                 "quality_analysis": "quality",
                 "quality_analysis_post_trim": "quality",
+                "trimming": "trimming",
             }.get(job.stage)
         finally:
             db.close()
@@ -722,6 +725,64 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
     )
 
 
+def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
+    sample = ensure_safe_component(str(payload["sample"]), "sample")
+    params = payload.get("params") or {}
+    adapter = dict(params.get("illumina_clip") or {})
+    adapter_path = None
+    if adapter.get("Arquivo adaptadores") == "Personalizado":
+        content = str(adapter.pop("Conteudo personalizado", "") or "")
+        if not content.startswith(">") or len(content) > 100_000:
+            raise ValueError("Invalid custom adapter FASTA")
+        adapter_path = _abs_users(str(user_id), "pipeline_adapters", f"{job_id}.fa")
+        adapter_path.parent.mkdir(parents=True, exist_ok=True)
+        adapter_path.write_text(content, encoding="utf-8")
+        adapter["Arquivo adaptadores"] = str(adapter_path)
+    defaults = {"Arquivo adaptadores": "TruSeq3-PE.fa", "Seed mismatches": "2",
+                "Threshold palindromo": "30", "Threshold simples": "10",
+                "Comprimento minimo adaptador": "8"}
+    defaults.update(adapter)
+    window = {"Tamanho janela": "4", "Qualidade minima": "15"}
+    window.update(params.get("sliding_window") or {})
+    max_info = {"Comprimento alvo": "40", "Strictness": "0.5"}
+    max_info.update(params.get("max_info") or {})
+    try:
+        rc, stdout, stderr = _run([
+            "bash", "/app/backend/scripts/trimmagem.sh", sample,
+            str(params.get("threads", 1)), str(params.get("phred", "autodetect")),
+            json.dumps(defaults), json.dumps(window), json.dumps(max_info),
+            str(params.get("leading", 3)), str(params.get("trailing", 3)),
+            str(params.get("crop") or ""), str(params.get("headcrop") or ""),
+            str(params.get("minlen", 36)), str(params.get("avgqual") or ""),
+            str(_abs_users(str(user_id), "samples")),
+            str(_abs_users(str(user_id), "trimmed")),
+        ], timeout=172800)
+    finally:
+        if adapter_path:
+            adapter_path.unlink(missing_ok=True)
+    outputs = [p for p in (
+        _abs_users(str(user_id), "trimmed", f"{sample}_1_trimmed.fastq.gz"),
+        _abs_users(str(user_id), "trimmed", f"{sample}_2_trimmed.fastq.gz"),
+        _abs_users(str(user_id), "trimmed", f"{sample}_trimmed.fastq.gz"),
+    ) if p.is_file() and p.stat().st_size > 0]
+    if rc == 0 and not outputs:
+        rc = 4
+    for path in outputs:
+        row = db.query(SampleStage).filter(SampleStage.user_id == user_id,
+            SampleStage.stage_id == 3, SampleStage.name == path.name).first()
+        if row is None:
+            row = SampleStage(user_id=user_id, stage_id=3, name=path.name, sra_code=sample)
+            db.add(row)
+        row.status = "COMPLETED" if rc == 0 else "FAILED"
+        row.size = f"{path.stat().st_size / 1024**2:.2f} MB"
+    db.commit()
+    _finalize_job(db, job_id=job_id, stage="trimming", user_id=user_id,
+        status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
+        result={"files": [p.name for p in outputs], "stdout": stdout[-2000:]},
+        error_message=None if rc == 0 else (stderr[-2000:] or f"Trimming failed (rc={rc})"),
+        exit_code=rc)
+
+
 def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sample = ensure_safe_component(str(payload["sample"]), "sample")
     genome_dir = str(Path(str(payload["genome_dir"])).resolve())
@@ -863,9 +924,41 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
 
 
 def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
-    preprocess_dir = _abs_users(str(user_id), "preprocess")
-    deg_dir = _abs_users(str(user_id), "DEG")
+    run_id = payload.get("run_id")
+    if run_id:
+        run_root = _abs_users(str(user_id), "pipelines", ensure_safe_component(str(run_id), "run_id"))
+        preprocess_dir = run_root / "preprocess"
+        deg_dir = run_root / "DEG"
+    else:
+        preprocess_dir = _abs_users(str(user_id), "preprocess")
+        deg_dir = _abs_users(str(user_id), "DEG")
     deg_dir.mkdir(parents=True, exist_ok=True)
+
+    # A job carries a snapshot of its model; stale metadata from an earlier run
+    # must never silently affect a new analysis.
+    metadata_path = preprocess_dir / "design_variables.tsv"
+    terms_path = preprocess_dir / "design_terms.tsv"
+    design_config = payload.get("design")
+    if design_config:
+        preview = payload.get("design_snapshot")
+        if not preview:
+            from ..services.analysis_design import validate_design
+            preview = validate_design(db, user_id, design_config)
+        variables = preview["variables"]
+        samples = sorted(preview["samples"])
+        if variables:
+            metadata_lines = ["\t".join(["sample", *[v["name"] for v in variables]])]
+            for sample in samples:
+                metadata_lines.append("\t".join([sample, *[str(v["values"][sample]) for v in variables]]))
+            metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+            terms_path.write_text("name\tkind\n" + "\n".join(
+                f"{v['name']}\t{v['kind']}" for v in variables) + "\n", encoding="utf-8")
+        else:
+            metadata_path.unlink(missing_ok=True)
+            terms_path.unlink(missing_ok=True)
+    else:
+        metadata_path.unlink(missing_ok=True)
+        terms_path.unlink(missing_ok=True)
 
     deg_script = "/app/backend/scripts/DEG.R"
     gff_annotation_script = "/app/backend/scripts/annotate_deg_with_gff.py"

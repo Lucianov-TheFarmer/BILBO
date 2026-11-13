@@ -15,6 +15,7 @@ from .db.database import SessionLocal, engine
 from .db.models import Base, PipelineJob, User
 from .routes import (
     alignment,
+    analysis_design,
     auth,
     contrasts,
     deg,
@@ -24,6 +25,7 @@ from .routes import (
     quality_analysis_post_trim,
     reference_import,
     quantification,
+    pipeline_runs,
     results,
     samples,
     trimmagem,
@@ -62,6 +64,8 @@ app.include_router(quality_analysis.router, tags=["quality_analysis"])
 app.include_router(trimmagem.router, tags=["trimmagem"])
 app.include_router(quality_analysis_post_trim.router, tags=["quality_analysis_post_trim"])
 app.include_router(alignment.router, tags=["alignment"])
+app.include_router(analysis_design.router, tags=["analysis_design"])
+app.include_router(pipeline_runs.router, tags=["pipeline"])
 app.include_router(quantification.router, tags=["quantification"])
 app.include_router(contrasts.router, tags=["contrasts"])
 app.include_router(preprocess.router, tags=["preprocess"])

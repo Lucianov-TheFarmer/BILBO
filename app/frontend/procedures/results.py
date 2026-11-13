@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import asyncio
@@ -85,7 +86,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     table = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("Barplots salvos")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
             ft.DataRow([
@@ -143,7 +144,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
     table = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("Diagramas de Venn salvos")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
             ft.DataRow([
@@ -188,7 +189,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
     sheets = await fetch_deg_sheets(token, user_id)
     selected = set()
     checkboxes = []
-    title_field = ft.TextField(label="Título do Barplot", width=350)
+    title_field = ft.TextField(label=t("results_barplot_title", page.session.get("lang") or "pt"), width=350)
     divider = ft.Divider(height=1, thickness=1, color="black")
 
     def on_select_all_change(e):
@@ -236,7 +237,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
 
     columns = [
         ft.DataColumn(ft.Text("Aba")),
-        ft.DataColumn(select_all_checkbox if show_select_all else ft.Text("Selecionar")),
+        ft.DataColumn(select_all_checkbox if show_select_all else ft.Text(t("table_select", page.session.get("lang") or "pt"))),
     ]
 
     dlg_modal = ft.AlertDialog(
@@ -279,7 +280,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
 async def show_barplots_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
+            dlg_modal.title = ft.Text(t("results_title_required", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         result = await create_barplot_file(token, user_id, title, contrasts)
@@ -303,11 +304,11 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
 async def show_venn_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
+            dlg_modal.title = ft.Text(t("results_title_required", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         if len(contrasts) < 2 or len(contrasts) > 4:
-            dlg_modal.title = ft.Text("Selecione entre 2 e 4 contrastes!", color="red")
+            dlg_modal.title = ft.Text(t("results_select_contrasts", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         result = await create_venn_file(token, user_id, title, contrasts)
@@ -455,7 +456,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
 
             delete_button = ft.IconButton(
                 icon="delete",
-                tooltip="Excluir",
+                tooltip=t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=on_delete_click
             )
 
@@ -480,7 +481,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
             table = ft.DataTable(
                 columns=[
                     ft.DataColumn(ft.Text("Nome do Heatmap", weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                 ],
                 rows=rows,
                 # border=ft.border.all(1, ft.colors.OUTLINE),

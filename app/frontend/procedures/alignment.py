@@ -64,9 +64,9 @@ def create_tabela_alinhamento(page, token):
     tabela_alinhamento = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text("Log", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),
         ],
@@ -201,17 +201,17 @@ async def excluir_alinhamento(page, token, user_id, selected_samples, container_
         page.update()
 
     confirmation_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir os alinhamentos selecionados.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=4,
         multiline=False,
         expand=1,
     )
     dlg_modal_excluir_alinhamento = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirmation_field,
         actions=[
             ft.TextButton(
-                "Excluir",
+                t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=confirm_delete,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,
@@ -248,9 +248,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
     tabela_trimmados = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmados)),
         ],
         rows=[],
@@ -265,9 +265,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
     tabela_genomas_referencia = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Text("")),
         ],
         rows=[],
@@ -361,17 +361,17 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
         await iniciar_alinhamento(page, token, user_id, selected_samples, selected_genomes[0], params, atualizar_tabela, container_menu_direita, tabela_amostras_local)
 
     dlg_modal_alignment = ft.AlertDialog(
-        title=ft.Text("Configurar Alinhamento"),
+        title=ft.Text(t("align_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
-                    ft.Text("Amostras Trimmadas", weight="bold", size=14),
+                    ft.Text(t("align_trimmed", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_trimmados,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Genomas de Referência", weight="bold", size=14),
+                    ft.Text(t("genomes_title", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_genomas_referencia,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Parâmetros adicionais do STAR", weight="bold", size=14),
+                    ft.Text(t("align_star_params", page.session.get("lang") or "pt"), weight="bold", size=14),
                     ft.Row(
                         controls=[
                             ft.Column(controls=[threads_field, out_filter_type_field, out_filter_multimap_field, align_sj_overhang_min_field, align_sjdb_overhang_min_field], spacing=20, horizontal_alignment="center"),
@@ -384,7 +384,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
             ),
             width=900,
         ),
-        actions=[ft.TextButton("Iniciar Alinhamento", on_click=start_alignment)],
+        actions=[ft.TextButton(t("align_start", page.session.get("lang") or "pt"), on_click=start_alignment)],
         actions_alignment="center",
     )
 
@@ -494,11 +494,11 @@ async def show_genomes_modal(page, token, user_id):
     def open_confirmation_modal(accession):
         global dlg_modal_excluir_genoma
         dlg_modal_excluir_genoma = ft.AlertDialog(
-            title=ft.Text("Confirmar exclusão"),
-            content=ft.TextField(hint_text="Digite 'Confirmar' para excluir."),
+            title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
+            content=ft.TextField(hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt")),
             actions=[
                 ft.TextButton(
-                    "Excluir",
+                    t("delete_selected", page.session.get("lang") or "pt"),
                     on_click=lambda e: asyncio.run(delete_genome(accession)),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 ),
@@ -510,10 +510,10 @@ async def show_genomes_modal(page, token, user_id):
     tabela_genomas_referencia = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[],
     )
@@ -599,13 +599,13 @@ async def show_genomes_modal(page, token, user_id):
     )
 
     dlg_modal_genomas = ft.AlertDialog(
-        title=ft.Text("Genomas de Referência"),
+        title=ft.Text(t("genomes_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
                     tabela_genomas_referencia,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Buscar genomas disponíveis", weight="bold", size=14),
+                    ft.Text(t("genomes_search", page.session.get("lang") or "pt"), weight="bold", size=14),
                     form_layout,
                     tabela_genomas_disponiveis,
                 ],

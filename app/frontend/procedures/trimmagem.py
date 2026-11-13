@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import logging
@@ -82,9 +83,9 @@ def create_tabela_amostras_trimmadas(page, token):
     tabela_amostras_trimmadas = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmadas)),
         ],
         rows=[],
@@ -180,16 +181,16 @@ async def delete_trimmed_samples(page, token, tabela_amostras_trimmadas, contain
         page.update()
 
     dlg_modal_excluir_trimmagem = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=ft.TextField(
-            hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+            hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
             border_radius=4,
             multiline=False,
             expand=1,
         ),
         actions=[
             ft.TextButton(
-                "Excluir",
+                t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=confirm_delete,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,
@@ -216,7 +217,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         empty_message = ft.Column(
             controls=[
                 ft.Divider(height=1, thickness=1, color="black38"),
-                ft.Text("Nenhuma amostra disponível para trimmagem", style=ft.TextStyle(size=16), text_align="center"),
+                ft.Text(t("trim_empty", page.session.get("lang") or "pt"), style=ft.TextStyle(size=16), text_align="center"),
                 ft.Divider(height=1, thickness=1, color="black38"),
             ],
             alignment="center",
@@ -693,9 +694,9 @@ def create_tabela_selecao_trimmagem(page, token):
     tabela_selecao_trimmagem = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_selecao)),
         ],
         rows=[],

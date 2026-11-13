@@ -12,8 +12,9 @@ import pandas as pd
 
 from ..db.database import get_db
 from ..core.settings import settings
-from ..db.models import PipelineJob, SampleStage, User
+from ..db.models import AnalysisDesign, PipelineJob, SampleStage, User
 from ..services.job_service import audit, create_job
+from ..services.analysis_design import validate_design
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
@@ -31,6 +32,17 @@ async def run_deg(
     user_id = current_user.id
     contrast_ids = data.get("contrast_ids", [])
     genome_accession = data.get("genome_accession")
+    if db.query(PipelineJob).filter(PipelineJob.user_id == user_id, PipelineJob.stage == "deg",
+                                    PipelineJob.status.in_(["PENDING", "RUNNING"])).first():
+        raise HTTPException(409, "A DEG analysis is already running")
+    design_row = db.query(AnalysisDesign).filter(AnalysisDesign.user_id == user_id).first()
+    design = None
+    if design_row and set(design_row.config.get("contrast_ids") or []) == set(contrast_ids):
+        try:
+            validate_design(db, user_id, design_row.config)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        design = design_row.config
     logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids} e genoma {genome_accession}")
 
     preprocess_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
@@ -69,7 +81,7 @@ async def run_deg(
         db,
         stage="deg",
         user_id=user_id,
-        payload={"contrast_ids": contrast_ids, "genome_accession": genome_accession},
+        payload={"contrast_ids": contrast_ids, "genome_accession": genome_accession, "design": design},
     )
     audit(
         db,

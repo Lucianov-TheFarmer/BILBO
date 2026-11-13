@@ -7,7 +7,8 @@ celery_app = Celery(
     "bilbo",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["backend.tasks.pipeline_tasks", "backend.tasks.drive_import", "backend.tasks.reference_import"],
+    include=["backend.tasks.pipeline_tasks", "backend.tasks.drive_import", "backend.tasks.reference_import",
+             "backend.tasks.orchestrator"],
 )
 
 celery_app.conf.update(
@@ -21,7 +22,10 @@ celery_app.conf.update(
     task_annotations={"pipeline.execute": {"max_retries": 2}},
     broker_connection_retry_on_startup=True,
     timezone="UTC",
+    beat_schedule={"pipeline-reconcile": {"task": "pipeline.reconcile_all", "schedule": 10.0,
+                                          "options": {"queue": "pipeline"}}},
 )
 
 # Ensure task modules are imported when worker boots.
-celery_app.conf.imports = ("backend.tasks.pipeline_tasks", "backend.tasks.drive_import", "backend.tasks.reference_import")
+celery_app.conf.imports = ("backend.tasks.pipeline_tasks", "backend.tasks.drive_import",
+                           "backend.tasks.reference_import", "backend.tasks.orchestrator")
