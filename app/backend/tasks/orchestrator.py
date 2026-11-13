@@ -19,6 +19,8 @@ TERMINAL = {"COMPLETED", "FAILED", "BLOCKED", "SKIPPED", "CANCELED"}
 ORDER = ("input", "qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg")
 MATE_SUFFIXES = ("_1", "_2", "_R1", "_R2")
 FASTQ_SUFFIXES = (".fastq.gz", ".fq.gz", ".fastq", ".fq")
+# Keep in sync with the dedicated worker concurrency in docker-compose.yml.
+CPU_WORKER_LIMITS = {"alignment": 4, "trimming": 2}
 
 
 def _root(user_id: int, *parts: str) -> Path:
@@ -118,8 +120,17 @@ def _cpu_available(db, requested: int) -> bool:
     maximum = min(os.cpu_count() or 1, 256)
     active = db.query(PipelineJob).filter(PipelineJob.stage.in_(["alignment", "trimming"]),
         PipelineJob.status.in_(["PENDING", "RUNNING"])).all()
-    used = sum(int((job.payload or {}).get("threads") or
-                   ((job.payload or {}).get("params") or {}).get("threads") or 1) for job in active)
+    # Queued jobs beyond a worker's concurrency cannot consume CPU yet. Counting
+    # all of them blocked ready alignment samples while trimming workers were full.
+    used = 0
+    for stage, limit in CPU_WORKER_LIMITS.items():
+        stage_jobs = [job for job in active if job.stage == stage]
+        running = [job for job in stage_jobs if job.status == "RUNNING"]
+        pending = [job for job in stage_jobs if job.status == "PENDING"]
+        slots = max(0, limit - len(running))
+        for job in running + pending[:slots]:
+            used += int((job.payload or {}).get("threads") or
+                        ((job.payload or {}).get("params") or {}).get("threads") or 1)
     return requested <= maximum and used + requested <= maximum
 
 
