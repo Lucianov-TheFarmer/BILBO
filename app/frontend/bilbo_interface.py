@@ -593,6 +593,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             ]
         )
     )
+    page.container_preview = container_pre_visualizacao
 
     async def toggle_theme_handler(e):
         await mudar_tema(page)

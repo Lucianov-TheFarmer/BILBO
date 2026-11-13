@@ -41,8 +41,8 @@ async def update_quality_analysis_table(page, token, user_id):
                 logger.info(f"Data received from backend: {samples}")
                 tabela_amostras_qc.rows.clear()
                 for sample in samples:
-                    def view_sample_details_handler(e, s=sample["name"]):
-                        asyncio.run(view_sample_details(page, token, s, user_id, analysis_type=t("qc_progress", page.session.get("lang") or "pt")))
+                    async def view_sample_details_handler(e, s=sample["name"]):
+                        await view_sample_details(page, token, s, user_id, analysis_type="QC")
                     
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade1/{s}?token={token}"
@@ -81,7 +81,12 @@ async def update_quality_analysis_table(page, token, user_id):
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
-    # Find the preview container by key (container_preview) and update it
+    preview = getattr(page, "container_preview", None)
+    if isinstance(preview, ft.Container):
+        preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[dropdown_menu, initial_graph]))]
+        page.update()
+        return
+    # Compatibility with older page layouts.
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:

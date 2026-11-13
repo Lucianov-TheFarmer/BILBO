@@ -41,8 +41,8 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                 logger.info(f"Data received from backend: {samples}")
                 tabela_amostras_pos_trimmagem.rows.clear()
                 for sample in samples:
-                    def view_sample_details_handler(e, s=sample["name"]):
-                        asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim"))
+                    async def view_sample_details_handler(e, s=sample["name"]):
+                        await view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim")
 
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade2/{s}?token={token}"
@@ -97,6 +97,12 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
+
+    preview = getattr(page, "container_preview", None)
+    if isinstance(preview, ft.Container):
+        preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[dropdown_menu, initial_graph]))]
+        page.update()
+        return
 
     for control in page.controls:
         if isinstance(control, ft.Row):

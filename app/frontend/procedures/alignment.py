@@ -7,6 +7,7 @@ import re
 from .jobs import wait_for_job
 from .utils import log_message
 from .viewer import view_alignment_log
+from .translations import t
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -395,8 +396,38 @@ async def show_genomes_modal(page, token, user_id):
             async with httpx.AsyncClient() as client:
                 response = await client.get("http://bioinfo-container:8890/genomes/", headers=headers)
                 if response.status_code == 200:
+                    imports_response = await client.get(
+                        "http://bioinfo-container:8890/genomes/import/jobs", headers=headers)
+                    import_errors = ({job.get("accession"): job.get("error_message")
+                                      for job in imports_response.json() if job.get("error_message")}
+                                     if imports_response.status_code == 200 else {})
                     tabela_genomas_referencia.rows.clear()
                     for genome in response.json():
+                        accession = genome["name"].split("(")[-1].strip(")")
+                        failure = import_errors.get(accession)
+                        completed = genome.get("status", "").lower() == "completed"
+                        actions = []
+                        if failure:
+                            def show_import_error(e, message=failure):
+                                error_dialog = ft.AlertDialog(
+                                    title=ft.Text(t("reference_error_detail", page.session.get("lang") or "pt")),
+                                    content=ft.Text(message, selectable=True),
+                                    actions=[ft.TextButton("OK", on_click=lambda event: page.close(error_dialog))])
+                                page.open(error_dialog)
+                            actions.append(ft.IconButton(icon="error_outline", icon_color="red",
+                                                         tooltip=failure, on_click=show_import_error))
+                        actions.extend([
+                            ft.IconButton(
+                                icon="description",
+                                on_click=lambda e, acc=accession: view_gff_analysis(acc, page, token),
+                                disabled=not completed
+                            ),
+                            ft.IconButton(
+                                icon="delete",
+                                icon_color="red",
+                                on_click=lambda e, acc=accession: open_confirmation_modal(acc),
+                            ),
+                        ])
                         tabela_genomas_referencia.rows.append(
                             ft.DataRow(
                                 cells=[
@@ -404,22 +435,7 @@ async def show_genomes_modal(page, token, user_id):
                                     ft.DataCell(ft.Text(genome["size"], size=12)),
                                     ft.DataCell(ft.Text(genome["status"], size=12)),
                                     ft.DataCell(
-                                        ft.Row(
-                                            controls=[
-                                                ft.IconButton(
-                                                    icon="description",
-                                                    on_click=lambda e, acc=genome["name"].split('(')[-1].strip(')'): view_gff_analysis(acc, page, token) if genome.get("status", "").lower() == "completed" else None,
-                                                    disabled=genome.get("status", "").lower() != "completed"
-                                                ),
-                                                ft.IconButton(
-                                                    icon="delete",
-                                                    icon_color="red",
-                                                    on_click=lambda e, acc=genome["name"].split('(')[-1].strip(')'): open_confirmation_modal(acc),
-                                                ),
-                                            ],
-                                            alignment="center",
-                                            spacing=10,
-                                        )
+                                        ft.Row(controls=actions, alignment="center", spacing=10)
                                     ),
                                 ],
                             )

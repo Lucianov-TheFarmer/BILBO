@@ -21,9 +21,28 @@ async def show_reference_url_modal(page, token):
     overhang = ft.TextField(label="sjdbOverhang", value="100", width=140)
     status = ft.Text("")
     progress = ft.ProgressBar(value=0, width=500, visible=False)
+    recent = ft.Column(height=100, scroll=ft.ScrollMode.AUTO)
+
+    async def load_recent():
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get("http://bioinfo-container:8890/genomes/import/jobs",
+                                            headers={"Authorization": f"Bearer {token}"})
+            response.raise_for_status()
+            jobs = response.json()
+            recent.controls = [ft.Text(t("reference_recent", lang))]
+            recent.controls.extend(ft.Text(f"{job['label']}: {job['status']}" +
+                                           (f" — {job['error_message']}" if job.get("error_message") else ""),
+                                           size=11, selectable=True) for job in jobs)
+            recent.height = 100 if jobs else 0
+            page.update()
+        except Exception:
+            recent.height = 0
 
     async def submit(e):
         try:
+            submit_button.disabled = True
+            page.update()
             payload = {"label": name.value, "fasta_url": fasta.value,
                        "annotation_url": annotation.value, "threads": int(threads.value),
                        "sjdb_overhang": int(overhang.value)}
@@ -31,7 +50,8 @@ async def show_reference_url_modal(page, token):
                 response = await client.post("http://bioinfo-container:8890/genomes/import/url",
                                              json=payload, headers={"Authorization": f"Bearer {token}"})
             if response.status_code != 202:
-                status.value = response.json().get("detail", response.text)
+                status.value = str(response.json().get("detail", response.text))
+                submit_button.disabled = False
                 page.update()
                 return
             job_id = response.json()["job_id"]
@@ -53,19 +73,25 @@ async def show_reference_url_modal(page, token):
             status.value = (t("reference_ready", lang) if result["status"] == "COMPLETED"
                             else str(result.get("error_message") or t("reference_failed", lang)))
             progress.value = 1 if result["status"] == "COMPLETED" else 0
+            status.color = "red" if result["status"] != "COMPLETED" else "green"
             page.update()
+            await load_recent()
         except Exception as exc:
             status.value = str(exc)
+            status.color = "red"
+            submit_button.disabled = False
             page.update()
 
+    submit_button = ft.TextButton(t("reference_import", lang), on_click=submit)
     dialog = ft.AlertDialog(
         title=ft.Text(t("reference_url_title", lang)),
-        content=ft.Container(width=580, content=ft.Column(tight=True, controls=[
+        content=ft.Container(width=580, height=460, content=ft.Column(scroll=ft.ScrollMode.AUTO, controls=[
             ft.Text(t("reference_help", lang), size=12), name, fasta, annotation,
-            ft.Row(controls=[threads, overhang]), progress, status])),
+            ft.Row(controls=[threads, overhang]), progress, status, recent])),
         actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.close(dialog)),
-                 ft.TextButton(t("reference_import", lang), on_click=submit)])
+                 submit_button])
     page.open(dialog)
+    page.run_task(load_recent)
 
 
 async def show_reference_upload_modal(page, token):

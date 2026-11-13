@@ -108,3 +108,14 @@ def import_status(job_id: str, user: User = Depends(get_current_user), db: Sessi
         raise HTTPException(404, "Reference job not found")
     return {"job_id": job.id, "status": job.status, "result": job.result or {},
             "error_message": job.error_message}
+
+
+@router.get("/jobs")
+def recent_imports(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    jobs = (db.query(PipelineJob)
+            .filter(PipelineJob.user_id == user.id, PipelineJob.stage == "reference_import")
+            .order_by(PipelineJob.created_at.desc()).limit(10).all())
+    return [{"job_id": job.id, "label": (job.payload or {}).get("label"),
+             "accession": (job.payload or {}).get("accession"),
+             "status": job.status, "phase": (job.result or {}).get("phase"),
+             "error_message": job.error_message} for job in jobs]

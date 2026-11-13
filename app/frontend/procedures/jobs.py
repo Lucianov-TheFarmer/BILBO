@@ -1,9 +1,12 @@
 import asyncio
 import inspect
+import logging
 from typing import Optional
 import httpx
 import flet as ft
 from .translations import t
+
+logger = logging.getLogger(__name__)
 
 
 async def wait_for_job(
@@ -29,7 +32,7 @@ async def wait_for_job(
                     if inspect.isawaitable(maybe_result):
                         await maybe_result
                 except Exception:
-                    pass
+                    logger.exception("Could not update progress for job %s", job_id)
 
             status = payload.get("status")
             if status in {"COMPLETED", "FAILED", "CANCELED"}:
@@ -72,6 +75,11 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
         current = result.get("progress_message") or ""
         completed = result.get("completed_samples")
         total = result.get("total_samples")
+        if status == "COMPLETED" and not total:
+            total = len((payload.get("payload") or {}).get("samples") or []) or None
+            completed = total
+        if status == "RUNNING" and result.get("progress_source") == "fastqc_log" and current.endswith(": 100%"):
+            current = t("qc_finalizing", lang)
         count = f"{completed}/{total} · " if completed is not None and total else ""
         detail.value = f"{count}{current} · {status_label}"
         if status in ("FAILED", "CANCELED"):

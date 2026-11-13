@@ -236,6 +236,12 @@ def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
         selected_graph = e.control.value
         graph_control = await display_graph(page, token, selected_graph, sample_name, user_id, analysis_type)
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls[0].content.controls[1] = graph_control
+            page.update()
+            return
+
         # Find the container_pre_visualizacao and update its content
         for control in page.controls:
             if isinstance(control, ft.Row):

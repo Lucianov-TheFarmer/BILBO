@@ -14,7 +14,7 @@ from ..db.models import PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
 from ..services.job_service import set_job_finished, set_job_running
 from ..services.reference_import import (
-    download_public_file, gff3_to_star_gtf, materialize, source_format,
+    download_public_file, gff3_to_star_gtf, materialize,
     validate_annotation, validate_fasta,
 )
 from .celery_app import celery_app
@@ -64,9 +64,10 @@ def import_reference(job_id: str) -> None:
         _progress(db, job, "validating", 0, 0)
         final.mkdir(parents=True, exist_ok=False)
         materialize(local["fasta"], final / "genomic.fa", "fasta")
-        annotation_ext, _ = source_format(local["annotation"].name, "annotation")
+        unpacked_annotation = final / "annotation.unpacked"
+        annotation_ext = materialize(local["annotation"], unpacked_annotation, "annotation")
         annotation_path = final / ("genomic.gtf" if annotation_ext == ".gtf" else "genomic.gff3")
-        materialize(local["annotation"], annotation_path, "annotation")
+        unpacked_annotation.replace(annotation_path)
         fasta_ids = validate_fasta(final / "genomic.fa")
         validate_annotation(annotation_path, fasta_ids, annotation_ext)
         if annotation_ext != ".gtf":
