@@ -90,6 +90,12 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                         await refresh_tables()
                     except Exception:
                         pass
+                elif any(step["stage"] == "trimming" and step["status"] == "RUNNING"
+                         for step in steps):
+                    try:
+                        await refresh_tables(False)
+                    except Exception:
+                        pass
                 page.update()
             elif card.visible:
                 card.visible = False

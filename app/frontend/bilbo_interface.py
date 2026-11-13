@@ -586,9 +586,12 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     )
     page.container_terminal = container_terminal
 
-    async def refresh_pipeline_tables():
-        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+    async def refresh_pipeline_tables(update_counts=True):
+        if update_counts:
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
         stage_id = current_stage["id"]
+        if not update_counts and stage_id != 3:
+            return
         if stage_id == 1:
             await atualizar_tabela_por_estagio(None, page, token, 1, tabela_amostras_local, user_id)
         elif stage_id == 2:

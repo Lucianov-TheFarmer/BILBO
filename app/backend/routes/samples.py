@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from ..core.settings import settings
 from ..db.database import get_db
-from ..db.models import PipelineJob, SampleStage, User, Stage
+from ..db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, User, Stage
 from ..services.job_service import audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, get_current_user_compat
@@ -445,6 +445,30 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
             "status": sample_stage.status,
             "name": sample_stage.name,
         })
+    if stage_id == 3:
+        # Automatic pipelines do not create SampleStage rows until a trimmed
+        # FASTQ exists. Show scheduled outputs while the worker is processing.
+        existing = {sample["name"] for sample in samples}
+        active = db.query(PipelineStep, PipelineRun).join(
+            PipelineRun, PipelineStep.run_id == PipelineRun.id).filter(
+                PipelineRun.user_id == current_user.id,
+                PipelineRun.status == "RUNNING",
+                PipelineStep.stage == "trimming",
+                PipelineStep.status.in_(["PENDING", "RUNNING"])).all()
+        for step, run in active:
+            spec = next((item for item in run.config.get("samples", [])
+                         if item.get("name") == step.sample), {})
+            suffixes = ("_1", "_2") if spec.get("paired", True) else ("",)
+            for suffix in suffixes:
+                name = f"{step.sample}{suffix}_trimmed.fastq.gz"
+                if name in existing:
+                    continue
+                path = safe_resolve_user_path(settings.users_root, current_user.id,
+                                              "trimmed", name)
+                size = f"{path.stat().st_size / 1024**2:.2f} MB" if path.is_file() else None
+                samples.append({"id": None, "sra_code": step.sample, "size": size,
+                                "status": step.status, "name": name})
+                existing.add(name)
     return samples
 
 @router.get("/download/{stage_name}/{file_name}")

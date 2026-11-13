@@ -62,7 +62,8 @@ def create_tabela_amostras_trimmadas(page, token):
 
     async def toggle_select_all_trimmadas(e):
         for row in tabela_amostras_trimmadas.rows:
-            row.cells[3].content.value = e.control.value
+            if not row.cells[3].content.disabled:
+                row.cells[3].content.value = e.control.value
         page.update()
 
     async def toggle_select_sample(e):
@@ -102,6 +103,12 @@ async def update_trimmagem_table(page, token):
                 samples = response.json()
                 tabela_amostras_trimmadas.rows.clear()
                 for sample in samples:
+                    lang = page.session.get("lang") or "pt"
+                    state = str(sample.get("status") or "").upper()
+                    display_status = t({"PENDING": "pipeline_queued",
+                                        "RUNNING": "pipeline_running",
+                                        "FAILED": "pipeline_failed",
+                                        "COMPLETED": "pipeline_completed"}.get(state, state), lang)
                     tabela_amostras_trimmadas.rows.append(
                         ft.DataRow(
                             cells=[
@@ -123,9 +130,10 @@ async def update_trimmagem_table(page, token):
                                         width=130
                                     )
                                 ),
-                                ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
-                                ft.DataCell(ft.Checkbox(data=sample["name"], on_change=toggle_select_sample))
+                                ft.DataCell(ft.Text(sample.get("size") or t("sra_size_pending", lang), style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Text(display_status, style=ft.TextStyle(size=12))),
+                                ft.DataCell(ft.Checkbox(data=sample["name"], disabled=state != "COMPLETED",
+                                                        on_change=toggle_select_sample))
                             ],
                         )
                     )
