@@ -398,8 +398,9 @@ async def show_genomes_modal(page, token, user_id):
                 if response.status_code == 200:
                     imports_response = await client.get(
                         "http://bioinfo-container:8890/genomes/import/jobs", headers=headers)
-                    import_errors = ({job.get("accession"): job.get("error_message")
-                                      for job in imports_response.json() if job.get("error_message")}
+                    import_errors = ({job.get("accession"): (job.get("error_message")
+                                                              if job.get("status") == "FAILED" else None)
+                                      for job in reversed(imports_response.json())}
                                      if imports_response.status_code == 200 else {})
                     tabela_genomas_referencia.rows.clear()
                     for genome in response.json():
