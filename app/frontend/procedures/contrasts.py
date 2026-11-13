@@ -169,14 +169,14 @@ async def show_contrasts_modal(page, token, user_id):
 
                     left_field = ft.Column(
                         controls=[
-                            ft.TextField(label="Grupo 1", value=group_1, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
+                            ft.TextField(label=t("group_one", page.session.get("lang") or "pt"), value=group_1, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
                         ],
                         spacing=5,
                         alignment=ft.MainAxisAlignment.CENTER,
                     )
                     right_field = ft.Column(
                         controls=[
-                            ft.TextField(label="Grupo 2", value=group_2, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
+                            ft.TextField(label=t("group_two", page.session.get("lang") or "pt"), value=group_2, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
                         ],
                         spacing=5,
                         alignment=ft.MainAxisAlignment.CENTER,
@@ -260,7 +260,7 @@ async def show_contrasts_modal(page, token, user_id):
         logger.info("Adding a new contrast row.")
         # Coluna esquerda: Grupo 1
         left_field = ft.TextField(
-            label="Grupo 1",
+            label=t("group_one", page.session.get("lang") or "pt"),
             width=200,
             text_align=ft.TextAlign.CENTER,
             max_length=10  # Limita a 10 caracteres
@@ -297,7 +297,7 @@ async def show_contrasts_modal(page, token, user_id):
 
         # Coluna direita: Grupo 2
         right_field = ft.TextField(
-            label="Grupo 2",
+            label=t("group_two", page.session.get("lang") or "pt"),
             width=200,
             text_align=ft.TextAlign.CENTER,
             max_length=10  # Limita a 10 caracteres
@@ -420,14 +420,14 @@ async def show_contrasts_modal(page, token, user_id):
 
             left_field = ft.Column(
                 controls=[
-                    ft.TextField(label="Grupo 1", value=group_1, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
+                    ft.TextField(label=t("group_one", page.session.get("lang") or "pt"), value=group_1, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
                 ],
                 spacing=5,
                 alignment=ft.MainAxisAlignment.CENTER,
             )
             right_field = ft.Column(
                 controls=[
-                    ft.TextField(label="Grupo 2", value=group_2, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
+                    ft.TextField(label=t("group_two", page.session.get("lang") or "pt"), value=group_2, width=200, text_align=ft.TextAlign.CENTER, read_only=True),
                 ],
                 spacing=5,
                 alignment=ft.MainAxisAlignment.CENTER,
@@ -617,7 +617,7 @@ async def show_contrasts_modal(page, token, user_id):
         ),
         actions=[
             ft.TextButton(
-                "Salvar",
+                t("menu_save", page.session.get("lang") or "pt"),
                 on_click=close_modal_handler,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=100,

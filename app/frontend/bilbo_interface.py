@@ -200,9 +200,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 container_amostras.content.controls = [
                     ft.Container(
                         content=ft.Text(
-                            "Nenhuma análise diferencial disponível. "
-                            "Selecione o genoma de referência e os "
-                            "contrastes para iniciar.",
+                            t("deg_no_analysis", lang),
                             text_align=ft.TextAlign.CENTER,
                         ),
                         alignment=ft.alignment.center,

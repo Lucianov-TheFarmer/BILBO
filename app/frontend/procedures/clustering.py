@@ -228,7 +228,7 @@ async def show_clustering(
             title=ft.Text(t("clustering_start_semantic", page.session.get("lang") or "pt")),
             content=ft.Column(controls=checkboxes),
             actions=[
-                ft.TextButton("Cancelar", on_click=_cancel),
+                ft.TextButton(t("btn_cancel", page.session.get("lang") or "pt"), on_click=_cancel),
                 ft.ElevatedButton(t("clustering_start", page.session.get("lang") or "pt"), on_click=_confirm_start),
             ],
             actions_alignment="end",
@@ -240,7 +240,7 @@ async def show_clustering(
         container_amostras.content.controls = [
             ft.Column(
                 controls=[
-                    ft.Text("Nenhuma figura de cluster encontrada."),
+                    ft.Text(t("cluster_no_figure", page.session.get("lang") or "pt")),
                     create_button("Executar Pipeline Completo", _start_clustering, color="primary", expand=False),
                 ]
             )
@@ -269,7 +269,7 @@ async def show_clustering(
 
         select_all_results = ft.Checkbox(
             value=False,
-            tooltip="Selecionar todas as clusterizações",
+            tooltip=t("cluster_select_all", page.session.get("lang") or "pt"),
             on_change=_toggle_all_results,
         )
 
@@ -378,7 +378,7 @@ async def show_clustering(
                 ),
                 actions=[
                     ft.TextButton(
-                        "Cancelar",
+                        t("btn_cancel", page.session.get("lang") or "pt"),
                         on_click=_cancel_delete,
                     ),
                     ft.ElevatedButton(
@@ -415,7 +415,7 @@ async def show_clustering(
                     value="Cluster",
                 )
 
-                img_placeholder = ft.Container(expand=True, content=ft.Text("Carregando..."))
+                img_placeholder = ft.Container(expand=True, content=ft.Text(t("loading", page.session.get("lang") or "pt")))
 
                 async def on_change(e):
                     sel = e.control.value

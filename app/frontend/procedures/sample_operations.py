@@ -69,10 +69,10 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         await inserir_sra_na_fila(sra_code_field.value)
 
     dlg_modal_adicionar_amostra = ft.AlertDialog(
-        title=ft.Text("Adicionar via SRA"),
+        title=ft.Text(t("sample_add_sra", page.session.get("lang") or "pt")),
         content=sra_code_field,
         actions=[
-            ft.TextButton("Submeter", on_click=inserir_sra_na_fila_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=500, height=40),
+            ft.TextButton(t("sample_submit", page.session.get("lang") or "pt"), on_click=inserir_sra_na_fila_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=500, height=40),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER
     )

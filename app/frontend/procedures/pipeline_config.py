@@ -31,7 +31,17 @@ async def show_pipeline_config_modal(page, token):
     status_text = ft.Text("")
     name_field = ft.TextField(label=t("pipeline_name", lang), value=t("pipeline_default_name", lang))
     sample_checks = {name: ft.Checkbox(label=name, value=False) for name in sorted(options["samples"])}
-    sample_choices = ft.Column(list(sample_checks.values()), spacing=0)
+    sample_pair_checks = {}
+    sample_rows = []
+    for name, select in sample_checks.items():
+        files = [item["name"] for item in options["samples"][name]
+                 if item.get("status") == "COMPLETED"]
+        has_pair = (any(re.search(r"(?:_1|_R1)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files)
+                    and any(re.search(r"(?:_2|_R2)\.(?:fastq|fq)(?:\.gz)?$", file) for file in files))
+        pair = ft.Checkbox(label="R1/R2", value=has_pair or not files)
+        sample_pair_checks[name] = pair
+        sample_rows.append(ft.Row([select, pair]))
+    sample_choices = ft.Column(sample_rows, spacing=0)
     planned_field = ft.TextField(label=t("pipeline_planned_samples", lang),
                                  hint_text="SRR12345, A01-F_S2", multiline=True, min_lines=2)
     planned_source = ft.Dropdown(label=t("pipeline_planned_source", lang), value="sra",
@@ -67,7 +77,7 @@ async def show_pipeline_config_modal(page, token):
         return [part.strip() for part in re.split(r"[,;\n]+", planned_field.value or "") if part.strip()]
 
     def build_plan():
-        samples = [{"name": name, "source": "existing", "paired": paired.value}
+        samples = [{"name": name, "source": "existing", "paired": sample_pair_checks[name].value}
                    for name, check in sample_checks.items() if check.value]
         samples.extend({"name": name, "source": planned_source.value, "paired": paired.value}
                        for name in planned_names())

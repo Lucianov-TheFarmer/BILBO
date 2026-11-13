@@ -469,7 +469,7 @@ async def show_genomes_modal(page, token, user_id):
     def view_gff_analysis(accession, page, token):
         dlg_gff_analysis = ft.AlertDialog(
             title=ft.Text(f"Análise do GFF para {accession}"),
-            content=ft.Text("Carregando..."),
+            content=ft.Text(t("loading", page.session.get("lang") or "pt")),
         )
         page.open(dlg_gff_analysis)
         analysis_result = asyncio.run(fetch_gff_analysis(accession, token))
@@ -535,7 +535,7 @@ async def show_genomes_modal(page, token, user_id):
     )
 
     search_type_dropdown = ft.Dropdown(options=[ft.dropdown.Option("taxon"), ft.dropdown.Option("accession")], value="taxon", width=150)
-    search_field = ft.TextField(label="Digite o termo de pesquisa", width=300)
+    search_field = ft.TextField(label=t("search_term", page.session.get("lang") or "pt"), width=300)
     sjdb_overhang_field = ft.TextField(label="sjdbOverhang", value="100", width=140)
     threads_field = ft.TextField(label="Threads", value="4", width=90)
 
@@ -612,7 +612,7 @@ async def show_genomes_modal(page, token, user_id):
             ),
             width=800,
         ),
-        actions=[ft.TextButton("Indexar Genoma", on_click=indexar_genoma_handler)],
+        actions=[ft.TextButton(t("genome_index", page.session.get("lang") or "pt"), on_click=indexar_genoma_handler)],
         actions_alignment="center",
     )
     page.open(dlg_modal_genomas)

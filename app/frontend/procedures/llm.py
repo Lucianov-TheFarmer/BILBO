@@ -375,14 +375,13 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                         weight=ft.FontWeight.BOLD,
                     ),
                     ft.Text(
-                        "A clusterização e o banco RAG "
-                        "serão preservados.",
+                        t("llm_preserve_info", page.session.get("lang") or "pt"),
                     ),
                 ],
             ),
             actions=[
                 ft.TextButton(
-                    "Cancelar",
+                    t("btn_cancel", page.session.get("lang") or "pt"),
                     on_click=_cancel_delete,
                 ),
                 ft.ElevatedButton(
@@ -697,7 +696,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     ],
                     scroll=ft.ScrollMode.AUTO,
                 ),
-                actions=[ft.TextButton("Cancelar", on_click=_cancel), ft.ElevatedButton("Iniciar", on_click=_confirm)],
+                actions=[ft.TextButton(t("btn_cancel", page.session.get("lang") or "pt"), on_click=_cancel), ft.ElevatedButton(t("start_generic", page.session.get("lang") or "pt"), on_click=_confirm)],
                 actions_alignment="end",
             )
 
@@ -740,7 +739,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 ),
                 ft.Text(rag_label, expand=True),
                 ft.ElevatedButton(
-                    "Inicializar banco RAG",
+                    t("rag_initialize", page.session.get("lang") or "pt"),
                     on_click=_initialize_rag,
                     disabled=rag_ready
                     or rag_state in {

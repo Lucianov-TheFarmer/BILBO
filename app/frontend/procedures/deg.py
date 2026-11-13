@@ -413,7 +413,7 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
         ),
         actions=[
             ft.TextButton(
-                "Iniciar DEG",
+                t("deg_start", page.session.get("lang") or "pt"),
                 on_click=lambda e: asyncio.run(iniciar_deg(e)),
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
             ),
@@ -585,8 +585,8 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
             width=150,
             content=ft.TextField(
                 ref=search_ref,
-                label="Buscar gene",
-                tooltip="Digite o nome do gene",
+                label=t("deg_search_gene", page.session.get("lang") or "pt"),
+                tooltip=t("deg_gene_hint", page.session.get("lang") or "pt"),
                 value="",
                 on_change=filter_rows,
                 border=ft.InputBorder.OUTLINE,
@@ -688,7 +688,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
         )
 
         notfound_text = ft.Text(
-            "Nenhum gene encontrado.",
+            t("deg_no_gene", page.session.get("lang") or "pt"),
             ref=notfound_ref,
             visible=False,
             color="red",
@@ -861,7 +861,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
                         column_spacing=12,
                         divider_thickness=0.5,
                         columns=[
-                            ft.DataColumn(ft.Text("Abas do DEG.xlsx", weight=ft.FontWeight.BOLD, width=160)),
+                            ft.DataColumn(ft.Text(t("deg_sheets", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD, width=160)),
                             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
                             ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                         ],
@@ -1019,8 +1019,7 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                             padding=20,
                                             alignment=ft.alignment.center,
                                             content=ft.Text(
-                                                "Todas as abas de análise "
-                                                "diferencial foram excluídas.",
+                                                t("deg_all_deleted", page.session.get("lang") or "pt"),
                                                 text_align=ft.TextAlign.CENTER,
                                             ),
                                         )
@@ -1049,16 +1048,14 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                         weight=ft.FontWeight.BOLD,
                                     ),
                                     ft.Text(
-                                        "Também serão removidos os gráficos, "
-                                        "clusterizações e relatórios LLM/RAG "
-                                        "associados a essas abas.",
+                                        t("deg_delete_related_info", page.session.get("lang") or "pt"),
                                         color="red",
                                     ),
                                 ],
                             ),
                             actions=[
                                 ft.TextButton(
-                                    "Cancelar",
+                                    t("btn_cancel", page.session.get("lang") or "pt"),
                                     on_click=cancel_delete,
                                 ),
                                 ft.ElevatedButton(

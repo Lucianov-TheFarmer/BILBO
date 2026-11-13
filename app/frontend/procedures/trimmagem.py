@@ -266,29 +266,26 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
     threads_field = ft.TextField(
         label="Threads",
         value="1",
-        tooltip="Número de threads a serem utilizados para processamento paralelo.\n\n"
-                "Valor padrão: 1. Aumente para melhorar o desempenho em máquinas com mais núcleos.",
+        tooltip=t("trim_help_0", page.session.get("lang") or "pt"),
         on_change=numeric_input_validator,
         width=280,
     )
     phred_dropdown = ft.Dropdown(
-        label="Codificação Phred",
+        label=t("trim_phred", page.session.get("lang") or "pt"),
         options=[
             ft.dropdown.Option("autodetect"),
             ft.dropdown.Option("phred33"),
             ft.dropdown.Option("phred64"),
         ],
         value="autodetect",
-        tooltip="Codificação Phred para os arquivos FASTQ. Use 'autodetect' para detectar automaticamente.\n\n"
-                "Opções:\n- phred33: Codificação padrão para a maioria dos arquivos modernos.\n"
-                "- phred64: Codificação antiga usada em alguns arquivos.",
+        tooltip=t("trim_help_1", page.session.get("lang") or "pt"),
         width=280,
     )
     custom_adapter_content = None
 
     illumina_clip_fields = [
         ft.Dropdown(
-            label="Arquivo adaptadores",
+            label=t("trim_adapter_file", page.session.get("lang") or "pt"),
             options=[
                 ft.dropdown.Option("NexteraPE-PE.fa"),
                 ft.dropdown.Option("TruSeq2-PE.fa"),
@@ -299,39 +296,35 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 ft.dropdown.Option("Personalizado"),
             ],
             value="TruSeq3-PE.fa",
-            tooltip="Selecione o arquivo de adaptadores para remoção. Escolha 'Personalizado' para fornecer seu próprio conteúdo.",
+            tooltip=t("trim_help_8", page.session.get("lang") or "pt"),
             width=280,
             on_change=handle_adapter_change,
         ),
         ft.TextField(
             label="Seed mismatches",
             value="2",
-            tooltip="Número máximo de mismatches permitidos no alinhamento inicial ('seed').\n\n"
-                    "Valor padrão: 2. Valores mais altos aumentam a sensibilidade, mas podem levar a falsos positivos.",
+            tooltip=t("trim_help_9", page.session.get("lang") or "pt"),
             on_change=numeric_input_validator,
             width=280,
         ),
         ft.TextField(
-            label="Threshold palíndromo",
+            label=t("trim_palindrome", page.session.get("lang") or "pt"),
             value="30",
-            tooltip="Limiar de precisão para o alinhamento no modo palíndromo (usado em dados paired-end).\n\n"
-                    "Valor padrão: 30. Um valor alto garante que apenas adapters com alinhamento muito preciso sejam removidos.",
+            tooltip=t("trim_help_10", page.session.get("lang") or "pt"),
             on_change=numeric_input_validator,
             width=280,
         ),
         ft.TextField(
-            label="Threshold simples",
+            label=t("trim_simple", page.session.get("lang") or "pt"),
             value="10",
-            tooltip="Limiar de precisão para o alinhamento no modo simples (usado em dados single-end).\n\n"
-                    "Valor padrão: 10. Valores mais baixos são suficientes para single-end, pois o alinhamento é menos complexo.",
+            tooltip=t("trim_help_11", page.session.get("lang") or "pt"),
             on_change=numeric_input_validator,
             width=280,
         ),
         ft.TextField(
-            label="Comprimento mínimo adaptador",
+            label=t("trim_adapter_min", page.session.get("lang") or "pt"),
             value="8",
-            tooltip="Comprimento mínimo de adapter que deve ser detectado para remoção.\n\n"
-                    "Valor padrão: 8. Valores menores permitem remover fragmentos muito curtos de adapters.",
+            tooltip=t("trim_help_12", page.session.get("lang") or "pt"),
             on_change=numeric_input_validator,
             width=280,
         ),
@@ -345,99 +338,88 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
     sliding_window_fields = [
         ft.TextField(
-            label="Tamanho janela",
+            label=t("trim_window", page.session.get("lang") or "pt"),
             value="4",
-            tooltip="Número de bases analisadas em cada janela deslizante para calcular a qualidade média.\n\n"
-                    "Valor padrão: 4 (típico). Exemplo: Uma janela de 4 bases avalia a qualidade média a cada 4 bases.",
+            tooltip=t("trim_help_13", page.session.get("lang") or "pt"),
             width=280,
         ),
         ft.TextField(
-            label="Qualidade mínima",
+            label=t("trim_min_quality", page.session.get("lang") or "pt"),
             value="15",
-            tooltip="Qualidade média mínima (em Phred) exigida dentro da janela para manter as bases.\n\n"
-                    "Valor padrão: 15 (equivalente a 97% de precisão). Impacto: Se a média da janela estiver abaixo desse valor, "
-                    "a sequência é cortada a partir dali.",
+            tooltip=t("trim_help_14", page.session.get("lang") or "pt"),
             width=280,
         ),
     ]
 
     max_info_fields = [
         ft.TextField(
-            label="Comprimento alvo",
+            label=t("trim_target", page.session.get("lang") or "pt"),
             value="40",
-            tooltip="Comprimento mínimo desejado para as reads após o trim.\n\n"
-                    "Valor padrão: 40 (suficiente para alinhamento único em genomas pequenos). Explicação: Reads mais curtas que isso são penalizadas.",
+            tooltip=t("trim_help_15", page.session.get("lang") or "pt"),
             width=280,
         ),
         ft.TextField(
             label="Strictness",
             value="0.5",
-            tooltip="Balanceia entre manter bases adicionais (valores baixos) ou priorizar qualidade (valores altos).\n\n"
-                    "Valor padrão: 0.5 (equilíbrio). Escala: 0 (favorece comprimento) a 1 (favorece qualidade).",
+            tooltip=t("trim_help_16", page.session.get("lang") or "pt"),
             width=280,
         ),
     ]
 
     leading_field = ft.TextField(
-        label="LEADING - Qualidade mínima",
+        label=t("trim_leading", page.session.get("lang") or "pt"),
         value="3",
-        tooltip="Remove bases de baixa qualidade no início da read (5').\n\n"
-                "Valor padrão: 3 (qualidade Phred 3, muito baixa). Exemplo: Se a primeira base tiver qualidade 2, é removida.",
+        tooltip=t("trim_help_2", page.session.get("lang") or "pt"),
         width=280,
     )
 
     trailing_field = ft.TextField(
-        label="TRAILING - Qualidade mínima",
+        label=t("trim_trailing", page.session.get("lang") or "pt"),
         value="3",
-        tooltip="Remove bases de baixa qualidade no final da read (3').\n\n"
-                "Valor padrão: 3 (similar a LEADING).",
+        tooltip=t("trim_help_3", page.session.get("lang") or "pt"),
         width=280,
     )
 
     crop_field = ft.TextField(
-        label="CROP - Comprimento",
+        label=t("trim_crop", page.session.get("lang") or "pt"),
         value="",
-        tooltip="Corta a read para um comprimento fixo, independentemente da qualidade.\n\n"
-                "Exemplo: Se CROP:50, apenas as primeiras 50 bases são mantidas.",
+        tooltip=t("trim_help_4", page.session.get("lang") or "pt"),
         width=280,
     )
 
     headcrop_field = ft.TextField(
-        label="HEADCROP - Número de bases",
+        label=t("trim_headcrop", page.session.get("lang") or "pt"),
         value="",
-        tooltip="Remove um número fixo de bases do início da read (útil para primers).\n\n"
-                "Exemplo: HEADCROP:5 remove as 5 primeiras bases.",
+        tooltip=t("trim_help_5", page.session.get("lang") or "pt"),
         width=280,
     )
 
     minlen_field = ft.TextField(
-        label="MINLEN - Comprimento mínimo",
+        label=t("trim_minlen", page.session.get("lang") or "pt"),
         value="36",
-        tooltip="Descarta reads com comprimento menor que o especificado.\n\n"
-                "Valor padrão: 36 (comum para garantir reads úteis).",
+        tooltip=t("trim_help_6", page.session.get("lang") or "pt"),
         width=280,
     )
 
     avgqual_field = ft.TextField(
-        label="AVGQUAL - Qualidade média",
+        label=t("trim_avgqual", page.session.get("lang") or "pt"),
         value="",
-        tooltip="Descarta reads cuja qualidade média (Phred) esteja abaixo do valor.\n\n"
-                "Exemplo: AVGQUAL:20 remove reads com média de qualidade < 20.",
+        tooltip=t("trim_help_7", page.session.get("lang") or "pt"),
         width=280,
     )
 
     custom_adapter_field = ft.TextField(
-        label="Adaptadores Personalizados",
-        hint_text="Insira o conteúdo dos adaptadores aqui",
+        label=t("trim_custom_adapters", page.session.get("lang") or "pt"),
+        hint_text=t("trim_adapter_hint", page.session.get("lang") or "pt"),
         multiline=True,
         expand=True,
     )
     custom_adapter_modal = ft.AlertDialog(
-        title=ft.Text("Adaptadores Personalizados"),
+        title=ft.Text(t("trim_custom_adapters", page.session.get("lang") or "pt")),
         content=custom_adapter_field,
         actions=[
             ft.TextButton(
-                "Salvar",
+                t("menu_save", page.session.get("lang") or "pt"),
                 on_click=save_custom_adapter,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,
@@ -559,7 +541,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 spacing=27
             ),
             ft.Divider(height=1, thickness=1, color="black38"),
-            ft.Text("IlluminaClip Parameters", style=ft.TextStyle(size=14, weight="bold")),
+            ft.Text(t("trim_illumina_params", page.session.get("lang") or "pt"), style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
                     ft.Column(
@@ -581,7 +563,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 ],
             ),
             ft.Divider(height=1, thickness=1, color="black38"),
-            ft.Text("SlidingWindow Parameters", style=ft.TextStyle(size=14, weight="bold")),
+            ft.Text(t("trim_sliding_params", page.session.get("lang") or "pt"), style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
                     sliding_window_fields[0],  
@@ -590,7 +572,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 spacing=27
             ),
             ft.Divider(height=1, thickness=1, color="black38"),
-            ft.Text("MaxInfo Parameters", style=ft.TextStyle(size=14, weight="bold")),
+            ft.Text(t("trim_maxinfo_params", page.session.get("lang") or "pt"), style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
                     max_info_fields[0], 
@@ -599,7 +581,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                 spacing=27
             ),
             ft.Divider(height=1, thickness=1, color="black38"),
-            ft.Text("Other Parameters", style=ft.TextStyle(size=14, weight="bold")),
+            ft.Text(t("trim_other_params", page.session.get("lang") or "pt"), style=ft.TextStyle(size=14, weight="bold")),
             ft.Row(
                 controls=[
                     ft.Column(
@@ -625,7 +607,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
     )
 
     dlg_modal_trimmagem = ft.AlertDialog(
-        title=ft.Text("Iniciar Trimmagem"),
+        title=ft.Text(t("trim_start", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
@@ -637,7 +619,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         ),
         actions=[
             ft.TextButton(
-                "Iniciar Trimmagem",
+                t("trim_start", page.session.get("lang") or "pt"),
                 on_click=start_trimmagem if not iniciar_trimmagem_disabled else None,
                 disabled=iniciar_trimmagem_disabled,
             ),

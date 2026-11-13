@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import logging
@@ -429,7 +430,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                         ),
                         ft.IconButton(
                             icon="close",
-                            tooltip="Ocultar",
+                            tooltip=t("hide", page.session.get("lang") or "pt"),
                             on_click=ocultar_upload,
                         ),
                     ],
@@ -442,7 +443,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
                         ft.TextButton(
-                            "Ocultar",
+                            t("hide", page.session.get("lang") or "pt"),
                             on_click=ocultar_upload,
                         ),
                     ],

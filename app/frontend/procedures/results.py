@@ -85,7 +85,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     
     table = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("Barplots salvos")),
+            ft.DataColumn(ft.Text(t("barplots_saved", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
@@ -114,7 +114,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
         expand=True,
     )
     btn = ft.ElevatedButton(
-        "Gerar novo barplot",
+        t("new_barplot", page.session.get("lang") or "pt"),
         icon="add",
         on_click=lambda e: asyncio.run(show_barplots_modal(page, token, user_id, container_amostras)),
     )
@@ -143,7 +143,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
     
     table = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("Diagramas de Venn salvos")),
+            ft.DataColumn(ft.Text(t("venns_saved", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
@@ -172,7 +172,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
         expand=True,
     )
     btn = ft.ElevatedButton(
-        "Gerar novo diagrama de Venn",
+        t("new_venn", page.session.get("lang") or "pt"),
         icon="add",
         on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id, container_amostras)),
     )
@@ -236,7 +236,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
         )
 
     columns = [
-        ft.DataColumn(ft.Text("Aba")),
+        ft.DataColumn(ft.Text(t("sheet_label", page.session.get("lang") or "pt"))),
         ft.DataColumn(select_all_checkbox if show_select_all else ft.Text(t("table_select", page.session.get("lang") or "pt"))),
     ]
 
@@ -264,7 +264,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
         ),
         actions=[
             ft.TextButton(
-                "Confirmar",
+                t("confirm_delete", page.session.get("lang") or "pt"),
                 # Use asyncio.run para garantir execução correta no handler do Flet
                 on_click=lambda e: asyncio.run(on_confirm(title_field.value, list(selected), dlg_modal)),
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
@@ -480,7 +480,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         if rows:
             table = ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Nome do Heatmap", weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text(t("heatmap_name", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                 ],
                 rows=rows,
@@ -492,7 +492,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         else:
             table = ft.Container(
                 content=ft.Text(
-                    "Nenhum heatmap encontrado. Clique em 'Novo Heatmap' para criar um.",
+                    t("heatmap_empty", page.session.get("lang") or "pt"),
                     text_align=ft.TextAlign.CENTER,
                     size=16,
                 ),
@@ -502,7 +502,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         
         # Botão para criar novo heatmap
         btn = ft.ElevatedButton(
-            "Gerar novo heatmap",
+            t("new_heatmap", page.session.get("lang") or "pt"),
             icon="add",
             on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id, container_amostras)),
         )
