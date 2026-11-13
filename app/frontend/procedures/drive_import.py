@@ -151,6 +151,8 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                     picker_holder.content = None
                     picker_fallback.visible = False
                     files = data["files"]
+                    existing = set(data.get("existing_bases") or [])
+                    importing = set(data.get("importing_bases") or [])
                     groups = {}
                     for file in files:
                         groups.setdefault(file["base"], {})[file["mate"]] = file
@@ -159,10 +161,16 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                     for base, pair in sorted(groups.items()):
                         names = "  |  ".join(f"R{mate}: {pair[mate]['name']}" for mate in sorted(pair))
                         total = sum(item["size"] for item in pair.values()) / 1024**3
-                        selection.controls.append(ft.Text(f"{base} — {names} — {total:.1f} GiB"))
+                        note = (t("drive_already_present", lang) if base in existing else
+                                t("drive_already_importing", lang) if base in importing else "")
+                        selection.controls.append(ft.Text(f"{base} — {names} — {total:.1f} GiB" +
+                                                          (f" — {note}" if note else "")))
                     complete = bool(groups) and all(set(pair) == {1, 2} for pair in groups.values())
-                    import_button.disabled = not complete
-                    update_status("" if complete else t("drive_incomplete", lang))
+                    available = set(groups) - existing - importing
+                    import_button.disabled = not complete or not available
+                    skipped = sorted(existing | importing)
+                    update_status((t("drive_skipped", lang).format(names=", ".join(skipped)) if skipped else "")
+                                  if complete else t("drive_incomplete", lang))
                     return
             except Exception as exc:
                 update_status(str(exc))
@@ -176,15 +184,26 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(f"{API}/drive/session/{state['session']}/import", headers=headers)
                 response.raise_for_status()
-                state["jobs"] = response.json()["job_ids"]
-                state["import_started"] = True
-            update_status(t("drive_progress", lang))
-            monitoring.update(state["jobs"])
-            page.run_task(poll_jobs, list(state["jobs"]))
+                result = response.json()
+                state["jobs"] = result["job_ids"]
+                state["import_started"] = bool(state["jobs"])
+            skipped = sorted(set(result.get("skipped_existing") or []) |
+                             set(result.get("skipped_importing") or []))
+            message = t("drive_progress", lang) if state["jobs"] else t("drive_nothing_to_import", lang)
+            if skipped:
+                message += "\n" + t("drive_skipped", lang).format(names=", ".join(skipped))
+            update_status(message)
+            if state["jobs"]:
+                monitoring.update(state["jobs"])
+                page.run_task(poll_jobs, list(state["jobs"]))
             try:
                 await refresh_samples(page, bilbo_token, container_menu_direita, tabela_amostras_local)
             except Exception:
                 pass  # The job monitor will retry the table refresh.
+        except httpx.HTTPStatusError as exc:
+            import_button.disabled = False
+            detail = exc.response.json().get("detail", "") if exc.response.headers.get("content-type", "").startswith("application/json") else ""
+            update_status(t("drive_no_selection", lang) if exc.response.status_code == 409 and detail == "No Drive files selected" else detail or str(exc))
         except Exception as exc:
             import_button.disabled = False
             update_status(str(exc))

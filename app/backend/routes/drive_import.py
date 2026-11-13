@@ -182,10 +182,30 @@ def receive_selection(session: str, selection: Selection):
     return {"accepted": len(files), "ignored": len(selection.ids) - len(files)}
 
 
+def _selected_conflicts(db: Session, user_id: int, bases: set[str]) -> tuple[set[str], set[str]]:
+    if not bases:
+        return set(), set()
+    existing = {
+        row[0] for row in db.query(SampleStage.sra_code).filter(
+            SampleStage.user_id == user_id, SampleStage.stage_id == 1,
+            SampleStage.sra_code.in_(bases),
+        ).all()
+    }
+    active_jobs = db.query(PipelineJob).filter(
+        PipelineJob.user_id == user_id, PipelineJob.stage == "drive_import",
+        PipelineJob.status.in_(["PENDING", "RUNNING"]),
+    ).all()
+    importing = {(job.payload or {}).get("base") for job in active_jobs} & bases
+    return existing, importing
+
+
 @router.get("/session/{session_id}")
-def session_status(session_id: str, user: User = Depends(get_current_user)):
+def session_status(session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     data = _owned(session_id, user)
-    return {"status": data["status"], "files": json.loads(data.get("selection", "[]"))}
+    files = json.loads(data.get("selection", "[]"))
+    existing, importing = _selected_conflicts(db, user.id, {file["base"] for file in files})
+    return {"status": data["status"], "files": files,
+            "existing_bases": sorted(existing), "importing_bases": sorted(importing)}
 
 
 @router.post("/session/{session_id}/import")
@@ -201,23 +221,18 @@ def queue_import(session_id: str, user: User = Depends(get_current_user), db: Se
         group[file["mate"]] = file
     if not groups or any(set(group) != {1, 2} for group in groups.values()):
         raise HTTPException(400, "Complete R1/R2 pairs are required")
+    existing, importing = _selected_conflicts(db, user.id, set(groups))
     jobs = []
     for base, group in groups.items():
-        if db.query(SampleStage).filter(SampleStage.user_id == user.id, SampleStage.stage_id == 1, SampleStage.sra_code == base).first():
-            raise HTTPException(409, f"Sample already exists: {base}")
-    active_jobs = db.query(PipelineJob).filter(
-        PipelineJob.user_id == user.id,
-        PipelineJob.stage == "drive_import",
-        PipelineJob.status.in_(["PENDING", "RUNNING"]),
-    ).all()
-    if any(job.payload.get("base") in groups for job in active_jobs):
-        raise HTTPException(409, "One of these samples is already being imported")
-    for base, group in groups.items():
+        if base in existing or base in importing:
+            continue
         job = create_job(db, "drive_import", user.id, {"base": base, "files": [group[1], group[2]]})
         import_drive_pair.apply_async(args=[job.id, session_id], queue="drive")
         jobs.append(job.id)
-    redis_client().hset(session_key(session_id), "status", "queued")
-    return {"job_ids": jobs}
+    if jobs:
+        redis_client().hset(session_key(session_id), "status", "queued")
+    return {"job_ids": jobs, "skipped_existing": sorted(existing),
+            "skipped_importing": sorted(importing)}
 
 
 @router.get("/jobs")
