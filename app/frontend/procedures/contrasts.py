@@ -88,13 +88,13 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
             page.update()
             return
         variable_id = variable_id or variable_entries[0]["id"]
-        variable = ft.Dropdown(label=t("design_variable_name", lang), width=175,
+        variable = ft.Dropdown(label=t("design_variable_name", lang), width=160,
                                value=variable_id, options=variable_options())
-        field = ft.TextField(label=t("design_variable_value", lang), value=str(value), width=165)
+        field = ft.TextField(label=t("design_variable_value", lang), value=str(value), width=150)
         row = ft.Row([variable, field], spacing=8,
                      alignment=ft.MainAxisAlignment.CENTER)
         assignment = {"variable": variable, "value": field, "row": row}
-        remove = ft.IconButton(icon="close", tooltip=t("design_remove_variable", lang),
+        remove = ft.IconButton(icon="close", width=40, tooltip=t("design_remove_variable", lang),
                                on_click=lambda _: remove_assignment(repetition, assignment))
         row.controls.append(remove)
         repetition["assignments"].append(assignment)
@@ -138,9 +138,9 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
         refresh_variable_options()
 
     def add_repetition(side, sample=None):
-        dropdown = ft.Dropdown(label=t("pipeline_samples", lang), width=240,
+        dropdown = ft.Dropdown(label=t("pipeline_samples", lang), width=318,
                                value=sample, options=sample_options())
-        assignment_column = ft.Column(spacing=4)
+        assignment_column = ft.Column(spacing=10)
         repetition = {"sample": dropdown, "assignments": [],
                       "assignment_column": assignment_column}
 
@@ -155,17 +155,17 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
             page.update()
 
         dropdown.on_change = sample_changed
-        remove = ft.IconButton(icon="remove_circle_outline", icon_color="red",
+        remove = ft.IconButton(icon="remove_circle_outline", icon_color="red", width=40,
                                tooltip=t("contrast_remove_rep", lang),
                                on_click=lambda _: remove_repetition(side, repetition))
         card = ft.Container(
             width=400,
-            content=ft.Column([ft.Row([dropdown, remove],
+            content=ft.Column([ft.Row([dropdown, remove], spacing=8,
                                       alignment=ft.MainAxisAlignment.CENTER), assignment_column,
                                ft.TextButton(t("design_add_value", lang),
                                              on_click=lambda _: add_assignment(repetition))],
-                              spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=8, border=ft.border.all(1, "outline"), border_radius=8)
+                              spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=12, border=ft.border.all(1, "outline"), border_radius=8)
         repetition["card"] = card
         side["repetitions"].append(repetition)
         side["column"].controls.append(card)
@@ -188,7 +188,7 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
         for number in (1, 2):
             group = ft.TextField(label=t("group_one" if number == 1 else "group_two", lang),
                                  value=item.get(f"group_{number}", ""), width=220)
-            repeats = ft.Column(spacing=7, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            repeats = ft.Column(spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             sides.append({"group": group, "column": repeats, "repetitions": []})
         entry = {"id": item.get("id"), "sides": sides}
         remove = ft.IconButton(icon="delete_outline", icon_color="red",
@@ -197,8 +197,17 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
         card = ft.Container(
             width=860,
             content=ft.Column([
-                ft.Row([sides[0]["group"], ft.Text("×"), sides[1]["group"], remove],
-                       spacing=12, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Stack(width=816, height=64, controls=[
+                    ft.Row([
+                        ft.Container(width=400, height=64, content=sides[0]["group"],
+                                     alignment=ft.alignment.center),
+                        ft.Container(width=16, height=64, content=ft.Text("×", size=18),
+                                     alignment=ft.alignment.center),
+                        ft.Container(width=400, height=64, content=sides[1]["group"],
+                                     alignment=ft.alignment.center),
+                    ], spacing=0),
+                    ft.Container(content=remove, right=0, top=8),
+                ]),
                 ft.Row([ft.Column([sides[0]["column"],
                                    ft.TextButton(t("contrast_add_rep", lang),
                                                  on_click=lambda _: add_repetition(sides[0]))],
@@ -208,7 +217,7 @@ async def show_contrasts_modal(page, token, user_id=None, on_closed=None):
                                                  on_click=lambda _: add_repetition(sides[1]))],
                                   width=400, horizontal_alignment=ft.CrossAxisAlignment.CENTER)],
                        spacing=16, alignment=ft.MainAxisAlignment.CENTER),
-            ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            ], spacing=18, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=14, border=ft.border.all(1, "outline"), border_radius=10)
         entry["card"] = card
         contrast_entries.append(entry)
