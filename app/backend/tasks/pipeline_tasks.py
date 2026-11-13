@@ -522,6 +522,19 @@ def execute_pipeline_job(self, job_id: str):
 
 
 def enqueue_pipeline_job(job_id: str, *, queue: Optional[str] = None) -> None:
+    if queue is None:
+        db = SessionLocal()
+        try:
+            job = db.query(PipelineJob).filter(PipelineJob.id == job_id).one()
+            queue = {
+                "alignment": "alignment",
+                "samples_download": "samples",
+                "quantification": "samples",
+                "quality_analysis": "quality",
+                "quality_analysis_post_trim": "quality",
+            }.get(job.stage)
+        finally:
+            db.close()
     options = {"queue": queue} if queue else {}
     execute_pipeline_job.apply_async(args=[job_id], task_id=job_id, **options)
 
@@ -637,25 +650,21 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
         _record_sample_progress(db, job_id, index, len(samples), safe_sample)
-        rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
-        )
-        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         sample_stem = safe_sample
         for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
             if sample_stem.endswith(extension):
                 sample_stem = sample_stem[: -len(extension)]
                 break
-
-        row = (
-            db.query(SampleStage)
-            .filter(
-                SampleStage.name == f"{sample_stem}.html",
-                SampleStage.stage_id == 2,
-                SampleStage.user_id == user_id,
-            )
-            .first()
+        row = db.query(SampleStage).filter(
+            SampleStage.name == f"{sample_stem}.html", SampleStage.stage_id == 2,
+            SampleStage.user_id == user_id).first()
+        if row:
+            row.status = "RUNNING"
+            db.commit()
+        rc, stdout, stderr = _run(
+            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
         )
+        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -680,29 +689,21 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
         _record_sample_progress(db, job_id, index, len(samples), safe_sample)
+        row_name = safe_sample
+        for suffix in ("_trimmed.fastq.gz", "_trimmed.fq.gz", "_trimmed.fastq", "_trimmed.fq"):
+            if row_name.endswith(suffix):
+                row_name = row_name[: -len(suffix)] + "_post_trim.html"
+                break
+        row = db.query(SampleStage).filter(
+            SampleStage.name == row_name, SampleStage.stage_id == 4,
+            SampleStage.user_id == user_id).first()
+        if row:
+            row.status = "RUNNING"
+            db.commit()
         rc, stdout, stderr = _run(
             ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800
         )
         outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
-        row_name = safe_sample
-        for suffix in (
-            "_trimmed.fastq.gz",
-            "_trimmed.fq.gz",
-            "_trimmed.fastq",
-            "_trimmed.fq",
-        ):
-            if row_name.endswith(suffix):
-                row_name = row_name[: -len(suffix)] + "_post_trim.html"
-                break
-        row = (
-            db.query(SampleStage)
-            .filter(
-                SampleStage.name == row_name,
-                SampleStage.stage_id == 4,
-                SampleStage.user_id == user_id,
-            )
-            .first()
-        )
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -735,6 +736,16 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
     alignment_path = _abs_users(str(user_id), "alignment")
     alignment_path.mkdir(parents=True, exist_ok=True)
 
+    row = (
+        db.query(SampleStage)
+        .filter(SampleStage.sra_code == sample, SampleStage.stage_id == 5,
+                SampleStage.user_id == user_id)
+        .first()
+    )
+    if row:
+        row.status = "RUNNING"
+        db.commit()
+
     rc, stdout, stderr = _run(
         [
             "bash",
@@ -752,15 +763,6 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
     bam_file = alignment_path / sample / f"{sample}.bam"
     if bam_file.exists():
         add_artifact(db, job_id=job_id, user_id=user_id, kind="bam", path=str(bam_file))
-    row = (
-        db.query(SampleStage)
-        .filter(
-            SampleStage.sra_code == sample,
-            SampleStage.stage_id == 5,
-            SampleStage.user_id == user_id,
-        )
-        .first()
-    )
     if row:
         row.status = "COMPLETED" if rc == 0 else "FAILED"
         if bam_file.exists():

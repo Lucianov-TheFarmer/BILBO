@@ -8,6 +8,11 @@ ALIGNMENT_PATH="$3"
 GENOME_DIR="$4"
 THREADS="$5"
 
+if ! [[ "$THREADS" =~ ^[0-9]+$ ]] || [ "$THREADS" -lt 1 ] || [ "$THREADS" -gt 256 ]; then
+    echo "Alignment threads must be between 1 and 256." >&2
+    exit 2
+fi
+
 shift 5 || true
 
 ADDITIONAL_PARAMS=("$@")
@@ -86,31 +91,38 @@ CUSTOM_LOG="${OUTPUT_PREFIX}_custom.log"
         --outSAMtype BAM Unsorted \
         "${ADDITIONAL_PARAMS[@]}"
 
-    echo "[alignment] Sorting BAM with Picard"
+    echo "[alignment] Sorting BAM by read name with samtools (${THREADS} threads)"
 
-    picard SortSam \
-        I="${OUTPUT_PREFIX}Aligned.out.bam" \
-        O="${OUTPUT_PREFIX}Aligned.sorted.picard.query.bam" \
-        SORT_ORDER=queryname
+    samtools sort \
+        -N \
+        -@ "$THREADS" \
+        -m 512M \
+        -T "${OUTPUT_PREFIX}.sorttmp" \
+        -o "${OUTPUT_PREFIX}Aligned.queryname.bam" \
+        "${OUTPUT_PREFIX}Aligned.out.bam"
+    samtools quickcheck "${OUTPUT_PREFIX}Aligned.queryname.bam"
+    rm -f "${OUTPUT_PREFIX}Aligned.out.bam"
 
     echo "[alignment] Adding read groups"
 
     picard AddOrReplaceReadGroups \
-        I="${OUTPUT_PREFIX}Aligned.sorted.picard.query.bam" \
-        O="${OUTPUT_PREFIX}Aligned.sorted.picard.query.rg.bam" \
+        I="${OUTPUT_PREFIX}Aligned.queryname.bam" \
+        O="${OUTPUT_PREFIX}Aligned.queryname.rg.bam" \
         RGID="$BASENAME" \
         RGLB=lib1 \
         RGPL=ILLUMINA \
         RGPU=unit1 \
         RGSM="$BASENAME"
+    rm -f "${OUTPUT_PREFIX}Aligned.queryname.bam"
 
     echo "[alignment] Marking duplicates"
 
     picard MarkDuplicates \
-        I="${OUTPUT_PREFIX}Aligned.sorted.picard.query.rg.bam" \
+        I="${OUTPUT_PREFIX}Aligned.queryname.rg.bam" \
         O="${OUTPUT_PREFIX}.bam" \
         REMOVE_DUPLICATES=true \
         M="${OUTPUT_PREFIX}_markdup_metrics.txt"
+    rm -f "${OUTPUT_PREFIX}Aligned.queryname.rg.bam"
 
     echo "[alignment] Cleanup intermediates"
 

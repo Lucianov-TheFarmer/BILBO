@@ -2,7 +2,8 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
+from .translations import t
 from .utils import log_message
 from .viewer import view_quantification_log
 
@@ -275,21 +276,9 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                 )
                 if response.status_code in (200, 202):
                     body = response.json()
-                    job_id = body.get("job_id")
-                    if job_id:
-                        await log_message(page, f"Quantificação enfileirada (job {job_id}).")
-
-                        async def refresh_quantification_status(_job_payload):
-                            await update_tabela_quantificacao(page, token, user_id)
-                            page.update()
-
+                    async def monitor_quantification(name, job_id):
                         try:
-                            result = await wait_for_job(
-                                token,
-                                job_id,
-                                interval=5.0,
-                                on_update=refresh_quantification_status,
-                            )
+                            result = await wait_with_progress(page, token, job_id, f"{t('menu_quant', page.session.get('lang') or 'pt')} — {name}")
                         except httpx.HTTPStatusError as exc:
                             if exc.response.status_code == 401:
                                 await log_message(
@@ -300,15 +289,18 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                                 )
                                 return
                             raise
-
                         status = result.get("status")
-                        await log_message(page, f"Quantificação finalizada com status {status}.")
-
+                        await log_message(page, f"{name}: {status}.")
                         if status != "COMPLETED":
                             details = _extract_quantification_error(result)
                             if details:
                                 await log_message(page, f"Detalhe do erro: {details}")
                             await log_message(page, "Abra o log da quantificação para ver o diagnóstico completo.")
+                        await update_tabela_quantificacao(page, token, user_id)
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                    for name, job_id in zip(selected_samples, body.get("job_ids") or [body.get("job_id")]):
+                        if job_id:
+                            page.run_task(monitor_quantification, name, job_id)
                     await update_tabela_quantificacao(page, token, user_id)
                     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                     page.update()

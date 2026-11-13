@@ -4,7 +4,7 @@ import logging
 import asyncio
 import json
 import re
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
 from .utils import log_message
 from .viewer import view_alignment_log
 from .translations import t
@@ -122,6 +122,20 @@ async def update_tabela_alinhamento(page, token, user_id):
 async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, params, atualizar_tabela, container_menu_direita, tabela_amostras_local):
     """Starts the alignment process for selected samples."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    lang = page.session.get("lang") or "pt"
+
+    async def monitor_alignment(basename, job_id):
+        try:
+            result = await wait_with_progress(page, token, job_id,
+                                              f"{t('menu_alignment', lang)} — {basename}")
+            status = result.get("status")
+            await log_message(page, f"{basename}: {status}" +
+                              (f" — {result.get('error_message')}" if result.get("error_message") else ""))
+            await update_tabela_alinhamento(page, token, user_id)
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+        except Exception:
+            logger.exception("Could not monitor alignment job %s", job_id)
+
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
@@ -138,6 +152,7 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
 
             basenames = sorted({_trimmed_base(sample) for sample in selected_samples})
             
+            queued = 0
             for basename in basenames:
                 response = await client.post(
                     "http://bioinfo-container:8890/alignment/start",
@@ -146,22 +161,17 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
                     headers=headers,
                 )
                 if response.status_code in (200, 202):
-                    await update_tabela_alinhamento(page, token, user_id)
-                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                     body = response.json()
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"Alinhamento enfileirado para {basename} (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
-                        status = result.get("status")
-                        if status == "COMPLETED":
-                            await log_message(page, f"Alinhamento concluído para {basename}.")
-                        else:
-                            await log_message(page, f"Alinhamento de {basename} finalizado com status {status}.")
-                        await update_tabela_alinhamento(page, token, user_id)
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                        page.run_task(monitor_alignment, basename, job_id)
+                        queued += 1
                 else:
                     await log_message(page, f"Erro ao iniciar alinhamento para {basename}: {response.text}")
+            if queued:
+                await update_tabela_alinhamento(page, token, user_id)
+                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
     except Exception as e:
         await log_message(page, f"Erro ao iniciar alinhamento: {e}")
 

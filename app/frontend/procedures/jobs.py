@@ -80,6 +80,12 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
             completed = total
         if status == "RUNNING" and result.get("progress_source") == "fastqc_log" and current.endswith(": 100%"):
             current = t("qc_finalizing", lang)
+        if result.get("progress_source") == "alignment_log":
+            phase = result.get("progress_phase") or "starting"
+            current = t(f"alignment_phase_{phase}", lang)
+            records = result.get("processed_records")
+            if isinstance(records, int) and records > 0:
+                current += f" · {records:,} {t('alignment_records', lang)}"
         count = f"{completed}/{total} · " if completed is not None and total else ""
         detail.value = f"{count}{current} · {status_label}"
         if status in ("FAILED", "CANCELED"):

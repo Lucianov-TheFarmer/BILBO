@@ -164,6 +164,32 @@ def _fastqc_progress(job: PipelineJob) -> Optional[dict[str, object]]:
             "progress_source": "fastqc_log"}
 
 
+def _alignment_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    if job.status != PipelineStatus.RUNNING.value:
+        return None
+    sample = str((job.payload or {}).get("sample") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}", sample):
+        return None
+    prefix = Path("/users") / str(job.user_id) / "alignment" / sample / sample
+    log = _tail_text_file(str(prefix) + "_custom.log", 16384)
+    phases = (
+        ("[alignment] Completed", "completed"),
+        ("[alignment] Cleanup intermediates", "cleanup"),
+        ("[alignment] Marking duplicates", "mark_duplicates"),
+        ("[alignment] Adding read groups", "read_groups"),
+        ("[alignment] Sorting BAM", "sorting"),
+        ("[alignment] Running STAR", "star"),
+    )
+    phase = next((name for marker, name in phases if marker in log), "starting")
+    # Picard reports processed records periodically. This is a count, not an
+    # estimated percentage, because multimapping makes the final count unknown.
+    phase_log = log.rsplit("[alignment]", 1)[-1]
+    counts = re.findall(r"(?:Read|Wrote|Processed|Written)\s+([\d,]+)\s+records", phase_log)
+    processed = int(counts[-1].replace(",", "")) if counts else None
+    return {"progress_phase": phase, "processed_records": processed,
+            "progress_source": "alignment_log"}
+
+
 @router.post("/jobs/{stage}/enqueue", status_code=status.HTTP_202_ACCEPTED, response_model=JobEnqueueResponse)
 def enqueue_stage_job(
     stage: str,
@@ -210,6 +236,10 @@ def get_job_status(
             result_payload.update(progress_data)
     elif job.stage in ("quality_analysis", "quality_analysis_post_trim"):
         progress_data = _fastqc_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage == "alignment":
+        progress_data = _alignment_progress(job)
         if progress_data:
             result_payload.update(progress_data)
 

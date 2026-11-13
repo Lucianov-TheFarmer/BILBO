@@ -230,12 +230,15 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 response = await client.post("http://bioinfo-container:8890/quality_analysis_post_trim/start", json={"samples": selected_samples}, headers=headers)
                 if response.status_code in (200, 202):
                     body = response.json()
-                    job_id = body.get("job_id")
-                    if job_id:
-                        await log_message(page, f"QC pós-trim enfileirado (job {job_id}).")
-                        result = await wait_with_progress(page, token, job_id, t("qc_post_progress", page.session.get("lang") or "pt"))
-                        status = result.get("status")
-                        await log_message(page, f"QC pós-trim finalizado com status {status}.")
+                    async def monitor_qc(name, job_id):
+                        result = await wait_with_progress(page, token, job_id,
+                            f"{t('qc_post_progress', page.session.get('lang') or 'pt')} — {name}")
+                        await log_message(page, f"{name}: {result.get('status')}.")
+                        await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita,
+                            tabela_amostras_local, atualizar_tabela, user_id)
+                    for name, job_id in zip(selected_samples, body.get("job_ids") or [body.get("job_id")]):
+                        if job_id:
+                            page.run_task(monitor_qc, name, job_id)
                     logger.info(f"Análise de qualidade pós-trimmagem iniciada para {selected_samples} com sucesso!")
                     await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
                     page.update()
