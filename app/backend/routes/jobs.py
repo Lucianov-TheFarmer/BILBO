@@ -1,5 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
+import csv
+import json
 
 from datetime import datetime, timezone
 import os
@@ -74,6 +76,38 @@ def _extract_progress_percent(log_text: str) -> Optional[float]:
         if 0.0 <= pct <= 100.0:
             return pct
     return None
+
+
+def _llm_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Read atomic RAG checkpoints while an interpretation job is running."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    sheets = (job.payload or {}).get("sheets") or []
+    if len(sheets) != 1 or not re.fullmatch(r"[A-Za-z0-9_.-]+", str(sheets[0])):
+        return None
+    sheet = sheets[0]
+    started = job.started_at.timestamp()
+    root = Path("/users") / str(job.user_id)
+    selected = root / "clustering" / sheet / "outputs" / "prioritized_genes.csv"
+    checkpoint = root / "llm" / sheet / "rag_gene_evidence.json"
+    try:
+        if not selected.is_file() or selected.stat().st_mtime < started - 2:
+            return None
+        with selected.open(newline="", encoding="utf-8") as stream:
+            total = sum(str(row.get("selected_for_search", "")).lower() in ("true", "1", "yes")
+                        for row in csv.DictReader(stream))
+        if total < 1:
+            return None
+        done = 0
+        if checkpoint.is_file() and checkpoint.stat().st_mtime >= started - 2:
+            data = json.loads(checkpoint.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                done = min(len(data), total)
+        return {"progress_source": "rag_checkpoint", "progress_phase": "rag",
+                "progress_done": done, "progress_total": total,
+                "progress_percent": round(100 * done / total, 1)}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
@@ -240,6 +274,10 @@ def get_job_status(
             result_payload.update(progress_data)
     elif job.stage == "alignment":
         progress_data = _alignment_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage == "llm":
+        progress_data = _llm_progress(job)
         if progress_data:
             result_payload.update(progress_data)
 

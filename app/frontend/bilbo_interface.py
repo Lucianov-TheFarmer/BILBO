@@ -571,8 +571,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     menubar_principal = create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id)
 
     container_terminal = ft.Container(
-        height=190,
-        visible=False,
+        expand=2,
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),

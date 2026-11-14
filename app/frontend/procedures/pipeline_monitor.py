@@ -71,7 +71,6 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                         llm_job = llm_detail.json()
             if run:
                 card.visible = True
-                terminal_container.visible = True
                 status = run["status"]
                 status_label = t("pipeline_" + status.lower(), lang)
                 title.value = f"{t('pipeline_progress_title', lang)} · {run['config']['name']}"
@@ -94,6 +93,9 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     result = job.get("result") or {}
                     percent = result.get("progress_percent")
                     phase = result.get("progress_message") or ""
+                    if result.get("progress_source") == "rag_checkpoint":
+                        phase = t("pipeline_llm_rag_progress", lang).format(
+                            done=result["progress_done"], total=result["progress_total"])
                     if step["stage"] in ("clustering", "llm") and result.get("progress_log"):
                         phase = str(result["progress_log"]).splitlines()[-1]
                     if result.get("progress_source") == "alignment_log":
@@ -129,13 +131,19 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
             if llm_job and llm_job["job_id"] not in pipeline_llm_jobs:
                 previous_llm = llm_job["job_id"]
                 llm_card.visible = True
-                terminal_container.visible = True
                 llm_title.value = f"{t('pipeline_stage_llm', lang)} · {t('pipeline_' + llm_job['status'].lower(), lang)}"
-                lines = str((llm_job.get("result") or {}).get("progress_log") or "").splitlines()
-                llm_phase.value = lines[-1][:180] if lines else t("pipeline_llm_waiting", lang)
-                llm_bar.value = (1 if llm_job["status"] == "COMPLETED" else
+                result = llm_job.get("result") or {}
+                lines = str(result.get("progress_log") or "").splitlines()
+                llm_phase.value = (t("pipeline_llm_rag_progress", lang).format(
+                    done=result["progress_done"], total=result["progress_total"])
+                    if result.get("progress_source") == "rag_checkpoint" else
+                    lines[-1][:180] if lines else t("pipeline_llm_waiting", lang))
+                percent = result.get("progress_percent")
+                llm_bar.value = (max(0, min(1, percent / 100))
+                                 if isinstance(percent, (int, float)) else
+                                 1 if llm_job["status"] == "COMPLETED" else
                                  0 if llm_job["status"] == "PENDING" else None)
-                llm_bar.color = "red" if llm_job["status"] == "FAILED" else None
+                llm_bar.color = "red" if llm_job["status"] == "FAILED" else "blue"
                 page.update()
             elif llm_card.visible:
                 llm_card.visible = False

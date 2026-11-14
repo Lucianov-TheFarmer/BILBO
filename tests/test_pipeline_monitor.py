@@ -60,13 +60,15 @@ class _ActiveLlmClient(_HistoryOnlyClient):
             return _Response([{"job_id": "llm-1", "status": "RUNNING"}])
         if url.endswith("/jobs/llm-1"):
             return _Response({"job_id": "llm-1", "status": "RUNNING",
-                              "result": {"progress_log": "Started\nProcessing cluster 2"}})
+                              "result": {"progress_source": "rag_checkpoint",
+                                         "progress_done": 6, "progress_total": 53,
+                                         "progress_percent": 11.3}})
         return await super().get(url)
 
 
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def _one_poll(self, client):
-        terminal = ft.Container(content=ft.ListView(controls=[]), visible=False)
+        terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
         page = SimpleNamespace(container_terminal=terminal,
                                session={"lang": "pt"}, update=lambda: None)
 
@@ -85,12 +87,13 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def test_completed_run_from_previous_session_stays_out_of_terminal(self):
         terminal = await self._one_poll(_HistoryOnlyClient())
         self.assertFalse(terminal.content.controls[0].visible)
-        self.assertFalse(terminal.visible)
+        self.assertTrue(terminal.visible)
 
     async def test_running_llm_reappears_after_login(self):
         terminal = await self._one_poll(_ActiveLlmClient())
         self.assertTrue(terminal.content.controls[1].visible)
-        self.assertIn("Processing cluster 2", terminal.content.controls[1].content.controls[2].value)
+        self.assertIn("6/53", terminal.content.controls[1].content.controls[2].value)
+        self.assertAlmostEqual(.113, terminal.content.controls[1].content.controls[1].value)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))
