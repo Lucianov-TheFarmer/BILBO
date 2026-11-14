@@ -1355,8 +1355,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
             db.commit()
 
             _progress_event(
-                f"Clusterização — {safe_sheet} concluída. "
-                "Interpretação LLM/RAG aguardando execução manual."
+                f"Clusterização — {safe_sheet} concluída."
             )
         except Exception as exc:
             _progress_event(
