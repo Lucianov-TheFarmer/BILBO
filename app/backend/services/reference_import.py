@@ -20,6 +20,7 @@ MAX_UNPACKED = 24 * 1024**3
 CHUNK = 8 * 1024**2
 NUCLEOTIDES = set("ACGTNRYKMSWBDHVUacgtnrykmswbdhvu")
 FASTA_SUFFIXES = (".fa", ".fasta", ".fna")
+PROTEIN_SUFFIXES = (".fa", ".fasta", ".faa", ".pep")
 ANNOTATION_SUFFIXES = (".gff", ".gff3", ".gtf")
 
 
@@ -33,7 +34,8 @@ def source_format(filename: str, kind: str) -> tuple[str, str]:
             compression = suffix
             name = name[:-len(suffix)]
             break
-    allowed = FASTA_SUFFIXES if kind == "fasta" else ANNOTATION_SUFFIXES
+    allowed = (FASTA_SUFFIXES if kind == "fasta" else
+               PROTEIN_SUFFIXES if kind == "protein" else ANNOTATION_SUFFIXES)
     extension = next((suffix for suffix in allowed if name.endswith(suffix)), None)
     if extension is None:
         raise ValueError(f"Unsupported {kind} file format")
@@ -119,7 +121,7 @@ def materialize(source: Path, destination: Path, kind: str) -> str:
                 if info.flag_bits & 1 or (info.external_attr >> 16) & 0o170000 == 0o120000:
                     raise ValueError("Encrypted files and links are not accepted in reference ZIPs")
                 members.append(info)
-            if not members or (kind == "annotation" and len(members) != 1):
+            if not members or (kind in ("annotation", "protein") and len(members) != 1):
                 raise ValueError("ZIP must contain reference FASTA or one annotation file")
             if sum(info.file_size for info in members) > MAX_UNPACKED:
                 raise ValueError("Unpacked reference exceeds 24 GiB")
@@ -151,6 +153,34 @@ def _copy_limited(source, target) -> None:
         if written > MAX_UNPACKED:
             raise ValueError("Unpacked reference exceeds 24 GiB")
         target.write(chunk)
+
+
+def validate_protein_fasta(path: Path) -> int:
+    """Check that an optional protein FASTA has unique IDs and amino acid sequences."""
+    seen = set()
+    current = None
+    has_sequence = False
+    alphabet = set("ACDEFGHIKLMNPQRSTVWYBXZJUO*acdefghiklmnpqrstvwybxzjuo")
+    with path.open(encoding="utf-8") as stream:
+        for raw in stream:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if current is not None and not has_sequence:
+                    raise ValueError(f"Protein FASTA sequence {current} is empty")
+                current = line[1:].split()[0] if line[1:].split() else ""
+                if not current or current in seen:
+                    raise ValueError("Protein FASTA identifiers must be unique and nonempty")
+                seen.add(current)
+                has_sequence = False
+            else:
+                if current is None or any(amino not in alphabet for amino in line):
+                    raise ValueError("Invalid protein FASTA sequence")
+                has_sequence = True
+    if not seen or not has_sequence:
+        raise ValueError("Protein FASTA is empty")
+    return len(seen)
 
 
 def validate_fasta(path: Path) -> set[str]:

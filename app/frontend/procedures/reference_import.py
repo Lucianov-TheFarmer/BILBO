@@ -17,6 +17,7 @@ async def show_reference_url_modal(page, token, on_closed=None):
     name = ft.TextField(label=t("reference_name", lang), width=550)
     fasta = ft.TextField(label=t("reference_fasta_url", lang), width=550)
     annotation = ft.TextField(label=t("reference_annotation_url", lang), width=550)
+    protein = ft.TextField(label=t("reference_protein_url", lang), width=550)
     threads = ft.TextField(label=t("reference_threads", lang), value="8", width=120)
     overhang = ft.TextField(label="sjdbOverhang", value="100", width=140)
     status = ft.Text("")
@@ -46,6 +47,8 @@ async def show_reference_url_modal(page, token, on_closed=None):
             payload = {"label": name.value, "fasta_url": fasta.value,
                        "annotation_url": annotation.value, "threads": int(threads.value),
                        "sjdb_overhang": int(overhang.value)}
+            if protein.value and protein.value.strip():
+                payload["protein_url"] = protein.value.strip()
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post("http://bioinfo-container:8890/genomes/import/url",
                                              json=payload, headers={"Authorization": f"Bearer {token}"})
@@ -93,7 +96,7 @@ async def show_reference_url_modal(page, token, on_closed=None):
     dialog = ft.AlertDialog(
         title=ft.Text(t("reference_url_title", lang)),
         content=ft.Container(width=580, height=460, content=ft.Column(scroll=ft.ScrollMode.AUTO, controls=[
-            ft.Text(t("reference_help", lang), size=12), name, fasta, annotation,
+            ft.Text(t("reference_help", lang), size=12), name, fasta, annotation, protein,
             ft.Row(controls=[threads, overhang]), progress, status, recent])),
         actions=[ft.TextButton(t("btn_cancel", lang), on_click=lambda e: page.run_task(close_dialog)),
                  submit_button])
@@ -104,17 +107,18 @@ async def show_reference_url_modal(page, token, on_closed=None):
 async def show_reference_upload_modal(page, token, on_closed=None):
     lang = page.session.get("lang") or "pt"
     copy = {
-        "pt": ["Enviar genoma de referência", "Nome do genoma", "FASTA genômico", "Anotação GFF3 ou GTF", "Enviar e indexar", "Enviando", "Validando e criando índice", "Concluído", "Erro"],
-        "en": ["Upload reference genome", "Reference name", "Genomic FASTA", "GFF3 or GTF annotation", "Upload and index", "Uploading", "Validating and indexing", "Complete", "Error"],
-        "es": ["Subir genoma de referencia", "Nombre del genoma", "FASTA genómico", "Anotación GFF3 o GTF", "Subir e indexar", "Subiendo", "Validando e indexando", "Completado", "Error"],
+        "pt": ["Enviar genoma de referência", "Nome do genoma", "FASTA genômico", "Anotação GFF3 ou GTF", "Enviar e indexar", "Enviando", "Validando e criando índice", "Concluído", "Erro", "FASTA de proteínas (opcional, recomendado para GO)"],
+        "en": ["Upload reference genome", "Reference name", "Genomic FASTA", "GFF3 or GTF annotation", "Upload and index", "Uploading", "Validating and indexing", "Complete", "Error", "Protein FASTA (optional, recommended for GO)"],
+        "es": ["Subir genoma de referencia", "Nombre del genoma", "FASTA genómico", "Anotación GFF3 o GTF", "Subir e indexar", "Subiendo", "Validando e indexando", "Completado", "Error", "FASTA de proteínas (opcional, recomendado para GO)"],
     }[lang if lang in ("pt", "en", "es") else "pt"]
     html = """<!doctype html><html><meta charset='utf-8'><body style='font:15px sans-serif'>
 <h3 id='title'></h3><form id='form'><p><label id='lname'></label><br><input name='label' required maxlength='100'></p>
 <p><label id='lfasta'></label><br><input type='file' name='fasta' required accept='.fa,.fasta,.fna,.fa.gz,.fasta.gz,.fna.gz,.fa.zip,.fasta.zip,.fna.zip'></p>
 <p><label id='lannotation'></label><br><input type='file' name='annotation' required accept='.gff,.gff3,.gtf,.gff.gz,.gff3.gz,.gtf.gz,.gff.zip,.gff3.zip,.gtf.zip'></p>
+<p><label id='lprotein'></label><br><input type='file' name='protein' accept='.fa,.fasta,.faa,.pep,.fa.gz,.fasta.gz,.faa.gz,.pep.gz,.fa.zip,.fasta.zip,.faa.zip,.pep.zip'></p>
 <input name='threads' type='hidden' value='8'><input name='sjdb_overhang' type='hidden' value='100'>
 <button id='send'></button></form><progress id='bar' value='0' max='100' style='width:95%'></progress><p id='status'></p>
-<script>const c=COPY, token=TOKEN; ['title','lname','lfasta','lannotation','send'].forEach((id,i)=>document.getElementById(id).textContent=c[i]);
+<script>const c=COPY, token=TOKEN; ['title','lname','lfasta','lannotation','send'].forEach((id,i)=>document.getElementById(id).textContent=c[i]);document.getElementById('lprotein').textContent=c[9];
 document.getElementById('form').onsubmit=e=>{e.preventDefault(); const xhr=new XMLHttpRequest();
 xhr.open('POST','http://localhost:8890/genomes/import/upload');xhr.setRequestHeader('Authorization','Bearer '+token);
 xhr.upload.onprogress=e=>{if(e.lengthComputable){document.getElementById('bar').value=Math.round(e.loaded*100/e.total);document.getElementById('status').textContent=c[5]+' '+document.getElementById('bar').value+'%';}};

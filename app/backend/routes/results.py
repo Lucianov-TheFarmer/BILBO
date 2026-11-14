@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,14 @@ from ..utils import get_current_user, get_current_user_compat
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 
 router = APIRouter()
+
+
+def _selected_sheets_filename(sheet_names: list[str]) -> str:
+    """Name a downloaded workbook after its selected contrasts, not its user ID."""
+    if len(sheet_names) != 1:
+        return "DEG_contrastes_selecionados.xlsx"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", sheet_names[0]).strip("._-")
+    return f"{stem[:150].rstrip('._-') or 'contraste'}.xlsx"
 
 
 def _deg_dir(user_id: int) -> Path:
@@ -175,7 +184,7 @@ def download_deg_sheets(
 
     return FileResponse(
         path=str(tmp_path),
-        filename=f"DEG_selected_sheets_{current_user.id}.xlsx",
+        filename=_selected_sheets_filename(requested),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )

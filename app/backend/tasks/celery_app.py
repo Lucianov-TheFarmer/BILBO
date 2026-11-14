@@ -18,6 +18,10 @@ celery_app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    # Alignment and DEG jobs can run longer than Redis's one-hour default.
+    broker_transport_options={"visibility_timeout": 180000},
+    result_backend_transport_options={"visibility_timeout": 180000},
+    visibility_timeout=180000,
     task_default_retry_delay=30,
     task_annotations={"pipeline.execute": {"max_retries": 2}},
     broker_connection_retry_on_startup=True,

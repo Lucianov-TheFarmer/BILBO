@@ -3,11 +3,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Tuple
+
+import openpyxl
+
+if os.name == "posix":
+    import fcntl
 
 from sqlalchemy.orm import Session
 
@@ -408,6 +414,21 @@ def _finalize_job(
 
 @celery_app.task(bind=True, name="pipeline.execute")
 def execute_pipeline_job(self, job_id: str):
+    if os.name != "posix":
+        return _execute_pipeline_job_locked(self, job_id)
+    lock_dir = Path(settings.users_root) / ".job_locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_job_id = ensure_safe_component(job_id, "job_id")
+    with (lock_dir / f"{safe_job_id}.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info(json.dumps({"event": "job_skipped_duplicate", "job_id": job_id}))
+            return
+        return _execute_pipeline_job_locked(self, job_id)
+
+
+def _execute_pipeline_job_locked(self, job_id: str):
     db = SessionLocal()
     stage = "unknown"
     user_id = -1
@@ -923,6 +944,26 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
     )
 
 
+def _go_coverage(workbook: Path) -> tuple[int, int]:
+    """Count DEG rows with at least one GO term across all contrast sheets."""
+    book = openpyxl.load_workbook(workbook, read_only=True, data_only=True)
+    total = annotated = 0
+    try:
+        for sheet in book:
+            rows = sheet.iter_rows(values_only=True)
+            headers = next(rows, ())
+            indexes = [headers.index(name) for name in ("Uniprot BP", "Uniprot MF", "Uniprot CC")
+                       if name in headers]
+            for row in rows:
+                total += 1
+                if any(index < len(row) and row[index] and "GO:" in str(row[index])
+                       for index in indexes):
+                    annotated += 1
+    finally:
+        book.close()
+    return total, annotated
+
+
 def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     run_id = payload.get("run_id")
     if run_id:
@@ -1059,6 +1100,89 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
 
                         if uni_rc != 0:
                             annotation_error = "Falha na anotação UniProt: " + (uni_stderr[-1500:] or f"rc={uni_rc}")
+
+                        total_genes, annotated_genes = _go_coverage(deg_xlsx)
+                        annotation_result["go_coverage"] = {
+                            "total_genes": total_genes,
+                            "annotated_genes": annotated_genes,
+                        }
+                        _progress_event(
+                            f"Anotação GO: {annotated_genes}/{total_genes} genes após consulta UniProt."
+                        )
+                        if total_genes and not annotated_genes:
+                            annotation_error = None  # homology may recover a failed text lookup
+                            protein_path = next((path for path in (
+                                genome_dir / "protein.fa.zip",
+                                genome_dir / "protein.fasta",
+                                genome_dir / "protein.fa",
+                                genome_dir / "protein.faa",
+                            ) if path.is_file()), None)
+                            reference_data = _abs_users("reference_databases")
+                            if protein_path is None:
+                                gffread = (shutil.which("gffread") or
+                                           str(reference_data / "gffread_env" / "bin" / "gffread"))
+                                genomic_fasta = genome_dir / "genomic.fa"
+                                if Path(gffread).is_file() and genomic_fasta.is_file():
+                                    generated_proteins = genome_dir / "protein.fa"
+                                    extract_rc, _, extract_stderr = _run([
+                                        gffread, "-S", "-y", str(generated_proteins), "-g",
+                                        str(genomic_fasta), str(gff_path),
+                                    ], timeout=14400)
+                                    if (extract_rc == 0 and generated_proteins.is_file()
+                                            and generated_proteins.stat().st_size):
+                                        protein_path = generated_proteins
+                                        annotation_result["protein_source"] = "translated_CDS"
+                                    else:
+                                        generated_proteins.unlink(missing_ok=True)
+                                        annotation_result["protein_extraction_error"] = extract_stderr[-1500:]
+                            diamond_db = reference_data / "viridiplantae_reviewed.dmnd"
+                            diamond_metadata = reference_data / "viridiplantae_reviewed.tsv.gz"
+                            diamond_binary = (shutil.which("diamond") or
+                                              str(reference_data / "tools" / "diamond"))
+                            if protein_path and Path(diamond_binary).is_file():
+                                prepare_rc, prepare_stdout, prepare_stderr = _run([
+                                    "python", "/app/backend/scripts/prepare_go_database.py",
+                                    str(reference_data), str(diamond_binary),
+                                ], timeout=7200)
+                                if prepare_rc:
+                                    annotation_error = "Falha ao preparar a base UniProt: " + (
+                                        prepare_stderr[-1500:] or f"rc={prepare_rc}")
+                                else:
+                                    annotation_result["database"] = prepare_stdout[-1500:]
+                            if (protein_path and Path(diamond_binary).is_file()
+                                    and diamond_db.is_file() and diamond_metadata.is_file()
+                                    and annotation_error is None):
+                                homology_output = deg_dir / "DEG_homology.xlsx"
+                                homology_rc, homology_stdout, homology_stderr = _run([
+                                    "python", "/app/backend/scripts/annotate_deg_by_homology.py",
+                                    str(deg_xlsx), str(protein_path), str(diamond_db),
+                                    str(diamond_metadata), str(homology_output),
+                                    str(deg_dir / "homology"), "--diamond", str(diamond_binary),
+                                ], timeout=7200)
+                                annotation_result["homology_stdout"] = homology_stdout[-3000:]
+                                annotation_result["homology_stderr"] = homology_stderr[-3000:]
+                                if homology_rc == 0 and homology_output.is_file():
+                                    _, annotated_genes = _go_coverage(homology_output)
+                                    if annotated_genes:
+                                        backup = deg_dir / f"DEG_before_homology_{job_id}.xlsx"
+                                        shutil.copy2(deg_xlsx, backup)
+                                        shutil.copy2(homology_output, deg_xlsx)
+                                        annotation_result["homology"] = "COMPLETED"
+                                        annotation_result["go_coverage"]["annotated_genes"] = annotated_genes
+                                        _progress_event(
+                                            f"Anotação GO por homologia: {annotated_genes}/{total_genes} genes."
+                                        )
+                                        annotation_error = None
+                                    else:
+                                        annotation_error = "Homologia concluída sem termos GO confiáveis."
+                                else:
+                                    annotation_error = "Falha na anotação por homologia: " + (
+                                        homology_stderr[-1500:] or f"rc={homology_rc}")
+                            elif annotation_error is None:
+                                annotation_error = (
+                                    "Nenhum termo GO foi obtido. É necessário um FASTA de proteínas "
+                                    "da referência ou CDS traduzíveis no GFF para a anotação por homologia."
+                                )
 
     # --------------------------------------------------------
     # 3. Gerar figuras DEG após a anotação funcional

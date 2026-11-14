@@ -6,6 +6,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -26,6 +27,7 @@ class UrlReference(BaseModel):
     label: str = Field(min_length=2, max_length=100)
     fasta_url: str
     annotation_url: str
+    protein_url: Optional[str] = None
     threads: int = Field(default=8, ge=1, le=64)
     sjdb_overhang: int = Field(default=100, ge=1, le=1000)
 
@@ -58,16 +60,19 @@ def import_url(request: UrlReference, user: User = Depends(get_current_user), db
     try:
         fasta = validate_public_url(request.fasta_url, "fasta")
         annotation = validate_public_url(request.annotation_url, "annotation")
+        protein = validate_public_url(request.protein_url, "protein") if request.protein_url else None
     except (ValueError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
     return _queue(db, user, request.label,
-                  {"type": "url", "fasta": fasta, "annotation": annotation},
+                  {"type": "url", "fasta": fasta, "annotation": annotation,
+                   **({"protein": protein} if protein else {})},
                   request.threads, request.sjdb_overhang)
 
 
 @router.post("/upload", status_code=202)
 async def import_upload(label: str = Form(...), fasta: UploadFile = File(...),
-                        annotation: UploadFile = File(...), threads: int = Form(8),
+                        annotation: UploadFile = File(...), protein: Optional[UploadFile] = File(None),
+                        threads: int = Form(8),
                         sjdb_overhang: int = Form(100), user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     if not 1 <= threads <= 64 or not 1 <= sjdb_overhang <= 1000:
@@ -75,12 +80,17 @@ async def import_upload(label: str = Form(...), fasta: UploadFile = File(...),
     try:
         source_format(fasta.filename or "", "fasta")
         source_format(annotation.filename or "", "annotation")
+        if protein is not None and protein.filename:
+            source_format(protein.filename, "protein")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     incoming = Path(settings.users_root) / "ref_genomes" / "_incoming" / uuid.uuid4().hex
     incoming.mkdir(parents=True, exist_ok=False)
     try:
-        for upload, kind in ((fasta, "fasta"), (annotation, "annotation")):
+        uploads = [(fasta, "fasta"), (annotation, "annotation")]
+        if protein is not None and protein.filename:
+            uploads.append((protein, "protein"))
+        for upload, kind in uploads:
             target = incoming / f"{kind}{''.join(Path(upload.filename).suffixes)}"
             total = 0
             with target.open("wb") as output:
@@ -89,10 +99,12 @@ async def import_upload(label: str = Form(...), fasta: UploadFile = File(...),
                     if total > MAX_TRANSFER:
                         raise ValueError("Reference upload exceeds the 12 GiB file limit")
                     output.write(chunk)
-        return _queue(db, user, label,
-                      {"type": "upload", "directory": str(incoming),
-                       "fasta": next(str(p) for p in incoming.iterdir() if p.name.startswith("fasta")),
-                       "annotation": next(str(p) for p in incoming.iterdir() if p.name.startswith("annotation"))},
+        source = {"type": "upload", "directory": str(incoming),
+                  "fasta": next(str(p) for p in incoming.iterdir() if p.name.startswith("fasta")),
+                  "annotation": next(str(p) for p in incoming.iterdir() if p.name.startswith("annotation"))}
+        if protein is not None and protein.filename:
+            source["protein"] = next(str(p) for p in incoming.iterdir() if p.name.startswith("protein"))
+        return _queue(db, user, label, source,
                       threads, sjdb_overhang)
     except Exception:
         shutil.rmtree(incoming, ignore_errors=True)

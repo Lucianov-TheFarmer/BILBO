@@ -15,7 +15,7 @@ from ..schemas.common import PipelineStatus
 from ..services.job_service import set_job_finished, set_job_running
 from ..services.reference_import import (
     download_public_file, gff3_to_star_gtf, materialize,
-    validate_annotation, validate_fasta,
+    validate_annotation, validate_fasta, validate_protein_fasta,
 )
 from .celery_app import celery_app
 
@@ -44,7 +44,9 @@ def import_reference(job_id: str) -> None:
         if source["type"] == "url":
             incoming.mkdir(parents=True, exist_ok=False)
             local = {}
-            for kind in ("fasta", "annotation"):
+            for kind in ("fasta", "annotation", "protein"):
+                if kind not in source:
+                    continue
                 url = source[kind]
                 filename = unquote(Path(urlsplit(url).path).name)
                 local[kind] = incoming / filename
@@ -55,7 +57,8 @@ def import_reference(job_id: str) -> None:
             incoming = Path(source["directory"])
             if incoming.resolve().parent != (root / "_incoming").resolve():
                 raise ValueError("Invalid upload staging path")
-            local = {kind: Path(source[kind]) for kind in ("fasta", "annotation")}
+            local = {kind: Path(source[kind]) for kind in ("fasta", "annotation", "protein")
+                     if kind in source}
             if any(path.resolve().parent != incoming.resolve() for path in local.values()):
                 raise ValueError("Invalid upload file path")
         else:
@@ -70,6 +73,11 @@ def import_reference(job_id: str) -> None:
         unpacked_annotation.replace(annotation_path)
         fasta_ids = validate_fasta(final / "genomic.fa")
         validate_annotation(annotation_path, fasta_ids, annotation_ext)
+        if "protein" in local:
+            protein_path = final / "protein.fa"
+            materialize(local["protein"], protein_path, "protein")
+            protein_count = validate_protein_fasta(protein_path)
+            logger.info("Reference %s has %s protein sequences", accession, protein_count)
         if annotation_ext != ".gtf":
             gff3_to_star_gtf(annotation_path, final / "genomic.gtf")
         _progress(db, job, "indexing", 0, 0)
