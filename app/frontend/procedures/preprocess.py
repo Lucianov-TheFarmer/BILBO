@@ -6,6 +6,7 @@ import logging
 import os
 import base64
 from .utils import log_message  # Adicione esta linha
+from .viewer import close_figure_button
 
 async def fetch_existing_contrasts(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -174,7 +175,7 @@ async def show_exploratory_dropdown(page, user_id):
                                         controls=[
                                             ft.Container(height=10),
                                             ft.Row(
-                                                [dropdown],
+                                                [dropdown, close_figure_button(page, container)],
                                                 alignment=ft.MainAxisAlignment.CENTER
                                             ),
                                             img_placeholder

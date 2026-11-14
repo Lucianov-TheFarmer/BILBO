@@ -95,7 +95,7 @@ async def show_pipeline_config_modal(page, token, user_id):
     show_samples(sample_data)
     stage_checks = {stage: ft.Checkbox(label=t("pipeline_stage_" + stage, lang),
                                        value=stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification"))
-                    for stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg")}
+                    for stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg", "clustering", "llm")}
     genome_field = ft.Dropdown(label=t("pipeline_genome", lang),
                                options=[ft.dropdown.Option(g["id"], f"{g['name']} ({localized_status(g['status'])})")
                                         for g in options["genomes"] if g.get("id")])
@@ -125,7 +125,7 @@ async def show_pipeline_config_modal(page, token, user_id):
     design_summary = ft.Text(t("pipeline_design_missing", lang) if not saved_design
                              else f"~0+group" + "".join("+" + v["name"]
                                                          for v in saved_design.get("variables") or []))
-    recent = ft.Column(spacing=5)
+    recent = ft.Column(spacing=5, height=190, scroll=ft.ScrollMode.AUTO)
     state = {"open": True}
 
     def build_plan():
@@ -272,7 +272,7 @@ async def show_pipeline_config_modal(page, token, user_id):
             if response.status_code != 200:
                 return
             recent.controls.clear()
-            for run in response.json()[:8]:
+            for run in response.json():
                 counts = {}
                 for step in run["steps"]:
                     counts[step["status"]] = counts.get(step["status"], 0) + 1
@@ -308,9 +308,9 @@ async def show_pipeline_config_modal(page, token, user_id):
                 done = sum(step["status"] in ("COMPLETED", "SKIPPED") for step in run["steps"])
                 progress = ft.ProgressBar(value=done / total if total else 0, height=5)
                 visible_steps = [step for step in run["steps"] if step["status"] in
-                                 ("FAILED", "BLOCKED", "RUNNING", "PENDING", "WAITING")]
+                                 ("FAILED", "BLOCKED", "RUNNING")]
                 step_lines = []
-                for step in visible_steps[:4]:
+                for step in visible_steps[:2]:
                     stage = t("pipeline_stage_" + step["stage"], lang) if step["stage"] != "input" else t("pipeline_samples", lang)
                     label = t(labels.get(step["status"], step["status"]), lang)
                     message = f"{step['sample']} · {stage}: {label}"
@@ -439,6 +439,8 @@ async def show_pipeline_config_modal(page, token, user_id):
                 ft.TextButton(t("pipeline_open_contrasts", lang),
                               on_click=lambda _: page.run_task(open_related, "contrasts")),
             ]),
+            section("clustering", [ft.Text(t("pipeline_clustering_hint", lang), size=11)]),
+            section("llm", [ft.Text(t("pipeline_llm_hint", lang), size=11)]),
             status_text,
             ft.Divider(),
             ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,

@@ -434,7 +434,7 @@ async def show_clustering(
 
                 close_icon_btn = ft.IconButton(
                     icon="close",
-                    tooltip="Fechar visualizador",
+                    tooltip=t("viewer_close", page.session.get("lang") or "pt"),
                     on_click=close_viewer,
                 )
 

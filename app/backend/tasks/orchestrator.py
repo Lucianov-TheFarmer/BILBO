@@ -16,7 +16,7 @@ from .celery_app import celery_app
 from .pipeline_tasks import enqueue_pipeline_job
 
 TERMINAL = {"COMPLETED", "FAILED", "BLOCKED", "SKIPPED", "CANCELED"}
-ORDER = ("input", "qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg")
+ORDER = ("input", "qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg", "clustering", "llm")
 MATE_SUFFIXES = ("_1", "_2", "_R1", "_R2")
 FASTQ_SUFFIXES = (".fastq.gz", ".fq.gz", ".fastq", ".fq")
 # Keep in sync with the dedicated worker concurrency in docker-compose.yml.
@@ -203,6 +203,21 @@ def _dispatch(db, run: PipelineRun, step: PipelineStep, paired: bool) -> Pipelin
         payload = {"contrast_ids": config["design"]["contrast_ids"],
                    "genome_accession": config["genome"], "design": config["design"],
                    "design_snapshot": preview, "run_id": run.id}
+    elif stage in ("clustering", "llm"):
+        from openpyxl import load_workbook
+
+        workbook = _root(user_id, "pipelines", run.id, "DEG", "DEG.xlsx")
+        book = load_workbook(workbook, read_only=True)
+        try:
+            sheets = list(book.sheetnames)
+        finally:
+            book.close()
+        if not sheets:
+            raise ValueError("Differential analysis has no contrasts to process")
+        for sheet in sheets:
+            _ensure_row(db, user_id, 9 if stage == "clustering" else 10, sheet, "__all__")
+        job_stage = stage
+        payload = {"sheets": sheets, "run_id": run.id}
     else:
         raise ValueError(f"Unknown step: {stage}")
     job = create_job(db, job_stage, user_id, payload)
@@ -226,6 +241,10 @@ def _dependencies(run: PipelineRun, step: PipelineStep) -> list[str]:
         return ["alignment"]
     if step.stage == "deg":
         return ["quantification"]
+    if step.stage == "clustering":
+        return ["deg"]
+    if step.stage == "llm":
+        return ["clustering"]
     return []
 
 
@@ -245,6 +264,12 @@ def _advance_run(db, run: PipelineRun) -> None:
             elif job.status == "COMPLETED":
                 if step.stage == "deg":
                     output_ok = (_root(run.user_id, "pipelines", run.id, "DEG", "DEG.xlsx")).is_file()
+                elif step.stage in ("clustering", "llm"):
+                    artifact = "clusters.json" if step.stage == "clustering" else "report.md"
+                    sheets = (job.payload or {}).get("sheets") or []
+                    output_ok = bool(sheets) and all(
+                        (_root(run.user_id, step.stage, sheet, artifact)).is_file()
+                        for sheet in sheets)
                 else:
                     output_ok = _ready(db, run.user_id, step.sample, step.stage, paired)
                 step.status = "COMPLETED" if output_ok else "FAILED"
@@ -288,7 +313,7 @@ def _advance_run(db, run: PipelineRun) -> None:
                 continue
         job_stage = {"input": "samples_download", "qc_raw": "quality_analysis",
                      "qc_trim": "quality_analysis_post_trim"}.get(step.stage, step.stage)
-        existing = _active_job(db, run.user_id, job_stage, step.sample) if step.stage != "deg" else None
+        existing = _active_job(db, run.user_id, job_stage, step.sample) if step.stage not in ("deg", "clustering", "llm") else None
         try:
             job = existing or _dispatch(db, run, step, paired)
         except Exception as exc:

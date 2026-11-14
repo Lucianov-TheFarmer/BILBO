@@ -38,11 +38,60 @@ class _Client:
             return _Response([{"id": "run-1", "status": "RUNNING", "config": {"name": "Test"},
                               "steps": [{"id": "step-1", "stage": "qc_raw", "sample": "A1",
                                          "status": "RUNNING", "job_id": "job-1"}]}])
+        if url.endswith("/jobs?stage=llm"):
+            return _Response([])
         return _Response({"job_id": "job-1", "result": {"progress_percent": 42,
                            "progress_message": "A1_1.fastq.gz: 42%"}})
 
 
+class _HistoryOnlyClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "old", "status": "COMPLETED",
+                               "config": {"name": "Previous session"}, "steps": []}])
+        if url.endswith("/jobs?stage=llm"):
+            return _Response([])
+        raise AssertionError(url)
+
+
+class _ActiveLlmClient(_HistoryOnlyClient):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/jobs?stage=llm"):
+            return _Response([{"job_id": "llm-1", "status": "RUNNING"}])
+        if url.endswith("/jobs/llm-1"):
+            return _Response({"job_id": "llm-1", "status": "RUNNING",
+                              "result": {"progress_log": "Started\nProcessing cluster 2"}})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
+    async def _one_poll(self, client):
+        terminal = ft.Container(content=ft.ListView(controls=[]), visible=False)
+        page = SimpleNamespace(container_terminal=terminal,
+                               session={"lang": "pt"}, update=lambda: None)
+
+        async def stop_after_first_update(_seconds):
+            raise asyncio.CancelledError()
+
+        async def refresh_tables():
+            pass
+
+        with patch.object(pipeline_monitor.httpx, "AsyncClient", return_value=client), \
+             patch.object(pipeline_monitor.asyncio, "sleep", stop_after_first_update):
+            with self.assertRaises(asyncio.CancelledError):
+                await pipeline_monitor.monitor_pipeline(page, "token", terminal, refresh_tables)
+        return terminal
+
+    async def test_completed_run_from_previous_session_stays_out_of_terminal(self):
+        terminal = await self._one_poll(_HistoryOnlyClient())
+        self.assertFalse(terminal.content.controls[0].visible)
+        self.assertFalse(terminal.visible)
+
+    async def test_running_llm_reappears_after_login(self):
+        terminal = await self._one_poll(_ActiveLlmClient())
+        self.assertTrue(terminal.content.controls[1].visible)
+        self.assertIn("Processing cluster 2", terminal.content.controls[1].content.controls[2].value)
+
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))
         page = SimpleNamespace(container_terminal=terminal,

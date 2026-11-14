@@ -1109,7 +1109,8 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         _progress_event(
                             f"Anotação GO: {annotated_genes}/{total_genes} genes após consulta UniProt."
                         )
-                        if total_genes and not annotated_genes:
+                        if total_genes:
+                            uniprot_error = annotation_error
                             annotation_error = None  # homology may recover a failed text lookup
                             protein_path = next((path for path in (
                                 genome_dir / "protein.fa.zip",
@@ -1158,6 +1159,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     str(deg_xlsx), str(protein_path), str(diamond_db),
                                     str(diamond_metadata), str(homology_output),
                                     str(deg_dir / "homology"), "--diamond", str(diamond_binary),
+                                    "--gff", str(gff_path),
                                 ], timeout=7200)
                                 annotation_result["homology_stdout"] = homology_stdout[-3000:]
                                 annotation_result["homology_stderr"] = homology_stderr[-3000:]
@@ -1179,10 +1181,14 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     annotation_error = "Falha na anotação por homologia: " + (
                                         homology_stderr[-1500:] or f"rc={homology_rc}")
                             elif annotation_error is None:
-                                annotation_error = (
-                                    "Nenhum termo GO foi obtido. É necessário um FASTA de proteínas "
-                                    "da referência ou CDS traduzíveis no GFF para a anotação por homologia."
-                                )
+                                annotation_result["homology"] = "UNAVAILABLE"
+                                if annotated_genes:
+                                    annotation_error = uniprot_error
+                                else:
+                                    annotation_error = (
+                                        "Nenhum termo GO foi obtido. É necessário um FASTA de proteínas "
+                                        "da referência ou CDS traduzíveis no GFF para a anotação por homologia."
+                                    )
 
     # --------------------------------------------------------
     # 3. Gerar figuras DEG após a anotação funcional
@@ -1275,7 +1281,9 @@ def _handle_rag_bootstrap(
 
 def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sheets = payload.get("sheets") or []
-    deg_xlsx = _abs_users(str(user_id), "DEG", "DEG.xlsx")
+    run_id = payload.get("run_id")
+    deg_xlsx = (_abs_users(str(user_id), "pipelines", ensure_safe_component(run_id, "run_id"), "DEG", "DEG.xlsx")
+                if run_id else _abs_users(str(user_id), "DEG", "DEG.xlsx"))
     results: dict[str, Any] = {}
     failed_sheets: list[str] = []
 

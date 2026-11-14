@@ -1,8 +1,6 @@
 # procedures/utils.py
 import flet as ft
 
-last_message = ""
-
 def _find_listview_in_control(ctrl):
     """Busca recursiva por um ListView dentro de um controle."""
     try:
@@ -36,12 +34,10 @@ async def log_message(page, message, container_terminal=None):
     Ou (quando você tem a referência do container):
         await log_message(page, message, container_terminal=container_terminal)
     """
-    global last_message
-    if message == last_message:
-        return
-    last_message = message
-
     listview = None
+    if (container_terminal is not None and
+            getattr(page, "container_terminal", None) is not container_terminal):
+        return
 
     # 1) se container_terminal foi passado diretamente, extrair seu ListView
     if container_terminal is not None:
@@ -80,7 +76,13 @@ async def log_message(page, message, container_terminal=None):
         return
 
     try:
+        if (listview.controls and isinstance(listview.controls[-1], ft.Text)
+                and listview.controls[-1].value == message):
+            return
         listview.controls.append(ft.Text(message))
+        current_terminal = getattr(page, "container_terminal", None)
+        if current_terminal is not None:
+            current_terminal.visible = True
         # atualizar a própria ListView evita condições em que page.update() não reflita
         # mas page.update() é seguro para garantir a atualização da UI.
         page.update()

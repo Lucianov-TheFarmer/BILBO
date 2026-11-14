@@ -5,7 +5,7 @@ import logging
 from .jobs import wait_with_progress
 from .translations import t
 from .utils import log_message
-from .viewer import create_dropdown_menu, display_graph
+from .viewer import create_dropdown_menu, display_graph, close_figure_button
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -100,7 +100,9 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
 
     preview = getattr(page, "container_preview", None)
     if isinstance(preview, ft.Container):
-        preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[dropdown_menu, initial_graph]))]
+        preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[
+            ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+            dropdown_menu, initial_graph]))]
         page.update()
         return
 
@@ -114,7 +116,9 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
                                 ft.Container(
                                     expand=True,
                                     content=ft.Column(
-                                        controls=[dropdown_menu, initial_graph]
+                                        controls=[ft.Row([close_figure_button(page, container)],
+                                                         alignment=ft.MainAxisAlignment.END),
+                                                  dropdown_menu, initial_graph]
                                     )
                                 )
                             ]

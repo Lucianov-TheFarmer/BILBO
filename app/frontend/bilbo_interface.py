@@ -571,7 +571,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
     menubar_principal = create_menubar(page, token, container_menu_direita, container_amostras, tabela_amostras_local, atualizar_tabela, user_id)
 
     container_terminal = ft.Container(
-        expand=2,
+        height=190,
+        visible=False,
         bgcolor="surface",
         border_radius=ft.border_radius.all(12),
         shadow=ft.BoxShadow(blur_radius=6, color="rgba(0, 0, 0, 0.01)"),
@@ -701,6 +702,8 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
         async with websockets.connect(f"ws://bioinfo-container:8890/ws?token={token}") as websocket:
             while True:
                 message = await websocket.recv()
+                if getattr(page, "container_terminal", None) is not container_terminal:
+                    return
                 await log_message(page, message, container_terminal=container_terminal)
                 # Update main tables when backend broadcasts events (start/completion)
                 try:

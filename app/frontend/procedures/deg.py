@@ -6,6 +6,7 @@ import logging
 import pandas as pd
 from .utils import log_message
 from .jobs import wait_for_job
+from .viewer import close_figure_button
 import os
 from ..components.general_components import create_table
 
@@ -822,7 +823,9 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                                     content=ft.Column(
                                         controls=[
                                             ft.Container(height=10),
-                                            ft.Row([dropdown, ft.Container(width=8), download_icon_btn], alignment=ft.MainAxisAlignment.CENTER),
+                                            ft.Row([dropdown, ft.Container(width=8), download_icon_btn,
+                                                    close_figure_button(page, container)],
+                                                   alignment=ft.MainAxisAlignment.CENTER),
                                             img_placeholder
                                         ],
                                         alignment=ft.MainAxisAlignment.CENTER,

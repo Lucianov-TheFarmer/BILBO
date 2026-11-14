@@ -20,7 +20,7 @@ from ..utils import get_current_user, get_current_user_compat
 from ..utils_paths import safe_resolve_user_path
 
 router = APIRouter(prefix="/pipeline")
-STAGES = ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg")
+STAGES = ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg", "clustering", "llm")
 SOURCES = {"existing", "sra", "drive", "upload"}
 
 
@@ -59,6 +59,10 @@ def _validated_plan(db: Session, user_id: int, plan: PipelinePlan) -> dict:
     enabled = {name for name, value in config["stages"].items() if value}
     if not enabled:
         raise ValueError("Choose at least one analysis")
+    if "clustering" in enabled and "deg" not in enabled:
+        raise ValueError("Semantic clustering requires differential analysis in this pipeline")
+    if "llm" in enabled and "clustering" not in enabled:
+        raise ValueError("LLM interpretation requires semantic clustering in this pipeline")
     if ("alignment" in enabled or "quantification" in enabled or "deg" in enabled) and not config["genome"]:
         raise ValueError("Choose a reference genome")
     if config["genome"]:
@@ -198,12 +202,13 @@ def create_run(plan: PipelinePlan, db: Session = Depends(get_db), user: User = D
 def _add_steps(db: Session, run: PipelineRun, config: dict):
     enabled = {name for name, value in config["stages"].items() if value}
     for sample in config["samples"]:
-        for stage in ("input", *[stage for stage in STAGES if stage in enabled and stage != "deg"]):
+        for stage in ("input", *[stage for stage in STAGES if stage in enabled and stage not in ("deg", "clustering", "llm")]):
             db.add(PipelineStep(id=uuid.uuid4().hex, run_id=run.id,
                                 sample=sample["name"], stage=stage, status="WAITING"))
-    if "deg" in enabled:
-        db.add(PipelineStep(id=uuid.uuid4().hex, run_id=run.id,
-                            sample="__all__", stage="deg", status="WAITING"))
+    for stage in ("deg", "clustering", "llm"):
+        if stage in enabled:
+            db.add(PipelineStep(id=uuid.uuid4().hex, run_id=run.id,
+                                sample="__all__", stage=stage, status="WAITING"))
 
 
 @router.get("/runs")

@@ -593,6 +593,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 await log_message(page, f"Iniciando interpretação LLM para: {', '.join(selected)}")
 
                 payload = {"sheets": selected}
+                active_terminal = getattr(page, "container_terminal", None)
                 try:
                     async with httpx.AsyncClient(timeout=None) as client:
                         resp = await client.post("http://localhost:8890/llm/run", json=payload, headers=headers)
@@ -603,61 +604,13 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                         job_id = body.get("job_id")
                         if job_id:
                             await log_message(page, f"Interpretação LLM enfileirada (job {job_id}).")
-                            # BILBO_LLM_LIVE_PROGRESS
-                            seen_progress_lines = set()
-
-                            async def _show_llm_progress(job_payload):
-                                # BILBO_LLM_NESTED_PROGRESS
-                                result_payload = job_payload.get('result') or {}
-                                if not isinstance(result_payload, dict):
-                                    result_payload = {}
-
-                                progress_value = (
-                                    job_payload.get('progress')
-                                    or job_payload.get('progress_log')
-                                    or job_payload.get('log')
-                                    or result_payload.get('progress')
-                                    or result_payload.get('progress_log')
-                                    or result_payload.get('log')
-                                    or ''
-                                )
-
-                                if isinstance(progress_value, list):
-                                    progress_lines = [
-                                        str(item)
-                                        for item in progress_value
-                                    ]
-                                else:
-                                    progress_lines = str(
-                                        progress_value
-                                    ).splitlines()
-
-                                for progress_line in progress_lines:
-                                    progress_line = progress_line.strip()
-
-                                    if (
-                                        not progress_line
-                                        or progress_line
-                                        in seen_progress_lines
-                                    ):
-                                        continue
-
-                                    seen_progress_lines.add(
-                                        progress_line
-                                    )
-
-                                    await log_message(
-                                        page,
-                                        progress_line,
-                                    )
-
-                            # BILBO_LLM_UNBOUNDED_WAIT
                             result = await wait_for_job(
                                 token,
                                 job_id,
                                 timeout=None,
-                                on_update=_show_llm_progress,
                             )
+                            if getattr(page, "container_terminal", None) is not active_terminal:
+                                return
                             status = result.get("status")
                             if status == "COMPLETED":
                                 await log_message(page, "Interpretação de clusters e RAG concluída com sucesso.")

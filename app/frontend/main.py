@@ -49,6 +49,8 @@ async def main(page: ft.Page):
         nonlocal token, username
         token = None
         username = None
+        page.container_terminal = None
+        page.container_preview = None
         page.controls.clear()
         await show_login_interface(page, login, register, toggle_theme, username_input, password_input)
         page.update()

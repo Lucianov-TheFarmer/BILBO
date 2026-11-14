@@ -26,8 +26,18 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
         content=ft.Column([title, summary, bar, details], spacing=5),
     )
     terminal.controls.append(card)
+    llm_title = ft.Text(weight=ft.FontWeight.BOLD)
+    llm_phase = ft.Text(size=11)
+    llm_bar = ft.ProgressBar(value=None, width=270)
+    llm_card = ft.Container(
+        border=ft.border.all(1, "outline"), border_radius=8,
+        padding=ft.padding.all(10), visible=False,
+        content=ft.Column([llm_title, llm_bar, llm_phase], spacing=5),
+    )
+    terminal.controls.append(llm_card)
     previous_steps = None
     previous_run = None
+    previous_llm = None
 
     while getattr(page, "container_terminal", None) is terminal_container:
         lang = page.session.get("lang") or "pt"
@@ -37,8 +47,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 response.raise_for_status()
                 runs = response.json()
                 run = next((item for item in runs if item["status"] == "RUNNING"), None)
-                if run is None:
-                    run = next((item for item in runs if item["status"] != "DRAFT"), None)
+                if run is None and previous_run:
+                    run = next((item for item in runs if item["id"] == previous_run), None)
                 if run:
                     steps = run["steps"]
                     active = [step for step in steps if step["status"] in ACTIVE]
@@ -48,8 +58,20 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     ], return_exceptions=True)
                     job_details = {job.json()["job_id"]: job.json()
                                    for job in jobs if getattr(job, "status_code", None) == 200}
+                llm_response = await client.get(f"{API}/jobs?stage=llm", headers=headers)
+                llm_response.raise_for_status()
+                llm_jobs = llm_response.json()
+                llm_item = next((item for item in llm_jobs if item["status"] in ACTIVE), None)
+                if llm_item is None and previous_llm:
+                    llm_item = next((item for item in llm_jobs if item["job_id"] == previous_llm), None)
+                llm_job = None
+                if llm_item:
+                    llm_detail = await client.get(f"{API}/jobs/{llm_item['job_id']}", headers=headers)
+                    if llm_detail.status_code == 200:
+                        llm_job = llm_detail.json()
             if run:
                 card.visible = True
+                terminal_container.visible = True
                 status = run["status"]
                 status_label = t("pipeline_" + status.lower(), lang)
                 title.value = f"{t('pipeline_progress_title', lang)} · {run['config']['name']}"
@@ -72,6 +94,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     result = job.get("result") or {}
                     percent = result.get("progress_percent")
                     phase = result.get("progress_message") or ""
+                    if step["stage"] in ("clustering", "llm") and result.get("progress_log"):
+                        phase = str(result["progress_log"]).splitlines()[-1]
                     if result.get("progress_source") == "alignment_log":
                         phase = t("alignment_phase_" + str(result.get("progress_phase") or "starting"), lang)
                     status_key = "pipeline_queued" if step["status"] == "PENDING" else "pipeline_" + step["status"].lower()
@@ -99,6 +123,22 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 page.update()
             elif card.visible:
                 card.visible = False
+                page.update()
+            pipeline_llm_jobs = {step.get("job_id") for step in (run or {}).get("steps", [])
+                                 if step["stage"] == "llm"}
+            if llm_job and llm_job["job_id"] not in pipeline_llm_jobs:
+                previous_llm = llm_job["job_id"]
+                llm_card.visible = True
+                terminal_container.visible = True
+                llm_title.value = f"{t('pipeline_stage_llm', lang)} · {t('pipeline_' + llm_job['status'].lower(), lang)}"
+                lines = str((llm_job.get("result") or {}).get("progress_log") or "").splitlines()
+                llm_phase.value = lines[-1][:180] if lines else t("pipeline_llm_waiting", lang)
+                llm_bar.value = (1 if llm_job["status"] == "COMPLETED" else
+                                 0 if llm_job["status"] == "PENDING" else None)
+                llm_bar.color = "red" if llm_job["status"] == "FAILED" else None
+                page.update()
+            elif llm_card.visible:
+                llm_card.visible = False
                 page.update()
         except Exception as exc:
             card.visible = True
