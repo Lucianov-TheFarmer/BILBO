@@ -6,7 +6,9 @@ from collections import Counter
 import flet as ft
 import httpx
 
+from .deg import _format_deg_progress
 from .translations import t
+from .utils import log_message
 
 API = "http://bioinfo-container:8890"
 ACTIVE = {"PENDING", "RUNNING"}
@@ -23,24 +25,35 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
     card = ft.Container(
         data="terminal_progress_pipeline",
         border=ft.border.all(1, "outline"), border_radius=8,
-        padding=ft.padding.all(10), visible=False,
+        padding=ft.padding.all(10),
         content=ft.Column([title, summary, bar, details], spacing=5),
     )
-    terminal.controls.append(card)
     llm_title = ft.Text(weight=ft.FontWeight.BOLD)
     llm_phase = ft.Text(size=11)
     llm_bar = ft.ProgressBar(value=None, width=270)
     llm_card = ft.Container(
         data="terminal_progress_llm",
         border=ft.border.all(1, "outline"), border_radius=8,
-        padding=ft.padding.all(10), visible=False,
+        padding=ft.padding.all(10),
         content=ft.Column([llm_title, llm_bar, llm_phase], spacing=5),
     )
-    terminal.controls.append(llm_card)
+    def show_card(control):
+        if control not in terminal.controls:
+            if control is card and llm_card in terminal.controls:
+                terminal.controls.insert(terminal.controls.index(llm_card), control)
+            else:
+                terminal.controls.append(control)
+
+    def hide_card(control):
+        if control in terminal.controls:
+            terminal.controls.remove(control)
+
     previous_steps = None
     previous_run = None
     previous_llm = None
     previous_llm_state = None
+    deg_cursors = {}
+    deg_format_states = {}
 
     while getattr(page, "container_terminal", None) is terminal_container:
         lang = page.session.get("lang") or "pt"
@@ -78,7 +91,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     if llm_detail.status_code == 200:
                         llm_job = llm_detail.json()
             if run:
-                card.visible = True
+                show_card(card)
                 status = run["status"]
                 status_label = t("pipeline_" + status.lower(), lang)
                 title.value = f"{t('pipeline_progress_title', lang)} · {run['config']['name']}"
@@ -108,6 +121,11 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                             done=result["progress_done"], total=result["progress_total"])
                     if step["stage"] in ("clustering", "llm") and result.get("progress_log"):
                         phase = str(result["progress_log"]).splitlines()[-1]
+                    if step["stage"] == "deg" and result.get("progress_log"):
+                        phase = str(result["progress_log"]).splitlines()[-1]
+                        if "] " in phase:
+                            phase = phase.split("] ", 1)[1]
+                        phase = phase.removeprefix("PROGRESS: ")
                     if result.get("progress_source") == "alignment_log":
                         phase = t("alignment_phase_" + str(result.get("progress_phase") or "starting"), lang)
                     status_key = "pipeline_queued" if step["status"] == "PENDING" else "pipeline_" + step["status"].lower()
@@ -119,6 +137,32 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     if step.get("error_message"):
                         label += f" · {step['error_message'][:150]}"
                     details.controls.append(ft.Text(label, size=11))
+                for step in steps:
+                    if step["stage"] != "deg" or not step.get("job_id"):
+                        continue
+                    job_id = step["job_id"]
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as progress_client:
+                            response = await progress_client.get(
+                                f"{API}/pipeline/jobs/{job_id}/progress",
+                                headers=headers,
+                                params={"cursor": deg_cursors.get(job_id, "0:0")},
+                            )
+                        if response.status_code != 200:
+                            continue
+                        progress = response.json()
+                        deg_cursors[job_id] = progress.get("cursor", "0:0")
+                        state = deg_format_states.setdefault(job_id, {
+                            "contrast_index": 0, "full_index": 0, "last_raw": None})
+                        total = len(
+                            (job_details.get(job_id, {}).get("payload") or {}).get("contrast_ids")
+                            or (run["config"].get("design") or {}).get("contrast_ids") or [])
+                        for line in progress.get("lines", []):
+                            message = _format_deg_progress(line, state, total)
+                            if message:
+                                await log_message(page, message, container_terminal=terminal_container)
+                    except Exception:
+                        pass
                 fingerprint = tuple(sorted((step["id"], step["status"]) for step in steps))
                 if previous_run != run["id"] or previous_steps != fingerprint:
                     previous_run, previous_steps = run["id"], fingerprint
@@ -133,8 +177,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     except Exception:
                         pass
                 page.update()
-            elif card.visible:
-                card.visible = False
+            elif card in terminal.controls:
+                hide_card(card)
                 page.update()
             if latest_llm_state != previous_llm_state:
                 previous_llm_state = latest_llm_state
@@ -146,7 +190,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                                  if step["stage"] == "llm"}
             if llm_job and llm_job["job_id"] not in pipeline_llm_jobs:
                 previous_llm = llm_job["job_id"]
-                llm_card.visible = True
+                show_card(llm_card)
                 llm_title.value = f"{t('pipeline_stage_llm', lang)} · {t('pipeline_' + llm_job['status'].lower(), lang)}"
                 result = llm_job.get("result") or {}
                 lines = str(result.get("progress_log") or "").splitlines()
@@ -161,11 +205,11 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                                  0 if llm_job["status"] == "PENDING" else None)
                 llm_bar.color = "red" if llm_job["status"] == "FAILED" else "blue"
                 page.update()
-            elif llm_card.visible:
-                llm_card.visible = False
+            elif llm_card in terminal.controls:
+                hide_card(llm_card)
                 page.update()
         except Exception as exc:
-            card.visible = True
+            show_card(card)
             title.value = t("pipeline_progress_title", lang)
             summary.value = t("pipeline_progress_unavailable", lang).format(error=str(exc)[:100])
             page.update()

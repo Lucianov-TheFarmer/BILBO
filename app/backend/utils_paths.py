@@ -22,6 +22,15 @@ def ensure_safe_component(value: str, field_name: str = "name") -> str:
     return normalized
 
 
+def deg_r_progress_path(user_root: Path, payload: dict) -> Path:
+    """Locate the DEG.R log for either a pipeline run or a manual job."""
+    run_id = payload.get("run_id")
+    if run_id:
+        return (user_root / "pipelines" / ensure_safe_component(str(run_id), "run_id")
+                / "preprocess" / "DEG_R.log")
+    return user_root / "preprocess" / "DEG_R.log"
+
+
 def safe_resolve_user_path(users_root: str, user_id: int, *parts: str) -> Path:
     root = Path(users_root).resolve()
     base = (root / str(user_id)).resolve()

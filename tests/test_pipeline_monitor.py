@@ -73,6 +73,22 @@ class _FinishedLlmClient(_HistoryOnlyClient):
         return await super().get(url)
 
 
+class _DegClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "run-deg", "status": "RUNNING",
+                               "config": {"name": "DEG test", "design": {"contrast_ids": [1]}},
+                               "steps": [{"id": "step-deg", "stage": "deg", "sample": "__all__",
+                                          "status": "RUNNING", "job_id": "job-deg"}]}])
+        if url.endswith("/pipeline/jobs/job-deg/progress"):
+            return _Response({"cursor": "1:1", "lines": [
+                "[2026-11-15T11:40:00+00:00] PROGRESS: DEG — anotação UniProt iniciada."]})
+        if url.endswith("/jobs/job-deg"):
+            return _Response({"job_id": "job-deg", "payload": {"contrast_ids": [1]},
+                              "result": {"progress_log": "[now] PROGRESS: DEG — anotação UniProt iniciada."}})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def _one_poll(self, client, tracked_run_id=None):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
@@ -95,7 +111,7 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_completed_run_from_previous_session_stays_out_of_terminal(self):
         terminal, _ = await self._one_poll(_HistoryOnlyClient())
-        self.assertFalse(terminal.content.controls[0].visible)
+        self.assertEqual([], terminal.content.controls)
         self.assertTrue(terminal.visible)
 
     async def test_run_that_finished_before_first_poll_stays_visible_this_session(self):
@@ -112,15 +128,21 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_running_llm_reappears_after_login(self):
         terminal, refreshes = await self._one_poll(_ActiveLlmClient())
-        self.assertTrue(terminal.content.controls[1].visible)
-        self.assertIn("6/53", terminal.content.controls[1].content.controls[2].value)
-        self.assertAlmostEqual(.113, terminal.content.controls[1].content.controls[1].value)
+        self.assertEqual("terminal_progress_llm", terminal.content.controls[0].data)
+        self.assertIn("6/53", terminal.content.controls[0].content.controls[2].value)
+        self.assertAlmostEqual(.113, terminal.content.controls[0].content.controls[1].value)
         self.assertEqual([True], refreshes)
 
     async def test_finished_llm_refreshes_tables_without_reopening_terminal_card(self):
         terminal, refreshes = await self._one_poll(_FinishedLlmClient())
-        self.assertFalse(terminal.content.controls[1].visible)
+        self.assertEqual([], terminal.content.controls)
         self.assertEqual([True], refreshes)
+
+    async def test_deg_details_are_logged_without_empty_placeholder(self):
+        terminal, _ = await self._one_poll(_DegClient())
+        self.assertEqual("DEG — anotação UniProt iniciada.", terminal.content.controls[0].value)
+        self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
+        self.assertEqual(2, len(terminal.content.controls))
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))
@@ -140,7 +162,7 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
                 await pipeline_monitor.monitor_pipeline(page, "token", terminal, refresh_tables)
 
         card = terminal.content.controls[0]
-        self.assertTrue(card.visible)
+        self.assertEqual("terminal_progress_pipeline", card.data)
         self.assertIn("Test", card.content.controls[0].value)
         self.assertIn("42%", card.content.controls[3].controls[0].value)
         self.assertEqual([True], refreshes)

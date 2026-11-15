@@ -17,7 +17,7 @@ from ..services.job_service import audit, create_job
 from ..services.analysis_design import validate_design
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
-from ..utils_paths import ensure_safe_component, safe_resolve_user_path
+from ..utils_paths import deg_r_progress_path, ensure_safe_component, safe_resolve_user_path
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ async def get_deg_job_progress(
         / "jobs"
         / f"{job_id}.progress.log"
     )
-    r_log_path = user_root / "preprocess" / "DEG_R.log"
+    r_log_path = deg_r_progress_path(user_root, job.payload or {})
 
     def read_lines(path: Path) -> list[str]:
         if not path.is_file():
