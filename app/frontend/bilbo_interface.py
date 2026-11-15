@@ -307,12 +307,6 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             )
         elif stage_id == 6:
             await update_tabela_quantificacao(page, token, user_id)
-        elif stage_id == 9:
-            await show_clustering(page, token, user_id, container_amostras,
-                                  container_pre_visualizacao, refresh_stage_counts)
-        elif stage_id == 10:
-            await show_llm(page, token, user_id, container_amostras,
-                           container_pre_visualizacao, refresh_stage_counts)
             await toggle_buttons(
                 tabela=tabela_quantificacao,
                 controls=[
@@ -611,6 +605,12 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
             await update_tabela_alinhamento(page, token, user_id)
         elif stage_id == 6:
             await update_tabela_quantificacao(page, token, user_id)
+        elif stage_id == 9:
+            await show_clustering(page, token, user_id, container_amostras,
+                                  container_pre_visualizacao, refresh_stage_counts)
+        elif stage_id == 10:
+            await show_llm(page, token, user_id, container_amostras,
+                           container_pre_visualizacao, refresh_stage_counts)
 
     container_pre_visualizacao = ft.Container(
         expand=1,
