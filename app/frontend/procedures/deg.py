@@ -424,19 +424,21 @@ async def run_deg_analysis(page, token, user_id, refresh_callback=None):
 
     page.open(dlg_modal_deg)
 
-async def fetch_sheet_data(token, user_id, sheet_name):
+async def fetch_sheet_data(token, user_id, sheet_name, run_id=None):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     params = {"sheet": sheet_name}
+    if run_id:
+        params["run_id"] = run_id
     async with httpx.AsyncClient() as client:
         response = await client.get("http://localhost:8890/deg/sheet_data", headers=headers, params=params)
         response.raise_for_status()
         return response.json()  # {"columns": [...], "rows": [[...], ...]}
 
-async def show_sheet_as_table(page, token, user_id, sheet_name):
+async def show_sheet_as_table(page, token, user_id, sheet_name, run_id=None):
     print(f"[LOG] show_sheet_as_table: sheet_name={sheet_name}")
     try:
         # Loga início da identificação para a aba
-        data = await fetch_sheet_data(token, user_id, sheet_name)
+        data = await fetch_sheet_data(token, user_id, sheet_name, run_id)
         columns = data.get("columns", [])
         rows = data.get("rows", [])
         print(f"[LOG] Columns: {columns}")
@@ -732,9 +734,10 @@ async def show_sheet_as_table(page, token, user_id, sheet_name):
         print(f"[LOG] Erro ao exibir planilha: {ex}")
         await log_message(page, f"Erro ao exibir planilha: {ex}")
 
-async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
+async def show_deg_dropdown(page, token, user_id=None, sheet_name=None, run_id=None):
     # Caminho base dos gráficos DEG
-    deg_dir = f"../users/{user_id}/DEG"
+    deg_dir = (f"../users/{user_id}/pipelines/{run_id}/DEG" if run_id
+               else f"../users/{user_id}/DEG")
     # Opções do dropdown e nomes dos arquivos correspondentes
     DEG_GRAPHS = [
         ("Barplot", "BARPLOT.ISOLADO - {sheet}.png"),
@@ -807,7 +810,8 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                                         return
                                     import urllib.parse
                                     fname_enc = urllib.parse.quote(current_filename, safe='')
-                                    download_url = f"http://localhost:8890/results/download_image?filename={fname_enc}&token={token}"
+                                    run_param = f"&run_id={urllib.parse.quote(str(run_id), safe='')}" if run_id else ""
+                                    download_url = f"http://localhost:8890/results/download_image?filename={fname_enc}&token={token}{run_param}"
                                     page.launch_url(download_url)
                                 except Exception as ex:
                                     await log_message(page, f"Erro ao iniciar download da figura: {ex}")
@@ -836,13 +840,16 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                             page.update()
                             return
 
-async def show_deg_results(page, token, user_id, container_amostras, refresh_stage_counts=None):
+async def show_deg_results(page, token, user_id, container_amostras, refresh_stage_counts=None, run_id=None):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:8890/deg/sheets", headers=headers)
+            response = await client.get("http://localhost:8890/deg/sheets", headers=headers,
+                                        params={"run_id": run_id} if run_id else None)
             if response.status_code == 200:
                 sheets = response.json().get("sheets", [])
+                run_id = response.json().get("run_id")
+                run_name = response.json().get("run_name")
                 if not sheets:
                     await log_message(page, "Nenhuma aba encontrada em DEG.xlsx.")
                 else:
@@ -874,6 +881,12 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
 
                     for sheet in sheets:
                         checkbox = ft.Checkbox(data=sheet)
+                        async def open_sheet(e, selected_sheet=sheet):
+                            await show_sheet_as_table(page, token, user_id, selected_sheet, run_id)
+
+                        async def open_figures(e, selected_sheet=sheet):
+                            await show_deg_dropdown(page, token, user_id=user_id,
+                                                    sheet_name=selected_sheet, run_id=run_id)
                         tabela.rows.append(
                             ft.DataRow(
                                 cells=[
@@ -886,16 +899,12 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                                                     icon="table_chart",
                                                     icon_color="green",
                                                     tooltip="Abrir planilha",
-                                                    on_click=lambda e, s=sheet: asyncio.run(
-                                                        show_sheet_as_table(page, token, user_id, s)
-                                                    )
+                                                    on_click=open_sheet,
                                                 ),
                                                 ft.IconButton(
                                                     icon="visibility",
                                                     tooltip="Visualizar",
-                                                    on_click=lambda e, s=sheet: asyncio.run(
-                                                        show_deg_dropdown(page, token, user_id=user_id, sheet_name=s)
-                                                    )
+                                                    on_click=open_figures,
                                                 ),
                                             ],
                                             spacing=6,
@@ -931,7 +940,8 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
 
                         import urllib.parse
                         sheets_param = urllib.parse.quote(",".join(selected), safe='')
-                        download_url = f"http://localhost:8890/results/download_deg_sheets?sheets={sheets_param}&token={token}"
+                        run_param = f"&run_id={urllib.parse.quote(str(run_id), safe='')}" if run_id else ""
+                        download_url = f"http://localhost:8890/results/download_deg_sheets?sheets={sheets_param}&token={token}{run_param}"
                         page.launch_url(download_url)
 
 
@@ -1089,21 +1099,22 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                         color="green",
                         expand=True,
                     )
-                    btn_delete = create_button(
+                    btn_delete = (create_button(
                         "Excluir abas",
                         delete_selected,
                         color="red",
                         expand=True,
-                    )
+                    ) if not run_id else None)
 
                     # Place table + centered, full-width button in the actions area
                     container_amostras.content.controls = [
                         ft.Column(
                             controls=[
+                                *([ft.Text(f"Pipeline: {run_name or run_id}", size=12)] if run_id else []),
                                 tabela_com_scroll,
                                 ft.Container(height=8),
                                 ft.Row(
-                                    [btn_download, btn_delete],
+                                    [btn_download, *([btn_delete] if btn_delete else [])],
                                     alignment=ft.MainAxisAlignment.CENTER,
                                     expand=True,
                                 ),

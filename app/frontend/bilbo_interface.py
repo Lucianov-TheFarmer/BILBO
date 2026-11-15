@@ -177,6 +177,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
             if response.status_code == 200:
                 sheets = response.json().get("sheets", [])
+                run_id = response.json().get("run_id")
 
                 if sheets:
                     await show_deg_results(
@@ -185,6 +186,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         user_id,
                         container_amostras,
                         refresh_stage_counts,
+                        run_id,
                     )
                     await atualizar_contagem_deg(len(sheets))
                     return

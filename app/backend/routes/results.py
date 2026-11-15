@@ -16,6 +16,7 @@ from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import User
 from ..services.job_service import audit, create_job
+from ..services.deg_workbooks import selected_deg_workbook
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, get_current_user_compat
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
@@ -37,15 +38,12 @@ def _deg_dir(user_id: int) -> Path:
 
 @router.get("/results/deg_sheets")
 async def get_deg_sheets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    deg_dir = _deg_dir(current_user.id)
-    deg_xlsx = deg_dir / "DEG.xlsx"
-    if not deg_xlsx.exists():
-        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    deg_xlsx, run = selected_deg_workbook(db, current_user.id)
     try:
         wb = openpyxl.load_workbook(str(deg_xlsx), read_only=True)
         sheets = wb.sheetnames
         wb.close()
-        return {"sheets": sheets}
+        return {"sheets": sheets, "run_id": run.id if run else None}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")
 
@@ -135,10 +133,12 @@ async def get_heatmap_files(db: Session = Depends(get_db), current_user: User = 
 def download_deg_sheets(
     request: Request,
     sheets: Optional[str] = None,
+    run_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_compat),
 ):
-    deg_xlsx_path = _deg_dir(current_user.id) / "DEG.xlsx"
+    deg_xlsx_path = (selected_deg_workbook(db, current_user.id, run_id)[0] if run_id
+                     else _deg_dir(current_user.id) / "DEG.xlsx")
     if not deg_xlsx_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
 
@@ -194,10 +194,16 @@ def download_deg_sheets(
 def download_deg_image(
     request: Request,
     filename: str,
+    run_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_compat),
 ):
-    file_path = safe_resolve_user_path(settings.users_root, current_user.id, "DEG", filename)
+    if run_id:
+        selected_deg_workbook(db, current_user.id, run_id)
+        file_path = safe_resolve_user_path(settings.users_root, current_user.id,
+                                           "pipelines", run_id, "DEG", filename)
+    else:
+        file_path = safe_resolve_user_path(settings.users_root, current_user.id, "DEG", filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

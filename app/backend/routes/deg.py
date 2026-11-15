@@ -15,6 +15,7 @@ from ..core.settings import settings
 from ..db.models import AnalysisDesign, PipelineJob, SampleStage, User
 from ..services.job_service import audit, create_job
 from ..services.analysis_design import validate_design
+from ..services.deg_workbooks import selected_deg_workbook
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
 from ..utils_paths import deg_r_progress_path, ensure_safe_component, safe_resolve_user_path
@@ -609,14 +610,12 @@ async def get_deg_sheets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    user_id = current_user.id
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
-    if not os.path.exists(deg_xlsx):
-        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    deg_xlsx, run = selected_deg_workbook(db, current_user.id,
+                                           request.query_params.get("run_id"))
     try:
         sheet_names = _xlsx_sheet_names(Path(deg_xlsx))
-        return {"sheets": sheet_names}
+        return {"sheets": sheet_names, "run_id": run.id if run else None,
+                "run_name": (run.config or {}).get("name") if run else None}
     except Exception as e:
         logger.error(f"Erro ao ler abas do DEG.xlsx: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")
@@ -636,8 +635,7 @@ async def get_deg_sheet_data(
     if not sheet_name:
         raise HTTPException(status_code=400, detail="Sheet name is required.")
     
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
+    deg_xlsx, _ = selected_deg_workbook(db, user_id, request.query_params.get("run_id"))
     logger.info(f"[DEG] Caminho do arquivo DEG.xlsx: {deg_xlsx}")
     
     if not os.path.exists(deg_xlsx):
