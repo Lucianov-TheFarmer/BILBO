@@ -836,7 +836,7 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None):
                             page.update()
                             return
 
-async def show_deg_results(page, token, user_id, container_amostras):
+async def show_deg_results(page, token, user_id, container_amostras, refresh_stage_counts=None):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
@@ -1007,14 +1007,15 @@ async def show_deg_results(page, token, user_id, container_amostras):
 
                                 remaining = result.get(
                                     "remaining_sheets",
-                                    [],
-                                )
+                                    {},
+                                ).get("DEG.xlsx", [])
                                 if remaining:
                                     await show_deg_results(
                                         page,
                                         token,
                                         user_id,
                                         container_amostras,
+                                        refresh_stage_counts,
                                     )
                                 else:
                                     container_amostras.content.controls = [
@@ -1028,6 +1029,12 @@ async def show_deg_results(page, token, user_id, container_amostras):
                                         )
                                     ]
                                     page.update()
+
+                                if refresh_stage_counts is not None:
+                                    try:
+                                        await refresh_stage_counts()
+                                    except Exception:
+                                        logger.exception("Erro ao atualizar contagem DEG após exclusão")
 
                             except Exception as ex:
                                 await log_message(

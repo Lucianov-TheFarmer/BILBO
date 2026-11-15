@@ -184,6 +184,7 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                         token,
                         user_id,
                         container_amostras,
+                        refresh_stage_counts,
                     )
                     await atualizar_contagem_deg(len(sheets))
                     return
