@@ -74,6 +74,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     {
                         "sheet": sheet_name,
                         "files": item.get("files", []),
+                        "status": "COMPLETED",
                     }
                 )
     except Exception as ex:
@@ -81,6 +82,25 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
             page,
             f"Erro ao buscar entradas LLM: {ex}",
         )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            stage_response = await client.get(
+                "http://localhost:8890/samples/stages/10", headers=headers)
+        if stage_response.status_code == 200:
+            by_sheet = {entry["sheet"]: entry for entry in files}
+            for stage in stage_response.json():
+                sheet = stage.get("name")
+                if not sheet:
+                    continue
+                if sheet in by_sheet:
+                    by_sheet[sheet]["status"] = stage.get("status") or "COMPLETED"
+                else:
+                    by_sheet[sheet] = {"sheet": sheet, "files": [],
+                                       "status": stage.get("status") or "PENDING"}
+            files = sorted(by_sheet.values(), key=lambda entry: entry["sheet"])
+    except Exception as ex:
+        await log_message(page, f"Erro ao consultar o estado das interpretações: {ex}")
 
     async def _view_md(e, sheet_name):
         try:
@@ -200,12 +220,16 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     for entry in files:
         sheet = entry.get("sheet")
+        status = str(entry.get("status") or "PENDING").upper()
+        has_report = status == "COMPLETED" and bool(entry.get("files"))
         result_checkbox = ft.Checkbox(
             value=False,
             data=sheet,
             on_change=_sync_all_results,
+            disabled=not has_report,
         )
-        result_checkboxes.append(result_checkbox)
+        if has_report:
+            result_checkboxes.append(result_checkbox)
 
         async def _view_md_handler(e, sheet_name=sheet):
             await _view_md(e, sheet_name)
@@ -236,14 +260,15 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 cells=[
                     ft.DataCell(ft.Text(sheet)),
                     ft.DataCell(result_checkbox),
+                    ft.DataCell(ft.Text(t({"PENDING": "pipeline_queued",
+                                           "RUNNING": "pipeline_running",
+                                           "COMPLETED": "pipeline_completed",
+                                           "FAILED": "pipeline_failed"}.get(status, status),
+                                         page.session.get("lang") or "pt"))),
                     ft.DataCell(
                         ft.Row(
                             # BILBO_LLM_NO_ROW_DELETE
-                            controls=[
-                                html_btn,
-                                md_btn,
-                                json_btn,
-                            ]
+                            controls=[html_btn, md_btn, json_btn] if has_report else []
                         )
                     ),
                 ]
@@ -262,6 +287,8 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 )
             ),
             ft.DataColumn(results_select_all),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"),
+                                  weight=ft.FontWeight.BOLD)),
             ft.DataColumn(
                 ft.Text(
                     t("table_actions", page.session.get("lang") or "pt"),

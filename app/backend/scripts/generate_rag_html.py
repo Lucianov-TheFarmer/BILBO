@@ -85,6 +85,19 @@ def _scalar(value: Any) -> Any:
     return value
 
 
+def _json_safe(value: Any) -> Any:
+    """Replace non-finite values from CSV-derived records before publication."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _record(
     row: pd.Series,
     columns: list[str],
@@ -623,6 +636,10 @@ def build_report_payload(
         }
     )
 
+    payload = _json_safe(payload)
+    for gene in payload.get("rag_gene_evidence", []):
+        if not _present(gene.get("primary_name")):
+            gene["primary_name"] = gene.get("gene_id", "")
     return payload
 
 

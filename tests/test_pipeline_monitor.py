@@ -66,34 +66,48 @@ class _ActiveLlmClient(_HistoryOnlyClient):
         return await super().get(url)
 
 
+class _FinishedLlmClient(_HistoryOnlyClient):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/jobs?stage=llm"):
+            return _Response([{"job_id": "llm-old", "status": "COMPLETED"}])
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def _one_poll(self, client):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
         page = SimpleNamespace(container_terminal=terminal,
                                session={"lang": "pt"}, update=lambda: None)
+        refreshes = []
 
         async def stop_after_first_update(_seconds):
             raise asyncio.CancelledError()
 
         async def refresh_tables():
-            pass
+            refreshes.append(True)
 
         with patch.object(pipeline_monitor.httpx, "AsyncClient", return_value=client), \
              patch.object(pipeline_monitor.asyncio, "sleep", stop_after_first_update):
             with self.assertRaises(asyncio.CancelledError):
                 await pipeline_monitor.monitor_pipeline(page, "token", terminal, refresh_tables)
-        return terminal
+        return terminal, refreshes
 
     async def test_completed_run_from_previous_session_stays_out_of_terminal(self):
-        terminal = await self._one_poll(_HistoryOnlyClient())
+        terminal, _ = await self._one_poll(_HistoryOnlyClient())
         self.assertFalse(terminal.content.controls[0].visible)
         self.assertTrue(terminal.visible)
 
     async def test_running_llm_reappears_after_login(self):
-        terminal = await self._one_poll(_ActiveLlmClient())
+        terminal, refreshes = await self._one_poll(_ActiveLlmClient())
         self.assertTrue(terminal.content.controls[1].visible)
         self.assertIn("6/53", terminal.content.controls[1].content.controls[2].value)
         self.assertAlmostEqual(.113, terminal.content.controls[1].content.controls[1].value)
+        self.assertEqual([True], refreshes)
+
+    async def test_finished_llm_refreshes_tables_without_reopening_terminal_card(self):
+        terminal, refreshes = await self._one_poll(_FinishedLlmClient())
+        self.assertFalse(terminal.content.controls[1].visible)
+        self.assertEqual([True], refreshes)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import os
 import re
 import time
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from .common import (
     DENSE_VECTOR_NAME,
@@ -406,10 +408,21 @@ def analyze_genes(
 
 
 def write_json(results: list[dict[str, Any]], output_file: Path = OUTPUT_JSON) -> None:
+    def clean(value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [clean(item) for item in value]
+        return value
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_file.with_suffix(output_file.suffix + ".tmp")
     temporary.write_text(
-        json.dumps(results, indent=2, ensure_ascii=False),
+        json.dumps(clean(results), indent=2, ensure_ascii=False, allow_nan=False),
         encoding="utf-8",
     )
     temporary.replace(output_file)

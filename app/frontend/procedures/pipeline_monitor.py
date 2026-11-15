@@ -38,6 +38,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
     previous_steps = None
     previous_run = None
     previous_llm = None
+    previous_llm_state = None
 
     while getattr(page, "container_terminal", None) is terminal_container:
         lang = page.session.get("lang") or "pt"
@@ -61,6 +62,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 llm_response = await client.get(f"{API}/jobs?stage=llm", headers=headers)
                 llm_response.raise_for_status()
                 llm_jobs = llm_response.json()
+                latest_llm_state = ((llm_jobs[0]["job_id"], llm_jobs[0]["status"])
+                                    if llm_jobs else None)
                 llm_item = next((item for item in llm_jobs if item["status"] in ACTIVE), None)
                 if llm_item is None and previous_llm:
                     llm_item = next((item for item in llm_jobs if item["job_id"] == previous_llm), None)
@@ -126,6 +129,12 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
             elif card.visible:
                 card.visible = False
                 page.update()
+            if latest_llm_state != previous_llm_state:
+                previous_llm_state = latest_llm_state
+                try:
+                    await refresh_tables()
+                except Exception:
+                    pass
             pipeline_llm_jobs = {step.get("job_id") for step in (run or {}).get("steps", [])
                                  if step["stage"] == "llm"}
             if llm_job and llm_job["job_id"] not in pipeline_llm_jobs:

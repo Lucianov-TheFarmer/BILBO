@@ -46,6 +46,9 @@ def load_prioritized_genes(
     limit: int | None = GENE_LIMIT,
 ) -> pd.DataFrame:
     genes = pd.read_csv(input_file)
+    if {"primary_name", "gene_id"}.issubset(genes.columns):
+        names = genes["primary_name"].fillna("").astype(str).str.strip()
+        genes["primary_name"] = names.where(names.ne(""), genes["gene_id"].astype(str))
     if selected_only:
         selected = genes["selected_for_search"].astype(str).str.lower().eq("true")
         genes = genes.loc[selected].copy()
