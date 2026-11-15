@@ -27,10 +27,10 @@ ai-run:
 	docker compose --profile ai run --rm cluster-rag --deg-xlsx /input/$(DEG_FILE) --sheet "$(SHEET)" --output-dir /output --run-id "$(or $(RUN_ID),standalone)"
 
 full-up:
-	docker compose up -d
+	python3 init.py --no-build
 
 full-build:
-	docker compose up -d --build
+	python3 init.py
 
 full-down:
 	docker compose down

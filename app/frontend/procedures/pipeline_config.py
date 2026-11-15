@@ -1,4 +1,5 @@
 """Configure and monitor persistent automatic pipelines."""
+from .urls import launch_public_url
 
 import asyncio
 import re
@@ -133,6 +134,8 @@ async def show_pipeline_config_modal(page, token, user_id):
         page.update()
     trim_fields["adapter"].on_change = adapter_changed
     alignment_threads = ft.TextField(label=t("pipeline_threads", lang), value="8", width=200)
+    diamond_threads = ft.TextField(label=t("pipeline_diamond_cpus", lang), value="8",
+                                   width=200, keyboard_type=ft.KeyboardType.NUMBER)
     star_fields = {key: ft.TextField(label=key, width=200) for key in STAR_FIELDS}
     feature_type = ft.TextField(label=t("pipeline_feature_type", lang), value="gene", width=200)
     id_attribute = ft.TextField(label=t("pipeline_id_attribute", lang), value="ID", width=200)
@@ -165,6 +168,7 @@ async def show_pipeline_config_modal(page, token, user_id):
                 "stages": {key: check.value for key, check in stage_checks.items()},
                 "genome": genome_field.value,
                 "trimming": trim, "alignment": alignment,
+                "deg": {"diamond_threads": diamond_threads.value},
                 "quantification": {"feature_type": feature_type.value.strip(),
                                    "id_attribute": id_attribute.value.strip()},
                 "design": saved_design if stage_checks["deg"].value else None,
@@ -202,6 +206,7 @@ async def show_pipeline_config_modal(page, token, user_id):
         adapter_changed(None)
         alignment = config.get("alignment") or {}
         alignment_threads.value = str(alignment.get("threads", 8))
+        diamond_threads.value = str((config.get("deg") or {}).get("diamond_threads", 8))
         for key, field in star_fields.items():
             field.value = str(alignment.get(key) or "")
         quant = config.get("quantification") or {}
@@ -338,9 +343,9 @@ async def show_pipeline_config_modal(page, token, user_id):
                 if any(step["stage"] == "deg" and step["status"] == "COMPLETED"
                        for step in run["steps"]):
                     controls.append(ft.TextButton("DEG.xlsx", on_click=lambda _, rid=run["id"]:
-                        page.launch_url(f"http://localhost:8890/pipeline/runs/{rid}/file/DEG.xlsx?token={token}")))
+                        launch_public_url(page, f"http://localhost:8890/pipeline/runs/{rid}/file/DEG.xlsx?token={token}")))
                     controls.append(ft.TextButton("DEG_full.xlsx", on_click=lambda _, rid=run["id"]:
-                        page.launch_url(f"http://localhost:8890/pipeline/runs/{rid}/file/DEG_full.xlsx?token={token}")))
+                        launch_public_url(page, f"http://localhost:8890/pipeline/runs/{rid}/file/DEG_full.xlsx?token={token}")))
                 total = len(run["steps"])
                 done = sum(step["status"] in ("COMPLETED", "SKIPPED") for step in run["steps"])
                 progress = ft.ProgressBar(value=done / total if total else 0, height=5)
@@ -481,6 +486,7 @@ async def show_pipeline_config_modal(page, token, user_id):
                 ft.Row([feature_type, id_attribute], wrap=True, spacing=10),
             ]),
             section("deg", [
+                diamond_threads,
                 design_summary,
                 ft.Text(t("pipeline_deg_samples_hint", lang), size=11),
                 ft.TextButton(t("pipeline_open_contrasts", lang),

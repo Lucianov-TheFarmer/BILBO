@@ -464,12 +464,10 @@ def ensure_rag_database() -> dict[str, Any]:
 _original_ensure_rag_database = ensure_rag_database
 
 
-def ensure_rag_database(*args, **kwargs):
-    from .ollama_bootstrap import (
-        ensure_required_ollama_models,
-    )
-
-    ensure_required_ollama_models()
+def ensure_rag_database(*args, ensure_models: bool = True, **kwargs):
+    if ensure_models:
+        from .ollama_bootstrap import ensure_required_ollama_models
+        ensure_required_ollama_models()
 
     return _original_ensure_rag_database(
         *args,

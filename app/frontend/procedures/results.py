@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 from .translations import t
 import flet as ft
 import httpx
@@ -100,7 +101,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar barplot",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -158,7 +159,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar diagrama de Venn",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -463,7 +464,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
             download_button = ft.IconButton(
                 icon="file_download",
                 tooltip="Baixar heatmap",
-                on_click=lambda e, fname=filename: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
+                on_click=lambda e, fname=filename: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
             )
             
             row = ft.DataRow(

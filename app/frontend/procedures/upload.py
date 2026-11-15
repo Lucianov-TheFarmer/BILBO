@@ -6,6 +6,7 @@ import asyncio
 import os
 import tempfile
 from .utils import log_message
+from .urls import public_base_url
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -377,6 +378,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     </script>
 </body>
 </html>"""
+    html_content = html_content.replace("http://localhost:8890", public_base_url())
     for source, translated in sorted(UPLOAD_COPY.get(page.session.get("lang") or "pt", {}).items(), key=lambda item: -len(item[0])):
         html_content = html_content.replace(source, translated)
     

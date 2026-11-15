@@ -1,4 +1,13 @@
 .git
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.dpapi
+*credentials*.json
+*oauth*client*.json
 .runtime
 .venv*
 __pycache__

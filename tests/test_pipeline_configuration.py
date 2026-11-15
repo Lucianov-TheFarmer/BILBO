@@ -75,13 +75,15 @@ class PipelineConfigurationTest(unittest.TestCase):
                                                   for group in ("D", "C") for block in (2, 3, 4)],
                             stages={"trimming": True, "alignment": True,
                                     "quantification": True, "deg": True},
-                            genome="reference-1", design=design)
+                            genome="reference-1", design=design,
+                            deg={"diamond_threads": 12})
         draft = create_run(plan, self.db, self.db.get(User, 7))
         self.assertEqual("DRAFT", draft["status"])
         self.assertEqual(25, len(draft["steps"]))
         started = start_run(draft["id"], self.db, self.db.get(User, 7))
         self.assertEqual("RUNNING", started["status"])
         self.assertEqual("~0+group+bloco", started["config"]["design_snapshot"]["formula"])
+        self.assertEqual(12, started["config"]["deg"]["diamond_threads"])
 
     def test_alignment_waits_for_trimmed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

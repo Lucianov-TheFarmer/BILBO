@@ -38,6 +38,7 @@ class PipelinePlan(BaseModel):
     trimming: dict = Field(default_factory=dict)
     alignment: dict = Field(default_factory=dict)
     quantification: dict = Field(default_factory=dict)
+    deg: dict = Field(default_factory=dict)
     design: Optional[dict] = None
     reuse_existing: bool = True
 
@@ -79,6 +80,12 @@ def _validated_plan(db: Session, user_id: int, plan: PipelinePlan) -> dict:
         raise ValueError("Thread count must be between 1 and 256")
     config["alignment"]["threads"] = alignment_threads
     config["trimming"]["threads"] = trimming_threads
+    if set(config["deg"]) - {"diamond_threads"}:
+        raise ValueError("Unknown differential analysis parameter")
+    diamond_threads = int(config["deg"].get("diamond_threads", 8))
+    if not 1 <= diamond_threads <= 256:
+        raise ValueError("DIAMOND CPU count must be between 1 and 256")
+    config["deg"]["diamond_threads"] = diamond_threads
     trim = config["trimming"]
     if trim.get("phred", "autodetect") not in ("autodetect", "phred33", "phred64"):
         raise ValueError("Invalid Phred encoding")

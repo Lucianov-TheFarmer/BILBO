@@ -171,29 +171,20 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
                 response = await client.get(
                     "http://localhost:8890/deg/sheets",
                     headers=headers,
-                    params={"user_id": user_id},
+                    params={"all_runs": "true"},
                     timeout=30,
                 )
 
             if response.status_code == 200:
-                sheets = response.json().get("sheets", [])
-                run_id = response.json().get("run_id")
+                results = response.json().get("results", [])
 
-                if sheets:
-                    await show_deg_results(
-                        page,
-                        token,
-                        user_id,
-                        container_amostras,
-                        refresh_stage_counts,
-                        run_id,
-                    )
-                    await atualizar_contagem_deg(len(sheets))
+                if results:
+                    await show_deg_results(page, token, user_id, container_amostras,
+                                           refresh_stage_counts, all_runs=True)
+                    await atualizar_contagem_deg(len({entry["sheet"] for entry in results}))
                     return
 
-            if response.status_code == 404 or (
-                response.status_code == 200 and not sheets
-            ):
+            if response.status_code == 404 or (response.status_code == 200 and not results):
                 await atualizar_contagem_deg(0)
 
                 # Limpa qualquer tabela genérica anteriormente exibida.

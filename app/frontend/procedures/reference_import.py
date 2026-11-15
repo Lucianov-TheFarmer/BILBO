@@ -10,6 +10,7 @@ import httpx
 from .jobs import wait_with_progress
 from .translations import t
 from .utils import log_message
+from .urls import public_base_url
 
 
 async def show_reference_url_modal(page, token, on_closed=None):
@@ -128,7 +129,7 @@ try{const r=await fetch('http://localhost:8890/genomes/import/jobs/'+job,{header
 const p=await r.json();if(p.status==='COMPLETED'||p.status==='FAILED'){clearInterval(timer);document.getElementById('status').textContent=p.status==='COMPLETED'?c[7]:c[8]+': '+p.error_message;}
 else {document.getElementById('status').textContent=c[6];}}
 catch(err){document.getElementById('status').textContent=err.message;}},2000);};xhr.onerror=()=>{document.getElementById('status').textContent=c[8];};
-xhr.send(new FormData(e.target));};</script></body></html>""".replace("COPY", json.dumps(copy)).replace("TOKEN", json.dumps(token))
+    xhr.send(new FormData(e.target));};</script></body></html>""".replace("COPY", json.dumps(copy)).replace("TOKEN", json.dumps(token)).replace("http://localhost:8890", public_base_url())
     url = "data:text/html;charset=utf-8;base64," + base64.b64encode(html.encode()).decode()
     async def close_dialog():
         page.close(dialog)

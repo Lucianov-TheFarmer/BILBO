@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 import flet as ft
 import httpx
 import logging
@@ -193,7 +194,7 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         async def download_sample_file(e, sample_name=sample["name"]):
             try:
                 download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
-                page.launch_url(download_url)
+                launch_public_url(page, download_url)
                 await log_message(page, f"Download iniciado para {sample_name}")
                 
             except Exception as e:
@@ -272,11 +273,12 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "http://bioinfo-container:8890/results/deg_sheets",
+                "http://bioinfo-container:8890/deg/sheets",
                 headers=headers,
+                params={"all_runs": "true"},
             )
             if resp.status_code == 200:
-                stage_counts[7] = len(resp.json().get("sheets", []))
+                stage_counts[7] = len({entry["sheet"] for entry in resp.json().get("results", [])})
             else:
                 stage_counts[7] = 0
     except Exception:
@@ -310,7 +312,7 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                 async def download_sample_file(e, sample_name=sample["name"]):
                     try:
                         download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {sample_name}")
                         
                     except Exception as e:

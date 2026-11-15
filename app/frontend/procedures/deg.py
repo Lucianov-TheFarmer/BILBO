@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 from .translations import t
 import flet as ft
 import httpx
@@ -736,7 +737,7 @@ async def show_sheet_as_table(page, token, user_id, sheet_name, run_id=None):
 
 async def show_deg_dropdown(page, token, user_id=None, sheet_name=None, run_id=None):
     # Caminho base dos gráficos DEG
-    deg_dir = (f"../users/{user_id}/pipelines/{run_id}/DEG" if run_id
+    deg_dir = (f"../users/{user_id}/pipelines/{run_id}/DEG" if run_id and run_id != "manual"
                else f"../users/{user_id}/DEG")
     # Opções do dropdown e nomes dos arquivos correspondentes
     DEG_GRAPHS = [
@@ -812,7 +813,7 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None, run_id=N
                                     fname_enc = urllib.parse.quote(current_filename, safe='')
                                     run_param = f"&run_id={urllib.parse.quote(str(run_id), safe='')}" if run_id else ""
                                     download_url = f"http://localhost:8890/results/download_image?filename={fname_enc}&token={token}{run_param}"
-                                    page.launch_url(download_url)
+                                    launch_public_url(page, download_url)
                                 except Exception as ex:
                                     await log_message(page, f"Erro ao iniciar download da figura: {ex}")
 
@@ -840,18 +841,27 @@ async def show_deg_dropdown(page, token, user_id=None, sheet_name=None, run_id=N
                             page.update()
                             return
 
-async def show_deg_results(page, token, user_id, container_amostras, refresh_stage_counts=None, run_id=None):
+async def show_deg_results(page, token, user_id, container_amostras,
+                           refresh_stage_counts=None, run_id=None, all_runs=False):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get("http://localhost:8890/deg/sheets", headers=headers,
-                                        params={"run_id": run_id} if run_id else None)
+                                        params=({"all_runs": "true"} if all_runs else
+                                                {"run_id": run_id} if run_id else None))
             if response.status_code == 200:
-                sheets = response.json().get("sheets", [])
-                run_id = response.json().get("run_id")
-                run_name = response.json().get("run_name")
-                if not sheets:
+                data = response.json()
+                run_id = data.get("run_id") if not all_runs else None
+                run_name = data.get("run_name") if not all_runs else None
+                entries = (data.get("results", []) if all_runs else
+                           [{"sheet": sheet, "run_id": run_id or "manual", "run_name": run_name}
+                            for sheet in data.get("sheets", [])])
+                if not entries:
                     await log_message(page, "Nenhuma aba encontrada em DEG.xlsx.")
+                    container_amostras.content.controls = [ft.Container(
+                        padding=20, alignment=ft.alignment.center,
+                        content=ft.Text(t("deg_all_deleted", page.session.get("lang") or "pt")))]
+                    page.update()
                 else:
                     # Build table with a selectable checkbox column and actions, styled like QC tables
                     async def toggle_select_all(e):
@@ -864,53 +874,60 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                                 continue
                         page.update()
 
+                    columns = [
+                        ft.DataColumn(ft.Text(t("deg_sheets", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD, width=160)),
+                        ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
+                    ]
+                    if all_runs:
+                        columns.append(ft.DataColumn(ft.Text(t("deg_run", page.session.get("lang") or "pt"),
+                                                              weight=ft.FontWeight.BOLD)))
+                    columns.append(ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"),
+                                                         weight=ft.FontWeight.BOLD)))
                     tabela = ft.DataTable(
                         heading_row_color="primary",
                         data_row_color="surface",
                         border=ft.border.all(0.5, "#000000"),
                         column_spacing=12,
                         divider_thickness=0.5,
-                        columns=[
-                            ft.DataColumn(ft.Text(t("deg_sheets", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD, width=160)),
-                            ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
-                            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
-                        ],
+                        columns=columns,
                         rows=[],
                         expand=True,
                     )
 
-                    for sheet in sheets:
-                        checkbox = ft.Checkbox(data=sheet)
-                        async def open_sheet(e, selected_sheet=sheet):
-                            await show_sheet_as_table(page, token, user_id, selected_sheet, run_id)
+                    for entry in entries:
+                        sheet = entry["sheet"]
+                        entry_run_id = entry["run_id"]
+                        checkbox = ft.Checkbox(data={"sheet": sheet, "run_id": entry_run_id})
+                        async def open_sheet(e, selected_sheet=sheet, selected_run=entry_run_id):
+                            await show_sheet_as_table(page, token, user_id, selected_sheet, selected_run)
 
-                        async def open_figures(e, selected_sheet=sheet):
+                        async def open_figures(e, selected_sheet=sheet, selected_run=entry_run_id):
                             await show_deg_dropdown(page, token, user_id=user_id,
-                                                    sheet_name=selected_sheet, run_id=run_id)
+                                                    sheet_name=selected_sheet, run_id=selected_run)
+                        run_label = (entry.get("run_name") or entry_run_id)
+                        if entry_run_id == "manual":
+                            run_label = t("deg_manual_run", page.session.get("lang") or "pt")
+                        else:
+                            run_label = f"{run_label} ({entry_run_id[:8]})"
+                        cells = [ft.DataCell(ft.Text(sheet, size=12)), ft.DataCell(checkbox)]
+                        if all_runs:
+                            cells.append(ft.DataCell(ft.Text(run_label, size=12)))
+                        cells.append(
+                            ft.DataCell(
+                                ft.Row(
+                                    controls=[
+                                        ft.IconButton(icon="table_chart", icon_color="green",
+                                                      tooltip=t("deg_open_table", page.session.get("lang") or "pt"),
+                                                      on_click=open_sheet),
+                                        ft.IconButton(icon="visibility", tooltip=t("deg_open_figure", page.session.get("lang") or "pt"),
+                                                      on_click=open_figures),
+                                    ], spacing=6,
+                                )
+                            )
+                        )
                         tabela.rows.append(
                             ft.DataRow(
-                                cells=[
-                                    ft.DataCell(ft.Text(sheet, size=12)),
-                                    ft.DataCell(checkbox),
-                                    ft.DataCell(
-                                        ft.Row(
-                                            controls=[
-                                                ft.IconButton(
-                                                    icon="table_chart",
-                                                    icon_color="green",
-                                                    tooltip="Abrir planilha",
-                                                    on_click=open_sheet,
-                                                ),
-                                                ft.IconButton(
-                                                    icon="visibility",
-                                                    tooltip="Visualizar",
-                                                    on_click=open_figures,
-                                                ),
-                                            ],
-                                            spacing=6,
-                                        )
-                                    ),
-                                ]
+                                cells=cells
                             )
                         )
 
@@ -921,45 +938,38 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                         expand=True
                     )
 
+                    def selected_entries():
+                        return [dict(row.cells[1].content.data)
+                                for row in tabela.rows
+                                if isinstance(row.cells[1].content, ft.Checkbox)
+                                and row.cells[1].content.value]
+
                     # Download button to fetch selected sheets as a single XLSX
                     async def download_selected(e):
-                        selected = []
-                        for row in tabela.rows:
-                            try:
-                                cb = row.cells[1].content
-                                if isinstance(cb, ft.Checkbox) and cb.value:
-                                    # sheet name is in first cell
-                                    sheet_name = row.cells[0].content.value
-                                    selected.append(sheet_name)
-                            except Exception:
-                                continue
-
+                        selected = selected_entries()
                         if not selected:
                             await log_message(page, "Selecione ao menos uma aba para baixar.")
                             return
 
+                        import json
                         import urllib.parse
-                        sheets_param = urllib.parse.quote(",".join(selected), safe='')
-                        run_param = f"&run_id={urllib.parse.quote(str(run_id), safe='')}" if run_id else ""
-                        download_url = f"http://localhost:8890/results/download_deg_sheets?sheets={sheets_param}&token={token}{run_param}"
-                        page.launch_url(download_url)
+                        selected_runs = {item["run_id"] for item in selected}
+                        if len(selected_runs) > 1:
+                            items_param = urllib.parse.quote(json.dumps(selected), safe="")
+                            download_url = ("http://localhost:8890/results/download_deg_bundle"
+                                            f"?items={items_param}&token={token}")
+                        else:
+                            sheets_param = urllib.parse.quote(",".join(item["sheet"] for item in selected), safe="")
+                            selected_run = selected[0]["run_id"]
+                            run_param = f"&run_id={urllib.parse.quote(selected_run, safe='')}"
+                            download_url = ("http://localhost:8890/results/download_deg_sheets"
+                                            f"?sheets={sheets_param}&token={token}{run_param}")
+                        launch_public_url(page, download_url)
 
 
                     async def delete_selected(e):
                         del e
-                        selected = []
-                        for row in tabela.rows:
-                            try:
-                                checkbox = row.cells[1].content
-                                if (
-                                    isinstance(checkbox, ft.Checkbox)
-                                    and checkbox.value
-                                ):
-                                    selected.append(
-                                        row.cells[0].content.value
-                                    )
-                            except Exception:
-                                continue
+                        selected = selected_entries()
 
                         if not selected:
                             await log_message(
@@ -976,56 +986,47 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                         async def confirm_delete(event):
                             del event
                             try:
-                                async with httpx.AsyncClient(
-                                    timeout=120,
-                                ) as client:
-                                    delete_response = await client.request(
-                                        "DELETE",
-                                        "http://localhost:8890/deg/sheets",
-                                        json={"sheets": selected},
-                                        headers=headers,
-                                    )
-
-                                if delete_response.status_code != 200:
-                                    try:
-                                        detail = delete_response.json().get(
-                                            "detail",
-                                            delete_response.text,
-                                        )
-                                    except Exception:
-                                        detail = delete_response.text
-
-                                    await log_message(
-                                        page,
-                                        f"Erro ao excluir abas: {detail}",
-                                    )
-                                    return
-
-                                result = delete_response.json()
+                                grouped = {}
+                                for item in selected:
+                                    grouped.setdefault(item["run_id"], []).append(item["sheet"])
+                                deleted = []
+                                remaining = []
+                                async with httpx.AsyncClient(timeout=120) as client:
+                                    for selected_run, names in grouped.items():
+                                        delete_response = await client.request(
+                                            "DELETE", "http://localhost:8890/deg/sheets",
+                                            json={"sheets": names, "run_id": selected_run},
+                                            headers=headers)
+                                        if delete_response.status_code != 200:
+                                            try:
+                                                detail = delete_response.json().get("detail", delete_response.text)
+                                            except Exception:
+                                                detail = delete_response.text
+                                            await log_message(page, f"Erro ao excluir abas: {detail}")
+                                            return
+                                        result = delete_response.json()
+                                        deleted.extend(result.get("deleted_sheets", []))
+                                        remaining.extend(result.get("remaining_sheets", {}).get("DEG.xlsx", []))
                                 confirmation.open = False
                                 page.update()
 
-                                deleted = result.get(
-                                    "deleted_sheets",
-                                    [],
-                                )
                                 await log_message(
                                     page,
                                     "Abas excluídas: "
                                     + ", ".join(deleted),
                                 )
 
-                                remaining = result.get(
-                                    "remaining_sheets",
-                                    {},
-                                ).get("DEG.xlsx", [])
-                                if remaining:
+                                if all_runs:
+                                    await show_deg_results(page, token, user_id, container_amostras,
+                                                           refresh_stage_counts, all_runs=True)
+                                elif remaining:
                                     await show_deg_results(
                                         page,
                                         token,
                                         user_id,
                                         container_amostras,
                                         refresh_stage_counts,
+                                        run_id,
                                     )
                                 else:
                                     container_amostras.content.controls = [
@@ -1064,7 +1065,7 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
                                         t("deg_delete_sheets_info", page.session.get("lang") or "pt")
                                     ),
                                     ft.Text(
-                                        ", ".join(selected),
+                                        ", ".join(f"{item['sheet']} ({item['run_id'][:8]})" for item in selected),
                                         weight=ft.FontWeight.BOLD,
                                     ),
                                     ft.Text(
@@ -1094,23 +1095,24 @@ async def show_deg_results(page, token, user_id, container_amostras, refresh_sta
 
                     from ..components.general_components import create_button
                     btn_download = create_button(
-                        "Baixar abas",
+                        t("deg_download_sheets", page.session.get("lang") or "pt"),
                         download_selected,
                         color="green",
                         expand=True,
                     )
                     btn_delete = (create_button(
-                        "Excluir abas",
+                        t("deg_remove_sheets", page.session.get("lang") or "pt"),
                         delete_selected,
                         color="red",
                         expand=True,
-                    ) if not run_id else None)
+                    ))
 
                     # Place table + centered, full-width button in the actions area
                     container_amostras.content.controls = [
                         ft.Column(
                             controls=[
-                                *([ft.Text(f"Pipeline: {run_name or run_id}", size=12)] if run_id else []),
+                                *([ft.Text(f"Pipeline: {run_name or run_id}", size=12)]
+                                  if run_id and run_id != "manual" else []),
                                 tabela_com_scroll,
                                 ft.Container(height=8),
                                 ft.Row(

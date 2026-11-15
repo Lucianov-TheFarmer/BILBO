@@ -1,381 +1,123 @@
-import subprocess
-import time
-import signal
-import psutil
-import sys
-import threading
-import logging
-import yaml
-import requests
-import platform
-import socket
-import json
+"""Create a private configuration and start the BILBO Docker Compose stack."""
+
+from __future__ import annotations
+
+import argparse
 import os
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-logger = logging.getLogger(__name__)
-
-# Configuration
-CONFIG = {
-    'build': False,
-    'debug_profile': False,
-    'ssh': {
-        'port': 2222,
-        'user': 'bilbo',
-        'password': 'bilbo123',
-        'container_name': 'bioinfo-container',
-        'local_port': 8890
-    },
-    'network': {
-        'test_hosts': ['8.8.8.8', '1.1.1.1'],
-        'test_port': 80,
-        'excluded_ip_patterns': [r'^127\.', r'^169\.254\.', r'^0\.0\.0\.0$'],
-        'timeout': 20
-    },
-    'ip_patterns': {
-        'windows': [
-            r'(?:IPv4.*?|Endereço IPv4.*?|Dirección IPv4.*?|Adresse IPv4.*?):\s*(\d+\.\d+\.\d+\.\d+)',
-            r'IP.*?Address.*?:\s*(\d+\.\d+\.\d+\.\d+)',
-            r'(?:Wi-Fi|Ethernet|WiFi).*?(\d+\.\d+\.\d+\.\d+)'
-        ],
-        'linux': [
-            r'src\s+(\d+\.\d+\.\d+\.\d+)',
-            r'inet\s+(\d+\.\d+\.\d+\.\d+)',
-            r'inet addr:(\d+\.\d+\.\d+\.\d+)'
-        ]
-    },
-    'commands': {
-        'windows': ['ipconfig'],
-        'linux': [['ip', 'route', 'get'], ['ifconfig']],
-        'darwin': [['ip', 'route', 'get'], ['ifconfig']]
-    }
-}
-
-def load_config():
-    """Carrega configuração de arquivo externo se existir"""
-    config_files = ['bilbo_config.json', 'config.json', 'bilbo_config.yaml', 'config.yaml']
-    
-    for config_file in config_files:
-        if os.path.exists(config_file):
-            try:
-                logger.debug(f"Carregando configuração de {config_file}")
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    if config_file.endswith('.json'):
-                        external_config = json.load(f)
-                    else:  # yaml
-                        external_config = yaml.safe_load(f)
-                
-                # Merge configurations (external overrides default)
-                def deep_merge(default, external):
-                    for key, value in external.items():
-                        if key in default and isinstance(default[key], dict) and isinstance(value, dict):
-                            deep_merge(default[key], value)
-                        else:
-                            default[key] = value
-                
-                deep_merge(CONFIG, external_config)
-                logger.info(f"✅ Configuração carregada de {config_file}")
-                return
-            except Exception as e:
-                logger.warning(f"⚠️ Erro ao carregar {config_file}: {e}")
-    
-    logger.debug("Usando configuração padrão")
-
-# Carregar configuração no início
-load_config()
-
-BUILD = CONFIG['build']
+import secrets
+import subprocess
+import sys
+from pathlib import Path
 
 
-def compose_prefix():
-    profile = " --profile debug" if CONFIG.get("debug_profile") else ""
-    return f"docker compose{profile}"
+ROOT = Path(__file__).resolve().parent
+ENV_FILE = ROOT / ".env"
+EXAMPLE_FILE = ROOT / ".env.example"
+GENERATED_SECRETS = ("POSTGRES_PASSWORD", "SECRET_KEY", "SSH_USER_PASSWORD", "PGADMIN_DEFAULT_PASSWORD")
+HOST_PORTS = (
+    "BILBO_HOST_PORT", "POSTGRES_HOST_PORT", "REDIS_HOST_PORT",
+    "QDRANT_HOST_PORT", "QDRANT_GRPC_HOST_PORT", "OLLAMA_HOST_PORT",
+    "SSH_HOST_PORT", "PGADMIN_HOST_PORT",
+)
 
-def run_command(command):
-    logger.debug(f"Running command: {command}")
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return process
 
-def run_command_dynamic_output(command):
-    logger.debug(f"Running command with dynamic output: {command}")
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
-    while True:
-        output = process.stdout.readline()
-        if output == '' and process.poll() is not None:
-            break
-        if output:
-            sys.stdout.write("\r" + output.strip())
-            sys.stdout.flush()
-    rc = process.poll()
-    return rc
+def read_env(path: Path) -> dict[str, str]:
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
 
-def stop_containers():
-    logger.info("Stopping Docker containers...")
-    down_process = run_command(f"{compose_prefix()} down")
-    down_process.wait()
 
-def signal_handler(sig, frame):
-    logger.info("\nInterrupt received, stopping containers...")
-    stop_containers()
-    sys.exit(0)
-
-def is_docker_running():
-    try:
-        subprocess.run(["docker", "info"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def start_docker():
-    os_type = platform.system()
-    logger.info(f"🐳 Starting Docker on {os_type}...")
-    if os_type == "Windows":
-        docker_desktop_path = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
-        subprocess.Popen([docker_desktop_path], shell=True)
-    elif os_type == "Linux":
-        run_command("sudo systemctl start docker")
-    else:
-        logger.warning(f"Unsupported OS: {os_type}. Docker may need to be started manually.")
-    time.sleep(30)
-
-def is_docker_desktop_running():
-    os_type = platform.system()
-    if os_type == "Windows":
-        for process in psutil.process_iter(['name']):
-            if process.info['name'] == 'Docker Desktop.exe':
-                return True
-        return False
-    elif os_type == "Linux":
-        try:
-            result = subprocess.run(["systemctl", "is-active", "docker"], capture_output=True, text=True)
-            return result.stdout.strip() == "active"
-        except FileNotFoundError:
-            return False # systemctl não encontrado
-    return False
-
-def get_server_ip():
-    """Detecta IP do servidor local de forma universal e configurável"""
-    import re
-    
-    def is_valid_ip(ip):
-        """Valida se o IP é válido e não está na lista de exclusões"""
-        if not ip or not re.match(r'^(\d{1,3}\.){3}\d{1,3}$', ip):
-            return False
-        
-        for pattern in CONFIG['network']['excluded_ip_patterns']:
-            if re.match(pattern, ip):
-                return False
-        return True
-    
-    def extract_ip_from_text(text, patterns):
-        """Extrai IP usando padrões configuráveis"""
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
-            for match in matches:
-                ip = match if isinstance(match, str) else match[0]
-                if is_valid_ip(ip):
-                    return ip
-        return None
-    
-    def try_network_commands(os_type):
-        """Tenta comandos de rede específicos do OS"""
-        commands = CONFIG['commands'].get(os_type, [])
-        patterns = CONFIG['ip_patterns'].get(os_type, CONFIG['ip_patterns']['linux'])
-        
-        for cmd in commands:
-            try:
-                if os_type == 'windows':
-                    result = subprocess.run(cmd, capture_output=True, text=True, 
-                                          timeout=CONFIG['network']['timeout'])
-                else:
-                    # Para Linux/macOS, adicionar host de teste se necessário
-                    full_cmd = cmd + [CONFIG['network']['test_hosts'][0]] if len(cmd) > 1 else cmd
-                    result = subprocess.run(full_cmd, capture_output=True, text=True, 
-                                          timeout=CONFIG['network']['timeout'])
-                
-                if result.returncode == 0:
-                    ip = extract_ip_from_text(result.stdout, patterns)
-                    if ip:
-                        logger.debug(f"IP encontrado via {' '.join(cmd)}: {ip}")
-                        return ip
-            except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-                logger.debug(f"Comando {cmd} falhou: {e}")
-                continue
-        return None
-    
-    def try_socket_method():
-        """Método universal usando socket"""
-        for host in CONFIG['network']['test_hosts']:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(CONFIG['network']['timeout'])
-                s.connect((host, CONFIG['network']['test_port']))
-                ip = s.getsockname()[0]
-                s.close()
-                if is_valid_ip(ip):
-                    logger.debug(f"IP encontrado via socket ({host}): {ip}")
-                    return ip
-            except Exception as e:
-                logger.debug(f"Socket para {host} falhou: {e}")
-                continue
-        return None
-    
-    # Tentar método específico do OS
-    os_type = platform.system().lower()
-    ip = try_network_commands(os_type)
-    if ip:
-        return ip
-    
-    # Fallback para método socket universal
-    ip = try_socket_method()
-    if ip:
-        return ip
-    
-    # Fallback final
-    return "localhost"
-        
-def wait_for_ssh_ready(timeout=None):
-    """Aguarda SSH container estar pronto"""
-    if timeout is None:
-        timeout = CONFIG['network']['timeout'] * 3  # 30 segundos por padrão
-    
-    logger.info("🔑 Waiting for SSH server...")
-    start = time.time()
-    ssh_port = CONFIG['ssh']['port']
-    
-    while time.time() - start < timeout:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
-            result = sock.connect_ex(('localhost', ssh_port))
-            sock.close()
-            if result == 0:
-                return True
-        except:
-            pass
-        time.sleep(2)
-    return False
-
-def display_startup_banner():
-    """Mostra banner de inicialização"""
-    print("\n" + "=" * 90)
-    print()
-    print(" " * 28 + "██████╗ ██╗██╗     ██████╗  ██████╗ ")
-    print(" " * 28 + "██╔══██╗██║██║     ██╔══██╗██╔═══██╗")
-    print(" " * 28 + "██████╔╝██║██║     ██████╔╝██║   ██║")
-    print(" " * 28 + "██╔══██╗██║██║     ██╔══██╗██║   ██║")
-    print(" " * 28 + "██████╔╝██║███████╗██████╔╝╚██████╔╝")
-    print(" " * 28 + "╚═════╝ ╚═╝╚══════╝╚═════╝  ╚═════╝ ")
-    print()
-    print(" " * 3 + "Bioinformatics Integration for Large-scale Biological Operations in RNA-seq Analysis")
-    print()
-    print(" " * 31 + "Universidade Federal de Lavras")
-    print(" " * 3 + "Silva, V.L.C.; Alvarenga, J.V.R.; Linhares-Neto, M.V.; Noman, M.; Chalfun-Junior, A.")
-    print()
-    print("=" * 90)
-    print()
-
-def display_ssh_connection_info():
-    """Mostra informações de conexão SSH em formato elegante"""
-    server_ip = get_server_ip()
-    ssh_config = CONFIG['ssh']
-    
-    print("\n" + "=" * 90)
-    print("🔧 SSH CONNECTION READY 🔧")
-    print("=" * 90)
-    print(f"🌐 Server IP    : {server_ip}")
-    print(f"🔌 SSH Port     : {ssh_config['port']}")
-    print(f"👤 User         : {ssh_config['user']}")
-    print(f"🔐 Password     : {ssh_config['password']}")
-    print(f"⏰ Started at   : {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 90)
-    print()
-    print("📋 CONNECTION COMMAND:")
-    print("─" * 90)
-    print(f"ssh -L {ssh_config['local_port']}:{ssh_config['container_name']}:{ssh_config['local_port']} {ssh_config['user']}@{server_ip} -p {ssh_config['port']}")
-    print("─" * 90)
-    print()
-    print("🌍 ACCESS URL:")
-    print("─" * 90)
-    print(f"http://localhost:{ssh_config['local_port']}/frontend")
-    print("─" * 90)
-    print()
-    print("📝 NOTES:")
-    print("• Multiple users can use the same command simultaneously")
-    print("• Each user will have their own isolated session")
-    print("• Keep this terminal open while using the application")
-    print()
-    print("🚀 Application is ready! Press Ctrl+C to stop.")
-    print("=" * 90)
-
-def wait_for_backend_ready(url=None, timeout=None):
-    if url is None:
-        url = f"http://localhost:{CONFIG['ssh']['local_port']}/docs"
-    if timeout is None:
-        timeout = CONFIG['network']['timeout'] * 6  # 60 segundos por padrão
-    
-    logger.info("⚙️  Starting FastAPI backend...")
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            r = requests.get(url)
-            if r.status_code == 200:
-                logger.info("✅ FastAPI backend is ready!")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    logger.error("❌ Timeout waiting for the FastAPI backend.")
-    return False
-
-def main():
-    # Mostrar banner de inicialização
-    display_startup_banner()
-    
-    if not is_docker_running():
-        if not is_docker_desktop_running():
-            start_docker()
-            if not is_docker_running():
-                logger.error("❌ Failed to start Docker. Please start Docker manually.")
-                return
-
-    try:
-        if BUILD:
-            logger.info("\n🔨 Building Docker containers...\n")
-            build_rc = run_command_dynamic_output(f"{compose_prefix()} build")
-            if build_rc != 0:
-                logger.error("❌ Docker build failed.")
-                stop_containers()
-                sys.exit(1)
-
-        logger.info("🚀 Starting Docker containers...")
-        up_process = run_command(f"{compose_prefix()} up -d")
-        up_process.wait()
-        logger.info("✅ Docker containers started!")
-
-        # Wait for the backend to be ready
-        if not wait_for_backend_ready():
-            return
-
-        if CONFIG.get("debug_profile"):
-            if wait_for_ssh_ready():
-                logger.info("✅ SSH server is ready!")
-                display_ssh_connection_info()
+def prepare_env() -> dict[str, str]:
+    if not EXAMPLE_FILE.is_file():
+        raise RuntimeError("Arquivo .env.example não encontrado no repositório.")
+    if not ENV_FILE.exists():
+        ENV_FILE.write_text(EXAMPLE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+        print("Arquivo .env criado a partir de .env.example.")
+    text = ENV_FILE.read_text(encoding="utf-8")
+    values = read_env(ENV_FILE)
+    for key in GENERATED_SECRETS:
+        if not values.get(key):
+            value = secrets.token_urlsafe(36)
+            if any(line.startswith(f"{key}=") for line in text.splitlines()):
+                text = "\n".join(
+                    f"{key}={value}" if line.startswith(f"{key}=") else line
+                    for line in text.splitlines()
+                ) + "\n"
             else:
-                logger.error("❌ SSH server failed to start")
-        else:
-            logger.info("ℹ️ Debug profile desabilitado. Acesse diretamente: http://localhost:8890/frontend")
+                text += f"\n{key}={value}\n"
+            values[key] = value
+    ENV_FILE.write_text(text, encoding="utf-8")
+    if os.name != "nt":
+        ENV_FILE.chmod(0o600)
+    return read_env(ENV_FILE)
 
-        while True:
-            time.sleep(1)
 
-    except Exception as e:
-        logger.error(f"❌ An error occurred: {e}")
-        stop_containers()
+def validate_env(values: dict[str, str]) -> None:
+    used = {}
+    for key in HOST_PORTS:
+        try:
+            port = int(values[key])
+        except (KeyError, ValueError) as exc:
+            raise RuntimeError(f"Porta inválida em {key} no .env.") from exc
+        if not 1 <= port <= 65535:
+            raise RuntimeError(f"Porta fora do intervalo em {key}: {port}.")
+        if port in used:
+            raise RuntimeError(f"Porta {port} repetida em {used[port]} e {key} no .env.")
+        used[port] = key
+    if values.get("BILBO_BIND_ADDRESS") not in {"127.0.0.1", "0.0.0.0"}:
+        raise RuntimeError("Use BILBO_BIND_ADDRESS=127.0.0.1 ou 0.0.0.0 no .env.")
+    for key in GENERATED_SECRETS:
+        if not values.get(key):
+            raise RuntimeError(f"{key} está vazio no .env.")
+    configured = [values.get(key, "") for key in (
+        "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
+        "GOOGLE_DRIVE_API_KEY", "GOOGLE_DRIVE_APP_ID",
+    )]
+    if any(configured) and not all(configured):
+        raise RuntimeError("Configure as quatro credenciais GOOGLE_DRIVE_* ou deixe todas vazias.")
+
+
+def docker(*args: str) -> None:
+    subprocess.run(["docker", *args], cwd=ROOT, check=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Instala e inicia o BILBO.")
+    parser.add_argument("--check", action="store_true", help="Valida .env e Docker Compose sem iniciar.")
+    parser.add_argument("--no-build", action="store_true", help="Inicia com a imagem existente.")
+    parser.add_argument("--skip-rag-bootstrap", action="store_true", help="Adia o índice RAG para o primeiro uso.")
+    args = parser.parse_args()
+    try:
+        values = prepare_env()
+        validate_env(values)
+        docker("compose", "version")
+        docker("info", "--format", "{{.ServerVersion}}")
+        docker("compose", "config", "--quiet")
+        if args.check:
+            print("Configuração válida. Nenhum container foi iniciado.")
+            return 0
+        command = ["compose", "up", "-d"]
+        if not args.no_build:
+            command.append("--build")
+        docker(*command)
+        if not args.skip_rag_bootstrap:
+            docker("compose", "--profile", "bootstrap", "up", "-d", "rag-bootstrap")
+        base = values.get("BILBO_PUBLIC_BASE_URL") or f"http://localhost:{values['BILBO_HOST_PORT']}"
+        print(f"BILBO iniciando: {base.rstrip('/')}/frontend")
+        print("Imagens, modelos Ollama e índice RAG podem continuar baixando em segundo plano.")
+        print("Progresso: docker compose logs -f bioinfo ollama rag-bootstrap")
+        print("Para alterar portas ou credenciais: edite .env e execute python3 init.py --no-build")
+        return 0
+    except FileNotFoundError as exc:
+        print(f"Falha: programa não encontrado: {exc.filename}. Instale Docker com Compose.", file=sys.stderr)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"Falha: {exc}", file=sys.stderr)
+    return 1
+
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    main()
+    raise SystemExit(main())

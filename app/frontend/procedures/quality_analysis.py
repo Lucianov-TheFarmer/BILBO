@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 import flet as ft
 import asyncio
 import httpx
@@ -46,7 +47,7 @@ async def update_quality_analysis_table(page, token, user_id):
                     
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade1/{s}?token={token}"
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
 

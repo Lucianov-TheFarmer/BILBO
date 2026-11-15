@@ -30,8 +30,16 @@ def _config():
     names = ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET", "GOOGLE_DRIVE_API_KEY", "GOOGLE_DRIVE_APP_ID")
     if any(not os.getenv(name) for name in names):
         raise HTTPException(503, "Google Drive integration is not configured")
-    if not os.getenv("GOOGLE_DRIVE_REDIRECT_URI"):
-        raise HTTPException(503, "Google Drive redirect URI is not configured")
+
+
+def _redirect_uri() -> str:
+    explicit = os.getenv("GOOGLE_DRIVE_REDIRECT_URI", "").strip()
+    if explicit:
+        return explicit
+    public_base = os.getenv("BILBO_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not public_base:
+        public_base = f"http://localhost:{os.getenv('BILBO_HOST_PORT', '8890')}"
+    return f"{public_base}/drive/oauth/callback"
 
 
 def _owned(session_id: str, user: User) -> dict:
@@ -53,7 +61,7 @@ def start_session(lang: str = "pt", user: User = Depends(get_current_user)):
     r.setex(state_key(state), 600, session_id)
     params = {
         "client_id": os.environ["GOOGLE_DRIVE_CLIENT_ID"],
-        "redirect_uri": os.environ["GOOGLE_DRIVE_REDIRECT_URI"],
+        "redirect_uri": _redirect_uri(),
         "response_type": "code",
         "scope": "https://www.googleapis.com/auth/drive.file",
         "access_type": "offline",
@@ -79,7 +87,7 @@ def oauth_callback(state: str, code: Optional[str] = None, error: Optional[str] 
             "code": code,
             "client_id": os.environ["GOOGLE_DRIVE_CLIENT_ID"],
             "client_secret": os.environ["GOOGLE_DRIVE_CLIENT_SECRET"],
-            "redirect_uri": os.environ["GOOGLE_DRIVE_REDIRECT_URI"],
+            "redirect_uri": _redirect_uri(),
             "grant_type": "authorization_code",
         },
         timeout=30,

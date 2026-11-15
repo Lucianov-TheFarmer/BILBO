@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 import asyncio
 from urllib.parse import quote
 
@@ -120,7 +121,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
             async def _navigate_md_link(ev):
                 try:
-                    await page.launch_url(ev.data)
+                    await launch_public_url(page, ev.data)
                 except Exception:
                     pass
 
@@ -198,7 +199,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 f"?file=report.html&sheet={quote(str(sheet_name))}"
                 f"&inline=true&token={quote(str(token))}"
             )
-            await page.launch_url(url)
+            await launch_public_url(page, url)
         except Exception as ex:
             await log_message(page, f"Erro ao abrir relatório HTML: {ex}")
 

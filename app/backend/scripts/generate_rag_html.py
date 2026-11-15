@@ -4,13 +4,17 @@ import html
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
+
+from ..pipeline_rag.literature import clean_heading, is_generic_article_heading
 
 
 RAG_SCHEMA = "bilbo.rag-report.v2"
@@ -707,6 +711,44 @@ def _search_blob(*values: Any) -> str:
 
     return " ".join(" ".join(parts).split())
 
+
+def _article_doi(source: Any) -> str | None:
+    name = Path(str(source or "")).stem.replace("_2F", "/").replace("_2f", "/")
+    return name if re.fullmatch(r"10\.\d{4,9}/\S+", name, re.IGNORECASE) else None
+
+
+def _rag_evidence_table(chunks: list[dict[str, Any]]) -> str:
+    rows = []
+    for chunk in chunks:
+        source = str(chunk.get("source") or "")
+        doi = _article_doi(source)
+        if doi:
+            href = "https://doi.org/" + quote(doi, safe="/")
+            source_cell = f"<a href='{_esc(href)}' target='_blank' rel='noopener noreferrer'>{_esc(doi)}</a>"
+        else:
+            source_cell = _esc(source)
+
+        section = clean_heading(str(chunk.get("section") or ""))
+        if not section or section.lower() == "article":
+            section = "Section unavailable"
+        article = clean_heading(str(chunk.get("article_title") or ""))
+        if is_generic_article_heading(article) or article == Path(source).stem:
+            article = "Title unavailable in indexed article"
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(chunk.get('citation_id') or chunk.get('chunk_id'))}</td>"
+            f"<td>{source_cell}</td>"
+            f"<td>{_esc(section)}</td>"
+            f"<td>{_esc(article)}</td>"
+            "</tr>"
+        )
+    return (
+        "<div class='scroll'><table class='rag-sources'>"
+        "<thead><tr><th>Citation</th><th>Source / DOI</th>"
+        "<th>Section</th><th>Article title</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
 CLUSTER_BROWSER_CSS = '\n.cluster-filter-tools{\n  display:flex;\n  flex-wrap:wrap;\n  align-items:center;\n  gap:10px;\n  margin:14px 0 18px\n}\n.cluster-filter-tools input{\n  flex:1 1 420px;\n  min-width:240px;\n  padding:11px 13px;\n  border:1px solid var(--line);\n  border-radius:9px;\n  background:#fff;\n  color:var(--ink);\n  font:inherit\n}\n.cluster-filter-status{\n  color:var(--muted);\n  white-space:nowrap\n}\n#cluster-groups{\n  display:grid;\n  gap:12px\n}\n.cluster-group{\n  padding:0;\n  overflow:hidden\n}\n.cluster-group>summary{\n  cursor:pointer;\n  padding:15px;\n  font-weight:700;\n  color:var(--blue);\n  background:var(--soft)\n}\n.cluster-group-body{\n  display:grid;\n  gap:12px;\n  padding:12px\n}\n.cluster-group-body>.cluster{\n  margin:0\n}\n.cluster[hidden],\n.cluster-group[hidden]{\n  display:none!important\n}\n'
 CLUSTER_BROWSER_SCRIPT = '\n<script>\n(() => {\n  const normalize = value =>\n    String(value || "")\n      .normalize("NFD")\n      .replace(/[\\u0300-\\u036f]/g, "")\n      .toLowerCase();\n\n  const cards = Array.from(\n    document.querySelectorAll(\n      "details.cluster[data-ontology][data-direction]"\n    )\n  );\n\n  if (!cards.length) return;\n\n  const specifications = [\n    ["BP", "up", "BP — Upregulated"],\n    ["BP", "down", "BP — Downregulated"],\n    ["MF", "up", "MF — Upregulated"],\n    ["MF", "down", "MF — Downregulated"],\n    ["CC", "up", "CC — Upregulated"],\n    ["CC", "down", "CC — Downregulated"]\n  ];\n\n  const host = document.createElement("section");\n  host.id = "cluster-groups";\n  cards[0].parentNode.insertBefore(host, cards[0]);\n\n  const records = [];\n\n  specifications.forEach(([ontology, direction, label]) => {\n    const selected = cards\n      .filter(card =>\n        card.dataset.ontology === ontology &&\n        card.dataset.direction === direction\n      )\n      .sort((left, right) => {\n        const sizeDifference =\n          Number(right.dataset.genes || 0) -\n          Number(left.dataset.genes || 0);\n\n        if (sizeDifference !== 0) return sizeDifference;\n\n        return (\n          Number(left.dataset.cluster || 0) -\n          Number(right.dataset.cluster || 0)\n        );\n      });\n\n    const group = document.createElement("details");\n    group.className = "cluster-group";\n\n    const totalGenes = selected.reduce(\n      (total, card) =>\n        total + Number(card.dataset.genes || 0),\n      0\n    );\n\n    const summary = document.createElement("summary");\n    summary.textContent =\n      `${label} — ${selected.length} clusters, ` +\n      `${totalGenes} genes`;\n\n    const body = document.createElement("div");\n    body.className = "cluster-group-body";\n\n    selected.forEach(card => body.appendChild(card));\n\n    if (!selected.length) {\n      const empty = document.createElement("p");\n      empty.className = "muted";\n      empty.textContent =\n        "No grouped cluster was generated for this category.";\n      body.appendChild(empty);\n    }\n\n    group.append(summary, body);\n    host.appendChild(group);\n\n    records.push({group, cards: selected});\n  });\n\n  let previousInput = Array.from(\n    document.querySelectorAll("input")\n  ).find(input =>\n    normalize(input.placeholder).includes("filter by gene")\n  );\n\n  let input;\n\n  if (previousInput) {\n    input = previousInput.cloneNode(true);\n    previousInput.replaceWith(input);\n  } else {\n    input = document.createElement("input");\n    input.type = "search";\n  }\n\n  input.id = "cluster-global-filter";\n  input.placeholder =\n    "Filter all content: genes, clusters, descriptions, " +\n    "LLM interpretations or RAG evidence";\n\n  const tools = document.createElement("div");\n  tools.className = "cluster-filter-tools";\n\n  const status = document.createElement("span");\n  status.className = "cluster-filter-status";\n\n  if (input.parentElement) {\n    input.parentElement.insertBefore(tools, input);\n  } else {\n    host.parentNode.insertBefore(tools, host);\n  }\n\n  tools.append(input, status);\n\n  const applyFilter = () => {\n    const terms = normalize(input.value)\n      .split(/\\s+/)\n      .filter(Boolean);\n\n    let totalVisible = 0;\n\n    records.forEach(record => {\n      let groupVisible = 0;\n\n      record.cards.forEach(card => {\n        const searchable = normalize(\n          `${card.dataset.search || ""} ${card.textContent}`\n        );\n\n        const matched = terms.every(term =>\n          searchable.includes(term)\n        );\n\n        card.hidden = !matched;\n\n        if (matched) {\n          groupVisible += 1;\n          totalVisible += 1;\n        }\n      });\n\n      record.group.hidden =\n        terms.length > 0 && groupVisible === 0;\n\n      if (terms.length > 0 && groupVisible > 0) {\n        record.group.open = true;\n      }\n    });\n\n    status.textContent =\n      `${totalVisible} of ${cards.length} clusters shown`;\n  };\n\n  input.addEventListener("input", applyFilter);\n  applyFilter();\n})();\n</script>\n'
 
@@ -1167,28 +1209,6 @@ summary{
             )
 
         for item in evidence:
-            chunk_rows = [
-                [
-                    chunk.get("citation_id")
-                    or chunk.get("chunk_id"),
-                    str(
-                        chunk.get("source") or ""
-                    ).replace(
-                        "_2F",
-                        "/",
-                    ).replace(
-                        "_2f",
-                        "/",
-                    ),
-                    chunk.get("section"),
-                    chunk.get("article_title"),
-                ]
-                for chunk in item.get(
-                    "chunks",
-                    [],
-                )
-            ]
-
             rag_search_text = _search_blob(
                 item
             ).replace(
@@ -1207,15 +1227,7 @@ summary{
                 f"{_esc(item.get('primary_name'))}"
                 "</summary>"
                 f"<p>{_esc(item.get('interpretation'))}</p>"
-                + _table(
-                    [
-                        "Citation",
-                        "Source",
-                        "Section",
-                        "Article",
-                    ],
-                    chunk_rows,
-                )
+                + _rag_evidence_table(item.get("chunks", []))
                 + "</details>"
             )
 

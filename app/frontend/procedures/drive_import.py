@@ -1,4 +1,5 @@
 """Google Drive import modal in Sample Management."""
+from .urls import launch_public_url, public_url
 
 import asyncio
 
@@ -104,7 +105,7 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                 data = response.json()
             state["session"] = data["session_id"]
             update_status(t("drive_wait", lang))
-            page.launch_url(data["authorization_url"])
+            launch_public_url(page, data["authorization_url"])
             page.run_task(poll_selection)
         except Exception as exc:
             connect_button.disabled = False
@@ -139,11 +140,11 @@ async def show_drive_import_modal(page, bilbo_token, refresh_samples, container_
                     update_status(t("drive_failed", lang))
                     return
                 if data["status"] == "selecting" and picker_holder.height == 0:
-                    picker_url = f"http://localhost:8890/drive/picker?session={state['session']}"
+                    picker_url = public_url(f"http://localhost:8890/drive/picker?session={state['session']}")
                     picker_holder.height = 300
                     picker_holder.content = ft.WebView(url=picker_url, expand=True)
                     picker_fallback.visible = True
-                    picker_fallback.on_click = lambda e: page.launch_url(picker_url)
+                    picker_fallback.on_click = lambda e: launch_public_url(page, picker_url)
                     page.update()
                 if data["status"] == "selected":
                     state["selection_ready"] = True

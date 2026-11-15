@@ -20,7 +20,7 @@ ORDER = ("input", "qc_raw", "trimming", "qc_trim", "alignment", "quantification"
 MATE_SUFFIXES = ("_1", "_2", "_R1", "_R2")
 FASTQ_SUFFIXES = (".fastq.gz", ".fq.gz", ".fastq", ".fq")
 # Keep in sync with the dedicated worker concurrency in docker-compose.yml.
-CPU_WORKER_LIMITS = {"alignment": 4, "trimming": 2}
+CPU_WORKER_LIMITS = {"alignment": 4, "trimming": 2, "deg": 1}
 
 
 def _root(user_id: int, *parts: str) -> Path:
@@ -118,7 +118,7 @@ def _active_job(db, user_id: int, stage: str, sample: str):
 
 def _cpu_available(db, requested: int) -> bool:
     maximum = min(os.cpu_count() or 1, 256)
-    active = db.query(PipelineJob).filter(PipelineJob.stage.in_(["alignment", "trimming"]),
+    active = db.query(PipelineJob).filter(PipelineJob.stage.in_(CPU_WORKER_LIMITS),
         PipelineJob.status.in_(["PENDING", "RUNNING"])).all()
     # Queued jobs beyond a worker's concurrency cannot consume CPU yet. Counting
     # all of them blocked ready alignment samples while trimming workers were full.
@@ -130,7 +130,8 @@ def _cpu_available(db, requested: int) -> bool:
         slots = max(0, limit - len(running))
         for job in running + pending[:slots]:
             used += int((job.payload or {}).get("threads") or
-                        ((job.payload or {}).get("params") or {}).get("threads") or 1)
+                        ((job.payload or {}).get("params") or {}).get("threads") or
+                        (job.payload or {}).get("diamond_threads") or 1)
     return requested <= maximum and used + requested <= maximum
 
 
@@ -202,7 +203,8 @@ def _dispatch(db, run: PipelineRun, step: PipelineStep, paired: bool) -> Pipelin
         job_stage = "deg"
         payload = {"contrast_ids": config["design"]["contrast_ids"],
                    "genome_accession": config["genome"], "design": config["design"],
-                   "design_snapshot": preview, "run_id": run.id}
+                   "design_snapshot": preview, "run_id": run.id,
+                   "diamond_threads": config.get("deg", {}).get("diamond_threads", 8)}
     elif stage in ("clustering", "llm"):
         from openpyxl import load_workbook
 
@@ -306,9 +308,10 @@ def _advance_run(db, run: PipelineRun) -> None:
             continue
         if step.stage == "input" and samples[step.sample]["source"] != "sra":
             continue  # Drive and uploads are initiated in their existing dialogs.
-        if step.stage in ("alignment", "trimming"):
-            requested = int((run.config[step.stage] if step.stage == "alignment" else
-                             run.config["trimming"]).get("threads", 1))
+        if step.stage in ("alignment", "trimming", "deg"):
+            requested = int((run.config.get("deg", {}).get("diamond_threads", 8)
+                             if step.stage == "deg" else
+                             run.config[step.stage].get("threads", 1)))
             if not _cpu_available(db, requested) or shutil.disk_usage(settings.users_root).free < 20 * 1024**3:
                 continue
         job_stage = {"input": "samples_download", "qc_raw": "quality_analysis",

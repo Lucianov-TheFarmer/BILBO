@@ -9,7 +9,7 @@ services:
       - ./users:/users/
       - ./rag_data:/rag/
     ports:
-      - "8890:8890"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${BILBO_HOST_PORT:-8890}:8890"
     tty: true
     command: conda run --no-capture-output -n bioinfo uvicorn backend.main:app --host 0.0.0.0 --port 8890 --reload
     networks:
@@ -17,6 +17,8 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-}
       - PYTHONPATH=/app
+      - BILBO_HOST_PORT=${BILBO_HOST_PORT:-8890}
+      - BILBO_PUBLIC_BASE_URL=${BILBO_PUBLIC_BASE_URL:-}
       - OLLAMA_HOST=http://ollama:11434
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -24,14 +26,14 @@ services:
       - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET:-}
       - GOOGLE_DRIVE_API_KEY=${GOOGLE_DRIVE_API_KEY:-}
       - GOOGLE_DRIVE_APP_ID=${GOOGLE_DRIVE_APP_ID:-}
-      - GOOGLE_DRIVE_REDIRECT_URI=${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:8890/drive/oauth/callback}
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - GOOGLE_DRIVE_REDIRECT_URI=${GOOGLE_DRIVE_REDIRECT_URI:-}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-bioinfo}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8890,http://127.0.0.1:8890}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
       - CLUSTER_INTERPRETATION_MODEL=${CLUSTER_INTERPRETATION_MODEL:-gemma3:4b}
@@ -54,7 +56,7 @@ services:
       db:
         condition: service_healthy
       ollama:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_started
       qdrant:
@@ -85,11 +87,11 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID:-}
       - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET:-}
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-bioinfo}
       - LLM_PRIMARY_MODEL=${LLM_PRIMARY_MODEL:-qwen3:14b}
       - LLM_FALLBACK_MODELS=${LLM_FALLBACK_MODELS:-qwen3:8b,qwen3:0.6b}
@@ -110,7 +112,7 @@ services:
       redis:
         condition: service_started
       ollama:
-        condition: service_healthy
+        condition: service_started
       qdrant:
         condition: service_started
 
@@ -206,12 +208,40 @@ services:
       - RAG_ROOT=/rag
       - RAG_ARTICLES_DIR=/rag/articles
       - RAG_ANNOTATE_LITERATURE_ENTITIES=${RAG_ANNOTATE_LITERATURE_ENTITIES:-false}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     depends_on:
       qdrant:
         condition: service_started
       ollama:
         condition: service_healthy
+
+  rag-bootstrap:
+    build:
+      context: .
+      target: runtime
+    profiles: ["bootstrap"]
+    command: >-
+      conda run --no-capture-output -n bioinfo python -c
+      "from backend.services.rag_bootstrap import ensure_rag_database; ensure_rag_database(ensure_models=False)"
+    volumes:
+      - ./app:/app/:ro
+      - ./rag_data:/rag/
+    networks:
+      - main-net
+    environment:
+      - PYTHONPATH=/app
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-banco_literatura_bio}
+      - BM25_METADATA_PATH=/rag/bm25_metadata.json
+      - RAG_SNAPSHOT_URL=${RAG_SNAPSHOT_URL:-https://zenodo.org/api/records/21855338/files/QDrant_DB_BILBO_Plants.zip/content}
+      - RAG_SNAPSHOT_MD5=${RAG_SNAPSHOT_MD5:-b06fb3793956cf5809f6c4091b8d91db}
+      - RAG_SNAPSHOT_SHA256=${RAG_SNAPSHOT_SHA256:-a087b0601fcb14f7498b0cdb41573569f8584e47963d4aed4239725530790fa4}
+      - RAG_BM25_SHA256=${RAG_BM25_SHA256:-8b4085db8fe788cc63426a78450204c28a7dd37c5cb3d1d32e7dc34e99f72882}
+      - RAG_ROOT=/rag
+    depends_on:
+      qdrant:
+        condition: service_started
+    restart: "no"
 
   rag-admin:
     build:
@@ -311,7 +341,7 @@ services:
     image: redis:7-alpine
     container_name: redis-container
     ports:
-      - "6379:6379"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-6379}:6379"
     networks:
       - main-net
 
@@ -319,8 +349,8 @@ services:
     image: qdrant/qdrant:v1.15.4
     container_name: bilbo-qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HOST_PORT:-6333}:6333"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${QDRANT_GRPC_HOST_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     mem_limit: 2g
@@ -329,6 +359,7 @@ services:
 
   ssh-server:
     image: lscr.io/linuxserver/openssh-server:latest
+    profiles: ["ssh"]
     container_name: ssh-container
     environment:
       - PUID=1000
@@ -336,10 +367,10 @@ services:
       - TZ=Etc/UTC
       - SUDO_ACCESS=false
       - PASSWORD_ACCESS=true
-      - USER_PASSWORD=${SSH_USER_PASSWORD:-bilbo}
+      - USER_PASSWORD=${SSH_USER_PASSWORD:?Set SSH_USER_PASSWORD in .env}
       - USER_NAME=${SSH_USER_NAME:-bilbo}
     ports:
-      - "2222:2222"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${SSH_HOST_PORT:-2222}:2222"
     volumes:
       - ssh_config:/config
     networks:
@@ -351,7 +382,7 @@ services:
       dockerfile: ollama.Dockerfile
     container_name: ollama-container
     ports:
-      - "${OLLAMA_HOST_PORT:-11435}:11434"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${OLLAMA_HOST_PORT:-11435}:11434"
     volumes:
       - ollama_data:/root/.ollama
     environment:
@@ -380,10 +411,10 @@ services:
     container_name: postgres-container
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-bioinfo}
     ports:
-      - "5432:5432"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bioinfo}"]
       interval: 5s
@@ -396,11 +427,12 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4
+    profiles: ["admin"]
     environment:
-      PGADMIN_DEFAULT_EMAIL: "admin@admin.com"
-      PGADMIN_DEFAULT_PASSWORD: "admin"
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@localhost.localdomain}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Set PGADMIN_DEFAULT_PASSWORD in .env}
     ports:
-      - "8080:80"
+      - "${BILBO_BIND_ADDRESS:-127.0.0.1}:${PGADMIN_HOST_PORT:-8080}:80"
     depends_on:
       - db
     logging:

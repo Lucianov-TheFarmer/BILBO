@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 import asyncio
 
 from .translations import t
@@ -450,7 +451,7 @@ async def show_clustering(
                         download_url = (
                             f"http://localhost:8890/clustering/file?file={fname_enc}&sheet={sheet_name}&token={token}"
                         )
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                     except Exception as ex:
                         await log_message(page, f"Erro ao iniciar download da figura: {ex}")
 
@@ -516,7 +517,7 @@ async def show_clustering(
                         f"?sheet={quote(str(sheet_name))}"
                         f"&token={quote(str(token))}"
                     )
-                    page.launch_url(report_url)
+                    launch_public_url(page, report_url)
                 except Exception as ex:
                     await log_message(
                         page,

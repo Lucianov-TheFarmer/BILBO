@@ -32,6 +32,11 @@ class PipelineCpuReservationTest(unittest.TestCase):
                                    status="PENDING", payload={"threads": 64}))
             db.commit()
             self.assertFalse(_cpu_available(db, 64))
+            db.query(PipelineJob).filter(PipelineJob.stage == "alignment").delete()
+            db.add(PipelineJob(id="deg-1", user_id=7, stage="deg",
+                               status="RUNNING", payload={"diamond_threads": 120}))
+            db.commit()
+            self.assertFalse(_cpu_available(db, 16))
         db.close()
         engine.dispose()
 

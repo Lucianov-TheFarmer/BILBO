@@ -16,33 +16,33 @@ BILBO is designed to run through Docker Compose. A typical deployment requires:
 Cloning and Configuring the Repository
 --------------------------------------
 
-Clone the versioned repository and enter its root directory:
+Clone and start the versioned repository in one command:
 
 .. code-block:: bash
 
-   git clone https://github.com/Lucianov-TheFarmer/BILBO.git
-   cd BILBO
+   git clone https://github.com/Lucianov-TheFarmer/BILBO.git && python3 BILBO/init.py
 
-Environment-specific settings can be supplied through a local ``.env`` file.
-Before startup, inspect the resolved service configuration with:
+The initializer creates a private ``.env`` from ``.env.example`` and generates
+local passwords. Edit host ports in that file and rerun ``python3 init.py
+--no-build``. To validate without starting services:
 
 .. code-block:: bash
 
-   docker compose config
+   python3 init.py --check
 
 Starting the Platform
 ---------------------
 
-From the project root:
+From the project root, after editing ``.env`` if needed:
 
 .. code-block:: bash
 
-   make full-up
+   python3 init.py --no-build
 
-Use ``make full-build`` when the application image must also be rebuilt. The
-complete mode starts the API/frontend, Celery worker, PostgreSQL, Redis, Qdrant,
-Ollama, SSH gateway, and pgAdmin. Administrative one-shot services use explicit
-Compose profiles and are not started during normal application startup.
+The default initializer builds the application image, starts the API/frontend,
+Celery workers, PostgreSQL, Redis, Qdrant, and Ollama, and begins downloading
+the shared literature index. The SSH gateway and pgAdmin are optional Compose
+profiles (``ssh`` and ``admin``).
 
 Inspect logs and service state, or stop the stack, with:
 
@@ -52,7 +52,8 @@ Inspect logs and service state, or stop the stack, with:
    make full-logs
    make full-down
 
-The backend API is exposed on port ``8890`` by default. The Ollama container is exposed through ``OLLAMA_HOST_PORT`` with a default host-side port of ``11435``.
+The browser uses ``BILBO_HOST_PORT`` (default ``8890``). Internal container ports
+are fixed; all exposed host ports are configurable in ``.env``.
 
 Environment Variables
 ---------------------
@@ -74,9 +75,9 @@ Important variables include:
    * - ``CELERY_RESULT_BACKEND``
      - Redis result backend URL.
    * - ``CLUSTER_INTERPRETATION_MODEL``
-     - Prototype cluster-summary model, default ``gemma4:e4b``.
+     - Cluster-summary model, default ``gemma3:4b``.
    * - ``RAG_LLM_MODEL``
-     - Evidence synthesis model, default ``gemma4:e4b``.
+     - Evidence synthesis model, default ``gemma3:4b``.
    * - ``RAG_EMBEDDING_MODEL``
      - Dense retrieval model, default ``bge-m3:latest``.
    * - ``QDRANT_URL`` and ``QDRANT_COLLECTION``

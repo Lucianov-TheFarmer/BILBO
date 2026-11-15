@@ -1,3 +1,4 @@
+from .urls import launch_public_url
 import flet as ft
 import asyncio
 import httpx
@@ -46,7 +47,7 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
 
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade2/{s}?token={token}"
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
                     # Only show view/download when status is Completed

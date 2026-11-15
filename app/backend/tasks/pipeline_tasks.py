@@ -1003,7 +1003,8 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
 
     deg_script = "/app/backend/scripts/DEG.R"
     gff_annotation_script = "/app/backend/scripts/annotate_deg_with_gff.py"
-    uniprot_annotation_script = "/app/backend/scripts/annotate_deg_with_uniprot.py"
+    # Consulta online mantida no código para uso futuro, mas desativada nesta etapa.
+    # uniprot_annotation_script = "/app/backend/scripts/annotate_deg_with_uniprot.py"
     deg_graphs_script = "/app/backend/scripts/deg_graphs.py"
 
     genome_accession = str(payload.get("genome_accession") or "").strip()
@@ -1022,7 +1023,8 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     annotation_result: dict[str, Any] = {
         "genome_accession": genome_accession,
         "gff": "NOT_RUN",
-        "uniprot": "NOT_RUN",
+        "uniprot": "DISABLED",
+        "diamond_threads": int(payload.get("diamond_threads", 8)),
     }
 
     annotation_error: str | None = None
@@ -1079,27 +1081,14 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         annotation_error = "Falha na anotação pelo GFF: " + (gff_stderr[-1500:] or f"rc={gff_rc}")
                     else:
                         # --------------------------------------------
-                        # UniProt
-                        #
-                        # Executado somente sobre DEG.xlsx
-                        # (genes significativos), evitando dezenas de
-                        # milhares de consultas de DEG_full.xlsx.
+                        # Consulta online ao UniProt desativada. A anotação
+                        # principal usa sequências e o snapshot local do DIAMOND.
+                        # Para reativá-la, revisar antes a evidência de cada hit.
                         # --------------------------------------------
-                        uni_rc, uni_stdout, uni_stderr = _run(
-                            [
-                                "python",
-                                uniprot_annotation_script,
-                                str(deg_xlsx),
-                            ],
-                            timeout=86400,
-                        )
-
-                        annotation_result["uniprot"] = "COMPLETED" if uni_rc == 0 else "FAILED"
-                        annotation_result["uniprot_stdout"] = uni_stdout[-5000:]
-                        annotation_result["uniprot_stderr"] = uni_stderr[-3000:]
-
-                        if uni_rc != 0:
-                            annotation_error = "Falha na anotação UniProt: " + (uni_stderr[-1500:] or f"rc={uni_rc}")
+                        # uni_rc, uni_stdout, uni_stderr = _run(
+                        #     ["python", uniprot_annotation_script, str(deg_xlsx)],
+                        #     timeout=86400,
+                        # )
 
                         total_genes, annotated_genes = _go_coverage(deg_xlsx)
                         annotation_result["go_coverage"] = {
@@ -1107,11 +1096,9 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                             "annotated_genes": annotated_genes,
                         }
                         _progress_event(
-                            f"Anotação GO: {annotated_genes}/{total_genes} genes após consulta UniProt."
+                            f"Anotação GO: {annotated_genes}/{total_genes} genes após GFF."
                         )
                         if total_genes:
-                            uniprot_error = annotation_error
-                            annotation_error = None  # homology may recover a failed text lookup
                             protein_path = next((path for path in (
                                 genome_dir / "protein.fa.zip",
                                 genome_dir / "protein.fasta",
@@ -1160,6 +1147,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     str(diamond_metadata), str(homology_output),
                                     str(deg_dir / "homology"), "--diamond", str(diamond_binary),
                                     "--gff", str(gff_path),
+                                    "--threads", str(payload.get("diamond_threads", 8)),
                                 ], timeout=7200)
                                 annotation_result["homology_stdout"] = homology_stdout[-3000:]
                                 annotation_result["homology_stderr"] = homology_stderr[-3000:]
@@ -1182,9 +1170,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                         homology_stderr[-1500:] or f"rc={homology_rc}")
                             elif annotation_error is None:
                                 annotation_result["homology"] = "UNAVAILABLE"
-                                if annotated_genes:
-                                    annotation_error = uniprot_error
-                                else:
+                                if not annotated_genes:
                                     annotation_error = (
                                         "Nenhum termo GO foi obtido. É necessário um FASTA de proteínas "
                                         "da referência ou CDS traduzíveis no GFF para a anotação por homologia."

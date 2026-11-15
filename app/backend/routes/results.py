@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import os
+import io
+import json
 import re
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Optional
 
 import openpyxl
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..core.settings import settings
@@ -190,6 +193,43 @@ def download_deg_sheets(
     )
 
 
+@router.get("/results/download_deg_bundle")
+def download_deg_bundle(
+    items: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_compat),
+):
+    """Download selected sheets from different pipeline runs in one archive."""
+    try:
+        selected = json.loads(items)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Seleção de abas inválida.") from exc
+    if (not isinstance(selected, list) or not 1 <= len(selected) <= 100
+            or any(not isinstance(item, dict) or not isinstance(item.get("sheet"), str)
+                   or not isinstance(item.get("run_id"), str)
+                   or not item["run_id"].strip() for item in selected)):
+        raise HTTPException(400, "Seleção de abas inválida.")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index, item in enumerate(selected, start=1):
+            sheet = ensure_safe_component(item["sheet"], "sheet")
+            run_id = item["run_id"]
+            workbook, _ = selected_deg_workbook(db, current_user.id, run_id)
+            with pd.ExcelFile(workbook) as source:
+                if sheet not in source.sheet_names:
+                    raise HTTPException(404, f"Aba não encontrada: {sheet}")
+                frame = pd.read_excel(source, sheet_name=sheet)
+            single = io.BytesIO()
+            with pd.ExcelWriter(single, engine="openpyxl") as writer:
+                frame.to_excel(writer, sheet_name=sheet, index=False)
+            stem = re.sub(r"[^A-Za-z0-9._-]+", "_", sheet).strip("._-")[:80]
+            archive.writestr(f"{index:03d}_{stem}_{run_id[:8]}.xlsx", single.getvalue())
+    output.seek(0)
+    return StreamingResponse(output, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="DEG_contrastes_selecionados.zip"',
+    })
+
+
 @router.get("/results/download_image")
 def download_deg_image(
     request: Request,
@@ -198,7 +238,7 @@ def download_deg_image(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_compat),
 ):
-    if run_id:
+    if run_id and run_id != "manual":
         selected_deg_workbook(db, current_user.id, run_id)
         file_path = safe_resolve_user_path(settings.users_root, current_user.id,
                                            "pipelines", run_id, "DEG", filename)

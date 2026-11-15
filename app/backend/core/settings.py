@@ -12,7 +12,7 @@ def _bool(name: str, default: bool) -> bool:
 
 def _list(name: str, default: list[str]) -> list[str]:
     raw = os.getenv(name)
-    if raw is None:
+    if not raw or not raw.strip():
         return default
     return [p.strip() for p in raw.split(",") if p.strip()]
 
@@ -57,8 +57,17 @@ class Settings:
     db_startup_retry_seconds: float = float(os.getenv("DB_STARTUP_RETRY_SECONDS", "2"))
 
     def __post_init__(self) -> None:
+        public_port = os.getenv("BILBO_HOST_PORT", "8890")
+        public_base = os.getenv("BILBO_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        default_origins = [
+            f"http://localhost:{public_port}",
+            f"http://127.0.0.1:{public_port}",
+            "null",
+        ]
+        if public_base:
+            default_origins.append(public_base)
         object.__setattr__(
-            self, "cors_origins", _list("CORS_ORIGINS", ["http://localhost:8890", "http://127.0.0.1:8890", "null"])
+            self, "cors_origins", _list("CORS_ORIGINS", default_origins)
         )
         object.__setattr__(self, "llm_fallback_models", _list("LLM_FALLBACK_MODELS", ["qwen3:8b", "qwen3:0.6b"]))
 

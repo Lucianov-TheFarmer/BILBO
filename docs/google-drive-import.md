@@ -27,10 +27,11 @@ ao administrador do BILBO para concluir a configuração única abaixo.
    conta no modal, sem configurar o Google Cloud.
 2. Configure a tela de consentimento OAuth e um cliente do tipo **Aplicação Web**
    com o escopo `https://www.googleapis.com/auth/drive.file`.
-3. Cadastre exatamente `http://localhost:8890/drive/oauth/callback` como URI de
-   redirecionamento e `http://localhost:8890` como origem JavaScript autorizada
-   para o uso pelo túnel SSH. Para acesso público, use um
-   domínio HTTPS e atualize `GOOGLE_DRIVE_REDIRECT_URI`.
+3. Cadastre como origem JavaScript o endereço de acesso configurado no `.env`:
+   `http://localhost:<BILBO_HOST_PORT>` para um túnel SSH, ou o valor HTTPS de
+   `BILBO_PUBLIC_BASE_URL`. Cadastre a URI de retorno com
+   `/drive/oauth/callback` ao final da mesma origem. Por exemplo, com a porta
+   padrão: `http://localhost:8890/drive/oauth/callback`.
 4. Crie uma chave de API para o Picker e anote o número do projeto (`appId`).
    Restrinja a chave às APIs necessárias e às origens utilizadas pelo Picker,
    incluindo `https://docs.google.com/*` conforme a documentação do Google.
@@ -41,7 +42,8 @@ ao administrador do BILBO para concluir a configuração única abaixo.
    GOOGLE_DRIVE_CLIENT_SECRET=...
    GOOGLE_DRIVE_API_KEY=...
    GOOGLE_DRIVE_APP_ID=...
-   GOOGLE_DRIVE_REDIRECT_URI=http://localhost:8890/drive/oauth/callback
+   # Opcional se a origem vier de BILBO_HOST_PORT ou BILBO_PUBLIC_BASE_URL:
+   GOOGLE_DRIVE_REDIRECT_URI=
    ```
 
 O `SECRET_KEY` do BILBO deve estar definido e ser estável entre API e worker.
@@ -49,8 +51,8 @@ Ele é usado para cifrar as credenciais temporárias armazenadas no Redis. O
 usuário autoriza novamente cada vez que abre o modal. Uma credencial de tarefa
 permanece por até 72 horas para que downloads em andamento possam terminar.
 Não inclua segredos OAuth, a chave de API nem o `.env` no Git. Para ativar uma
-configuração nova numa instalação existente, recrie somente os serviços `bioinfo`
-e `worker` do Compose; os modelos e volumes de dados não precisam ser reinstalados.
+configuração nova numa instalação existente, execute `python3 init.py --no-build`;
+os modelos e volumes de dados não precisam ser reinstalados.
 
 ## Regras de importação
 
