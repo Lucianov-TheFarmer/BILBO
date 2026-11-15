@@ -237,6 +237,10 @@ async def show_pipeline_config_modal(page, token, user_id):
             if not plan["samples"]:
                 await report_status(t("pipeline_choose_samples", lang), error=True)
                 return
+            if any(plan["stages"].get(stage) for stage in ("alignment", "quantification", "deg")) \
+                    and not plan["genome"]:
+                await report_status(t("pipeline_genome_required", lang), error=True)
+                return
             async with httpx.AsyncClient(timeout=30) as client:
                 if editing["id"]:
                     response = await client.put(f"{API}/pipeline/runs/{editing['id']}",
@@ -449,6 +453,18 @@ async def show_pipeline_config_modal(page, token, user_id):
             ft.TextButton(t("pipeline_refresh", lang), icon="refresh",
                           on_click=lambda _: page.run_task(refresh_options)),
             ft.Divider(),
+            ft.Container(
+                content=ft.Column([
+                    ft.Text(t("pipeline_genome", lang), weight=ft.FontWeight.BOLD),
+                    reference_controls,
+                    ft.Text(t("pipeline_reference_required_hint", lang), size=11),
+                    ft.Text(t("pipeline_reference_hint", lang), size=11),
+                ], spacing=10),
+                padding=ft.padding.all(14),
+                border=ft.border.all(1, "outline"),
+                border_radius=10,
+            ),
+            ft.Divider(),
             ft.Text(t("pipeline_stages", lang), weight=ft.FontWeight.BOLD),
             section("qc_raw", []),
             section("trimming", [
@@ -457,8 +473,6 @@ async def show_pipeline_config_modal(page, token, user_id):
             ]),
             section("qc_trim", []),
             section("alignment", [
-                reference_controls,
-                ft.Text(t("pipeline_reference_hint", lang), size=11),
                 ft.Text(t("pipeline_alignment_params", lang), size=12),
                 ft.Row([alignment_threads, *star_fields.values()], wrap=True, spacing=10),
             ]),

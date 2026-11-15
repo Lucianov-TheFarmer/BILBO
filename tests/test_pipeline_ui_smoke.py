@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import flet as ft
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from frontend.procedures import contrasts, pipeline_config  # noqa: E402
@@ -69,6 +71,13 @@ class PipelineUISmokeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(2, len(page.opened))
             sample_choices = page.opened[0].content.content.controls[7]
             self.assertEqual([True, True], [choice.value for choice in sample_choices.controls])
+            shared_reference = next(control for control in page.opened[0].content.content.controls
+                                    if isinstance(control, ft.Container)
+                                    and isinstance(control.content, ft.Column)
+                                    and isinstance(control.content.controls[0], ft.Text)
+                                    and control.content.controls[0].value in
+                                    ("Genoma de referência", "Reference genome", "Genoma de referencia"))
+            self.assertEqual("ref1", shared_reference.content.controls[1].controls[0].value)
 
 
 if __name__ == "__main__":
