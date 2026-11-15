@@ -76,10 +76,15 @@ async def log_message(page, message, container_terminal=None):
         return
 
     try:
-        if (listview.controls and isinstance(listview.controls[-1], ft.Text)
-                and listview.controls[-1].value == message):
+        insert_at = next(
+            (index for index, control in enumerate(listview.controls)
+             if str(getattr(control, "data", "")).startswith("terminal_progress_")),
+            len(listview.controls),
+        )
+        if (insert_at and isinstance(listview.controls[insert_at - 1], ft.Text)
+                and listview.controls[insert_at - 1].value == message):
             return
-        listview.controls.append(ft.Text(message))
+        listview.controls.insert(insert_at, ft.Text(message))
         current_terminal = getattr(page, "container_terminal", None)
         if current_terminal is not None:
             current_terminal.visible = True

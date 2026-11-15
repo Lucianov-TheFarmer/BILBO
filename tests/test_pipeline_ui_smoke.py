@@ -52,6 +52,12 @@ class _Client:
                 "values": {"A1": "one", "B1": "one"}}]}}
         return SimpleNamespace(status_code=200, json=lambda: data)
 
+    async def post(self, url, **_kwargs):
+        if url.endswith("/analysis-design/validate"):
+            return SimpleNamespace(status_code=200, json=lambda: {
+                "samples": {"A1": "Control", "B1": "Drought"}})
+        raise AssertionError(url)
+
 
 class PipelineUISmokeTest(unittest.IsolatedAsyncioTestCase):
     async def test_dialogs_build_in_all_languages(self):
@@ -61,6 +67,8 @@ class PipelineUISmokeTest(unittest.IsolatedAsyncioTestCase):
                 await pipeline_config.show_pipeline_config_modal(page, "test-token", 7)
                 await contrasts.show_contrasts_modal(page, "test-token", 7)
             self.assertEqual(2, len(page.opened))
+            sample_choices = page.opened[0].content.content.controls[7]
+            self.assertEqual([True, True], [choice.value for choice in sample_choices.controls])
 
 
 if __name__ == "__main__":

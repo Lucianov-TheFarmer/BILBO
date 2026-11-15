@@ -10,6 +10,7 @@ from .alignment import show_genomes_modal
 from .contrasts import show_contrasts_modal
 from .reference_import import show_reference_upload_modal, show_reference_url_modal
 from .translations import t
+from .utils import log_message
 
 API = "http://bioinfo-container:8890"
 STAR_FIELDS = ("outFilterType", "outFilterMultimapNmax", "alignSJoverhangMin",
@@ -30,6 +31,16 @@ async def show_pipeline_config_modal(page, token, user_id):
         return
     options = options_response.json()
     saved_design = design_response.json().get("config") if design_response.status_code == 200 else None
+    design_samples = set()
+    if saved_design:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                preview_response = await client.post(
+                    f"{API}/analysis-design/validate", json=saved_design, headers=headers)
+            if preview_response.status_code == 200:
+                design_samples = set(preview_response.json().get("samples") or {})
+        except Exception:
+            pass
     status_text = ft.Text("")
     name_field = ft.TextField(label=t("pipeline_name", lang), value=t("pipeline_default_name", lang))
     sample_checks = {}
@@ -92,13 +103,16 @@ async def show_pipeline_config_modal(page, token, user_id):
         update_selection()
 
     select_all = ft.Checkbox(label=t("pipeline_select_all", lang), on_change=toggle_all)
-    show_samples(sample_data)
+    show_samples(sample_data, select_names=design_samples)
     stage_checks = {stage: ft.Checkbox(label=t("pipeline_stage_" + stage, lang),
                                        value=stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification"))
                     for stage in ("qc_raw", "trimming", "qc_trim", "alignment", "quantification", "deg", "clustering", "llm")}
     genome_field = ft.Dropdown(label=t("pipeline_genome", lang),
                                options=[ft.dropdown.Option(g["id"], f"{g['name']} ({localized_status(g['status'])})")
                                         for g in options["genomes"] if g.get("id")])
+    ready_genomes = [g["id"] for g in options["genomes"] if g.get("id") and g.get("status") == "COMPLETED"]
+    if len(ready_genomes) == 1:
+        genome_field.value = ready_genomes[0]
     trim_fields = {key: ft.TextField(label=t("pipeline_trim_" + key, lang), value=value, width=215)
                    for key, value in {"threads": "4", "phred": "autodetect", "adapter": "TruSeq3-PE.fa",
                                       "seed": "2", "palindrome": "30", "simple": "10", "adapter_min": "8",
@@ -201,12 +215,27 @@ async def show_pipeline_config_modal(page, token, user_id):
         status_text.value = t("pipeline_draft_loaded", lang)
         page.update()
 
+    async def report_status(message, error=False):
+        status_text.value = str(message)
+        status_text.color = "red" if error else "green"
+        page.update()
+        await log_message(page, str(message))
+
+    def response_error(response):
+        try:
+            detail = response.json().get("detail", response.text)
+        except Exception:
+            detail = response.text
+        if isinstance(detail, list):
+            return "; ".join(str(item.get("msg", item)) if isinstance(item, dict)
+                             else str(item) for item in detail)
+        return str(detail)
+
     async def save(start=False):
         try:
             plan = build_plan()
             if not plan["samples"]:
-                status_text.value = t("pipeline_choose_samples", lang)
-                page.update()
+                await report_status(t("pipeline_choose_samples", lang), error=True)
                 return
             async with httpx.AsyncClient(timeout=30) as client:
                 if editing["id"]:
@@ -215,31 +244,35 @@ async def show_pipeline_config_modal(page, token, user_id):
                 else:
                     response = await client.post(f"{API}/pipeline/runs", json=plan, headers=headers)
                 if response.status_code not in (200, 201):
-                    status_text.value = response.json().get("detail", response.text)
-                    page.update()
+                    await report_status(response_error(response), error=True)
                     return
                 run = response.json()
                 editing["id"] = run["id"]
                 if start:
                     response = await client.post(f"{API}/pipeline/runs/{run['id']}/start", headers=headers)
                     if response.status_code != 200:
-                        status_text.value = response.json().get("detail", response.text)
-                        page.update()
+                        await report_status(response_error(response), error=True)
                         return
+                    page.pipeline_monitor_run_id = run["id"]
                     editing["id"] = None
                     editing_label.value = ""
-            status_text.value = t("pipeline_started", lang) if start else t("pipeline_saved", lang)
+            await report_status(t("pipeline_started", lang) if start else t("pipeline_saved", lang))
             await load_runs()
         except Exception as exc:
-            status_text.value = str(exc)
-            page.update()
+            await report_status(str(exc), error=True)
 
     async def action(run_id, endpoint):
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(f"{API}/pipeline/runs/{run_id}/{endpoint}", headers=headers)
-        status_text.value = (t("pipeline_action_done", lang) if response.status_code == 200 else
-                             response.json().get("detail", response.text))
-        await load_runs()
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(f"{API}/pipeline/runs/{run_id}/{endpoint}", headers=headers)
+            if response.status_code == 200:
+                page.pipeline_monitor_run_id = run_id
+                await report_status(t("pipeline_action_done", lang))
+            else:
+                await report_status(response_error(response), error=True)
+            await load_runs()
+        except Exception as exc:
+            await report_status(str(exc), error=True)
 
     async def delete_draft(run_id, confirm_dialog):
         page.close(confirm_dialog)
@@ -406,7 +439,7 @@ async def show_pipeline_config_modal(page, token, user_id):
         title=ft.Text(t("pipeline_configure", lang)),
         content=ft.Container(width=910, height=650, content=ft.ListView(controls=[
             ft.Text(t("pipeline_intro", lang), size=12),
-            name_field, editing_label,
+            name_field, editing_label, status_text,
             ft.Divider(),
             ft.Row([ft.Text(t("pipeline_samples", lang), weight=ft.FontWeight.BOLD),
                     sample_count], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -441,7 +474,6 @@ async def show_pipeline_config_modal(page, token, user_id):
             ]),
             section("clustering", [ft.Text(t("pipeline_clustering_hint", lang), size=11)]),
             section("llm", [ft.Text(t("pipeline_llm_hint", lang), size=11)]),
-            status_text,
             ft.Divider(),
             ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,
         ], spacing=12)),

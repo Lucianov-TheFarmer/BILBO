@@ -10,7 +10,7 @@ from unittest.mock import patch
 import flet as ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
-from frontend.procedures import pipeline_monitor  # noqa: E402
+from frontend.procedures import pipeline_monitor, utils  # noqa: E402
 
 
 class _Response:
@@ -74,10 +74,11 @@ class _FinishedLlmClient(_HistoryOnlyClient):
 
 
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
-    async def _one_poll(self, client):
+    async def _one_poll(self, client, tracked_run_id=None):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
         page = SimpleNamespace(container_terminal=terminal,
-                               session={"lang": "pt"}, update=lambda: None)
+                               session={"lang": "pt"}, update=lambda: None,
+                               pipeline_monitor_run_id=tracked_run_id)
         refreshes = []
 
         async def stop_after_first_update(_seconds):
@@ -96,6 +97,18 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
         terminal, _ = await self._one_poll(_HistoryOnlyClient())
         self.assertFalse(terminal.content.controls[0].visible)
         self.assertTrue(terminal.visible)
+
+    async def test_run_that_finished_before_first_poll_stays_visible_this_session(self):
+        terminal, _ = await self._one_poll(_HistoryOnlyClient(), tracked_run_id="old")
+        self.assertTrue(terminal.content.controls[0].visible)
+        self.assertIn("Previous session", terminal.content.controls[0].content.controls[0].value)
+
+    async def test_new_terminal_messages_leave_progress_card_at_bottom(self):
+        terminal, _ = await self._one_poll(_Client())
+        page = SimpleNamespace(container_terminal=terminal, update=lambda: None)
+        await utils.log_message(page, "Pipeline iniciado")
+        self.assertEqual("Pipeline iniciado", terminal.content.controls[0].value)
+        self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
 
     async def test_running_llm_reappears_after_login(self):
         terminal, refreshes = await self._one_poll(_ActiveLlmClient())

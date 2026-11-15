@@ -21,6 +21,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
     bar = ft.ProgressBar(value=0, width=270)
     details = ft.Column(spacing=3)
     card = ft.Container(
+        data="terminal_progress_pipeline",
         border=ft.border.all(1, "outline"), border_radius=8,
         padding=ft.padding.all(10), visible=False,
         content=ft.Column([title, summary, bar, details], spacing=5),
@@ -30,6 +31,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
     llm_phase = ft.Text(size=11)
     llm_bar = ft.ProgressBar(value=None, width=270)
     llm_card = ft.Container(
+        data="terminal_progress_llm",
         border=ft.border.all(1, "outline"), border_radius=8,
         padding=ft.padding.all(10), visible=False,
         content=ft.Column([llm_title, llm_bar, llm_phase], spacing=5),
@@ -48,6 +50,9 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 response.raise_for_status()
                 runs = response.json()
                 run = next((item for item in runs if item["status"] == "RUNNING"), None)
+                tracked_run_id = getattr(page, "pipeline_monitor_run_id", None)
+                if run is None and tracked_run_id:
+                    run = next((item for item in runs if item["id"] == tracked_run_id), None)
                 if run is None and previous_run:
                     run = next((item for item in runs if item["id"] == previous_run), None)
                 if run:
@@ -89,6 +94,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 visible = [step for step in steps if step["status"] in ACTIVE]
                 if not visible:
                     visible = [step for step in steps if step["status"] == "FAILED"][:4]
+                if not visible and status == "RUNNING":
+                    visible = [step for step in steps if step["status"] == "WAITING"][:4]
                 for step in visible[:8]:
                     stage = (t("pipeline_samples", lang) if step["stage"] == "input" else
                              t("pipeline_stage_" + step["stage"], lang))
