@@ -7,6 +7,7 @@ import httpx
 
 from ..components.general_components import create_button
 from .jobs import wait_for_job
+from .markdown_chunks import split_markdown_report
 from .utils import log_message
 
 
@@ -104,7 +105,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_md(e, sheet_name):
         try:
-            url = f"http://localhost:8890/llm/file?file=report.md&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=report.md&sheet={quote(str(sheet_name))}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -112,31 +113,80 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .md: {resp.status_code} - {resp.text}")
                 return
-            text = resp.text
+            chunks = split_markdown_report(resp.text)
+            previous_preview_content = container_pre_visualizacao.content
+            loaded = 0
+            lang = page.session.get("lang") or "pt"
 
-            # render in preview container using Markdown renderer
             async def _navigate_md_link(ev):
                 try:
                     await page.launch_url(ev.data)
                 except Exception:
                     pass
 
-            container_pre_visualizacao.content = ft.Container(
+            async def _close_viewer(ev):
+                container_pre_visualizacao.content = previous_preview_content
+                page.update()
+
+            progress = ft.Text(size=12)
+            more_button = ft.TextButton(t("viewer_load_more", lang))
+            report_list = ft.ListView(
                 expand=True,
-                content=ft.ListView(
-                    expand=True,
-                    controls=[
+                spacing=8,
+                build_controls_on_demand=True,
+                cache_extent=400,
+                on_scroll_interval=250,
+            )
+
+            def _load_more():
+                nonlocal loaded
+                if loaded >= len(chunks):
+                    return
+                next_chunk = min(loaded + 2, len(chunks))
+                for chunk in chunks[loaded:next_chunk]:
+                    report_list.controls.insert(
+                        len(report_list.controls) - 1,
                         ft.Markdown(
-                            value=text,
+                            value=chunk,
                             selectable=True,
                             extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
                             on_tap_link=_navigate_md_link,
                             fit_content=False,
-                        )
+                        ),
+                    )
+                loaded = next_chunk
+                progress.value = f"{loaded}/{len(chunks)}"
+                more_button.visible = loaded < len(chunks)
+                page.update()
+
+            async def _load_more_clicked(ev):
+                _load_more()
+
+            async def _load_more_on_scroll(ev):
+                if loaded < len(chunks) and ev.pixels >= ev.max_scroll_extent - 500:
+                    _load_more()
+
+            more_button.on_click = _load_more_clicked
+            report_list.on_scroll = _load_more_on_scroll
+            report_list.controls.append(more_button)
+            container_pre_visualizacao.content = ft.Container(
+                expand=True,
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Text(str(sheet_name), expand=True),
+                                progress,
+                                ft.IconButton(icon="close", tooltip=t("viewer_close", lang),
+                                              on_click=_close_viewer),
+                            ],
+                        ),
+                        report_list,
                     ],
                 ),
             )
-            page.update()
+            _load_more()
         except Exception as ex:
             await log_message(page, f"Erro ao visualizar .md: {ex}")
 
@@ -154,7 +204,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     async def _view_json(e, sheet_name):
         try:
-            url = f"http://localhost:8890/llm/file?file=data.json&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=data.json&sheet={quote(str(sheet_name))}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -163,9 +213,25 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 await log_message(page, f"Erro ao buscar .json: {resp.status_code} - {resp.text}")
                 return
             text = resp.text
+            previous_preview_content = container_pre_visualizacao.content
+
+            async def _close_viewer(ev):
+                container_pre_visualizacao.content = previous_preview_content
+                page.update()
+
             container_pre_visualizacao.content = ft.Container(
                 expand=True,
-                content=ft.ListView(controls=[ft.Text(text, selectable=True)], expand=True),
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.Row(controls=[
+                            ft.Text(str(sheet_name), expand=True),
+                            ft.IconButton(icon="close", tooltip=t("viewer_close", page.session.get("lang") or "pt"),
+                                          on_click=_close_viewer),
+                        ]),
+                        ft.ListView(controls=[ft.Text(text, selectable=True)], expand=True),
+                    ],
+                ),
             )
             page.update()
         except Exception as ex:
