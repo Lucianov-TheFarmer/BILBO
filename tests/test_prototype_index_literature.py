@@ -7,6 +7,20 @@ import app.backend.pipeline_rag.literature as literature_entities
 
 
 class IndexLiteratureTest(unittest.TestCase):
+    def test_pdf_headings_do_not_replace_article_title(self) -> None:
+        text = (
+            "# **RESEARCH ARTICLE**\n"
+            "# 1 Comparative [Transcriptome and Proteome](https://example.org) Analysis of Drought\n"
+            "## 904 **Results and Discussion**\n"
+            "Evidence text.\n"
+        )
+        self.assertEqual(
+            "Comparative Transcriptome and Proteome Analysis of Drought",
+            literature_entities.article_title(text, "fallback"),
+        )
+        sections = literature_entities.split_sections(text)
+        self.assertEqual("Results and Discussion", sections[-1]["title"])
+
     def test_chunks_do_not_cross_sections(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             article = Path(temp_dir) / "article.md"

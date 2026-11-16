@@ -58,7 +58,7 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
         ).first()
 
         if existing_entry:
-            existing_entry.status = "RUNNING"
+            existing_entry.status = "PENDING"
             db.add(existing_entry)
         else:
             db.add(
@@ -67,7 +67,7 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
                     name=f"{basename}_post_trim.html",
                     sra_code=db_sample_stage.sra_code,
                     size=None,
-                    status="RUNNING",
+                    status="PENDING",
                     user_id=user_id,
                 )
             )
@@ -75,17 +75,15 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
 
     db.commit()
 
-    job = create_job(db, stage="quality_analysis_post_trim", user_id=user_id, payload={"samples": to_process})
-    audit(
-        db,
-        action="quality_analysis_post_trim_enqueued",
-        user_id=user_id,
-        stage="quality_analysis_post_trim",
-        job_id=job.id,
-        metadata_json={"samples": to_process},
-    )
-    enqueue_pipeline_job(job.id)
-    return {"job_id": job.id, "status": "PENDING", "message": "Post-trim quality analysis job enqueued"}
+    job_ids = []
+    for name in to_process:
+        job = create_job(db, stage="quality_analysis_post_trim", user_id=user_id, payload={"samples": [name]})
+        audit(db, action="quality_analysis_post_trim_enqueued", user_id=user_id,
+              stage="quality_analysis_post_trim", job_id=job.id, metadata_json={"samples": [name]})
+        enqueue_pipeline_job(job.id, queue="quality")
+        job_ids.append(job.id)
+    return {"job_id": job_ids[0] if job_ids else None, "job_ids": job_ids,
+            "status": "PENDING", "message": "Post-trim quality analysis jobs enqueued"}
 
 @router.post("/quality_analysis_post_trim/update_status")
 def update_quality_analysis_post_trim_status(

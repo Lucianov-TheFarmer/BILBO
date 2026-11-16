@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import logging
@@ -5,10 +6,48 @@ import asyncio
 import os
 import tempfile
 from .utils import log_message
+from .urls import public_base_url
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+UPLOAD_COPY = {
+    "en": {
+        "Selecione arquivos FASTQ": "Select FASTQ files",
+        "Clique aqui ou arraste arquivos": "Click here or drag files",
+        "Formatos:": "Formats:",
+        "Enviar Arquivos": "Upload files",
+        "Análise dos arquivos:": "File preview:",
+        "Nenhum arquivo analisado!": "No files selected!",
+        "Iniciando upload...": "Starting upload...",
+        "Processando grupo:": "Processing group:",
+        "Grupo ${basename} concluído": "Group ${basename} complete",
+        "Finalizando upload...": "Finishing upload...",
+        "Aviso: Erro ao finalizar lote": "Warning: batch finalization failed",
+        "Aviso:": "Warning:",
+        "Upload completo!": "Upload complete!",
+        "Adicionar arquivos FASTQ": "Add FASTQ files",
+        "Enviando": "Uploading",
+    },
+    "es": {
+        "Selecione arquivos FASTQ": "Seleccione archivos FASTQ",
+        "Clique aqui ou arraste arquivos": "Haga clic o arrastre archivos",
+        "Formatos:": "Formatos:",
+        "Enviar Arquivos": "Cargar archivos",
+        "Análise dos arquivos:": "Vista previa de archivos:",
+        "Nenhum arquivo analisado!": "¡No se seleccionaron archivos!",
+        "Iniciando upload...": "Iniciando carga...",
+        "Processando grupo:": "Procesando grupo:",
+        "Grupo ${basename} concluído": "Grupo ${basename} terminado",
+        "Finalizando upload...": "Finalizando carga...",
+        "Aviso: Erro ao finalizar lote": "Aviso: error al finalizar el lote",
+        "Aviso:": "Aviso:",
+        "Upload completo!": "¡Carga terminada!",
+        "Adicionar arquivos FASTQ": "Añadir archivos FASTQ",
+        "Enviando": "Subiendo",
+    },
+}
 
 # UPLOAD_PERSISTENT_GLOBAL_START
 _upload_panels = {}
@@ -145,6 +184,8 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
         
         <button onclick="processAndSend()" id="uploadBtn" style="display: none;">Enviar Arquivos</button>
         
+        <progress id="uploadProgress" max="100" value="0" style="width:100%;display:none"></progress>
+        <div id="uploadProgressText"></div>
         <div id="output"></div>
     </div>
     
@@ -169,7 +210,9 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                 let originalBasename = basename;
                 
                 // Detectar paired-end
-                if (/_1$/i.test(basename)) {
+                if (/_R[12]_001$/i.test(basename)) {
+                    basename = basename.replace(/_R[12]_001$/i, '');
+                } else if (/_1$/i.test(basename)) {
                     basename = basename.replace(/_1$/i, '');
                 } else if (/_2$/i.test(basename)) {
                     basename = basename.replace(/_2$/i, '');
@@ -271,19 +314,27 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                         const formData = new FormData();
                         formData.append("file", file, file.name);
 
-                        const response = await fetch("http://localhost:8890/upload/fastq", {
-                            method: "POST",
-                            headers: {
-                                "Authorization": "Bearer """ + token + """"
-                            },
-                            body: formData
+                        const progressBar = document.getElementById('uploadProgress');
+                        const progressText = document.getElementById('uploadProgressText');
+                        progressBar.style.display = 'block';
+                        const result = await new Promise((resolve, reject) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open('POST', 'http://localhost:8890/upload/fastq');
+                            xhr.setRequestHeader('Authorization', 'Bearer """ + token + """');
+                            xhr.upload.onprogress = event => {
+                                if (event.lengthComputable) {
+                                    progressBar.value = Math.round(100 * event.loaded / event.total);
+                                    progressText.textContent = `Enviando ${file.name}: ${formatFileSize(event.loaded)}/${formatFileSize(event.total)}`;
+                                }
+                            };
+                            xhr.onload = () => {
+                                if (xhr.status < 200 || xhr.status >= 300) reject(new Error(`HTTP ${xhr.status}: ${xhr.responseText}`));
+                                else { try { resolve(JSON.parse(xhr.responseText)); } catch (err) { reject(err); } }
+                            };
+                            xhr.onerror = () => reject(new Error('Upload failed'));
+                            xhr.send(formData);
                         });
-                        
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}`);
-                        }
-                        
-                        const result = await response.json();
+                        progressText.textContent = `${file.name}: ${formatFileSize(file.size)}/${formatFileSize(file.size)}`;
                         
                         if (result.status === 'saved') {
                             output.textContent += ` ✅\\n`;
@@ -327,6 +378,9 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
     </script>
 </body>
 </html>"""
+    html_content = html_content.replace("http://localhost:8890", public_base_url())
+    for source, translated in sorted(UPLOAD_COPY.get(page.session.get("lang") or "pt", {}).items(), key=lambda item: -len(item[0])):
+        html_content = html_content.replace(source, translated)
     
     # Criar data URL com o HTML
     import base64
@@ -372,13 +426,13 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Text(
-                            "Adicionar arquivos FASTQ",
+                            {"pt": "Adicionar arquivos FASTQ", "en": "Add FASTQ files", "es": "Añadir archivos FASTQ"}.get(page.session.get("lang") or "pt", "Adicionar arquivos FASTQ"),
                             size=22,
                             weight="bold",
                         ),
                         ft.IconButton(
                             icon="close",
-                            tooltip="Ocultar",
+                            tooltip=t("hide", page.session.get("lang") or "pt"),
                             on_click=ocultar_upload,
                         ),
                     ],
@@ -391,7 +445,7 @@ async def show_upload_fastq_modal(page, token, container_menu_direita, tabela_am
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
                         ft.TextButton(
-                            "Ocultar",
+                            t("hide", page.session.get("lang") or "pt"),
                             on_click=ocultar_upload,
                         ),
                     ],

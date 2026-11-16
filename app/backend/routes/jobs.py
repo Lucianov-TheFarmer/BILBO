@@ -1,5 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
+import csv
+import json
 
 from datetime import datetime, timezone
 import os
@@ -76,6 +78,38 @@ def _extract_progress_percent(log_text: str) -> Optional[float]:
     return None
 
 
+def _llm_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Read atomic RAG checkpoints while an interpretation job is running."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    sheets = (job.payload or {}).get("sheets") or []
+    if len(sheets) != 1 or not re.fullmatch(r"[A-Za-z0-9_.-]+", str(sheets[0])):
+        return None
+    sheet = sheets[0]
+    started = job.started_at.timestamp()
+    root = Path("/users") / str(job.user_id)
+    selected = root / "clustering" / sheet / "outputs" / "prioritized_genes.csv"
+    checkpoint = root / "llm" / sheet / "rag_gene_evidence.json"
+    try:
+        if not selected.is_file() or selected.stat().st_mtime < started - 2:
+            return None
+        with selected.open(newline="", encoding="utf-8") as stream:
+            total = sum(str(row.get("selected_for_search", "")).lower() in ("true", "1", "yes")
+                        for row in csv.DictReader(stream))
+        if total < 1:
+            return None
+        done = 0
+        if checkpoint.is_file() and checkpoint.stat().st_mtime >= started - 2:
+            data = json.loads(checkpoint.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                done = min(len(data), total)
+        return {"progress_source": "rag_checkpoint", "progress_phase": "rag",
+                "progress_done": done, "progress_total": total,
+                "progress_percent": round(100 * done / total, 1)}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     payload = job.payload or {}
     if not isinstance(payload, dict):
@@ -86,7 +120,7 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
         return None
 
     log_path = f"/app/backend/logs/{sra_code}_download.log"
-    log_text = _tail_text_file(log_path)
+    log_text = _tail_text_file(log_path, 1024 * 1024) if job.started_at else ""
     status_value = str(job.status or "")
 
     percent = _extract_progress_percent(log_text) if log_text else None
@@ -114,10 +148,80 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     if percent is None and not progress_message:
         return None
 
+    phases = re.findall(r"([A-Za-z]+)\s*:\|", log_text)
+    phase = phases[-1].lower() if phases else None
+
     return {
         "progress_percent": percent,
+        "progress_phase": phase,
         "progress_source": "samples_download_log",
     }
+
+
+def _fastqc_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Read FastQC's own periodic percentages from the shared sample log."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    samples = (job.payload or {}).get("samples") or []
+    if not samples:
+        return None
+    result = job.result or {}
+    completed = min(int(result.get("completed_samples") or 0), len(samples))
+    if completed >= len(samples):
+        return None
+    sample = str(samples[completed])
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", sample):
+        return None
+    if job.stage == "quality_analysis":
+        stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
+        base = re.sub(r"_[12]$", "", stem)
+        path = Path("/users") / str(job.user_id) / "QC" / base / f"{sample}_quality_analysis.log"
+    else:
+        stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
+        base = re.sub(r"_R?[12]_trimmed$", "", stem)
+        path = Path("/users") / str(job.user_id) / "QC_PostTrim" / base / f"{stem}_quality_analysis_post_trim.log"
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        started = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+        if modified < started:
+            return None
+    except OSError:
+        return None
+    text = _tail_text_file(str(path), 8192)
+    matches = re.findall(r"Approx\s+(\d+(?:\.\d+)?)% complete", text)
+    current = float(matches[-1]) if matches else 0.0
+    if "Analysis complete for" in text:
+        current = 100.0
+    percent = min(99.9, round(100 * (completed + current / 100) / len(samples), 1))
+    return {"progress_percent": percent, "progress_message": f"{sample}: {current:.0f}%",
+            "completed_samples": completed, "total_samples": len(samples),
+            "progress_source": "fastqc_log"}
+
+
+def _alignment_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    if job.status != PipelineStatus.RUNNING.value:
+        return None
+    sample = str((job.payload or {}).get("sample") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}", sample):
+        return None
+    prefix = Path("/users") / str(job.user_id) / "alignment" / sample / sample
+    log = _tail_text_file(str(prefix) + "_custom.log", 16384)
+    phases = (
+        ("[alignment] Completed", "completed"),
+        ("[alignment] Cleanup intermediates", "cleanup"),
+        ("[alignment] Marking duplicates", "mark_duplicates"),
+        ("[alignment] Adding read groups", "read_groups"),
+        ("[alignment] Sorting BAM", "sorting"),
+        ("[alignment] Running STAR", "star"),
+    )
+    phase = next((name for marker, name in phases if marker in log), "starting")
+    # Picard reports processed records periodically. This is a count, not an
+    # estimated percentage, because multimapping makes the final count unknown.
+    phase_log = log.rsplit("[alignment]", 1)[-1]
+    counts = re.findall(r"(?:Read|Wrote|Processed|Written)\s+([\d,]+)\s+records", phase_log)
+    processed = int(counts[-1].replace(",", "")) if counts else None
+    return {"progress_phase": phase, "processed_records": processed,
+            "progress_source": "alignment_log"}
 
 
 @router.post("/jobs/{stage}/enqueue", status_code=status.HTTP_202_ACCEPTED, response_model=JobEnqueueResponse)
@@ -162,6 +266,18 @@ def get_job_status(
     result_payload = dict(job.result or {})
     if job.stage == "samples_download":
         progress_data = _samples_download_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage in ("quality_analysis", "quality_analysis_post_trim"):
+        progress_data = _fastqc_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage == "alignment":
+        progress_data = _alignment_progress(job)
+        if progress_data:
+            result_payload.update(progress_data)
+    elif job.stage == "llm":
+        progress_data = _llm_progress(job)
         if progress_data:
             result_payload.update(progress_data)
 

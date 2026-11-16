@@ -1,3 +1,4 @@
+from .translations import t
 import flet as ft
 import httpx
 import asyncio
@@ -5,6 +6,7 @@ import logging
 import os
 import base64
 from .utils import log_message  # Adicione esta linha
+from .viewer import close_figure_button
 
 async def fetch_existing_contrasts(token):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -85,13 +87,13 @@ async def show_preprocess_modal(page, token, user_id):
         page.update()
 
     dlg_modal = ft.AlertDialog(
-        title=ft.Text("Pré-processamento"),
+        title=ft.Text(t("preprocess_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.Column(
                 controls=[
                     ft.DataTable(
                         columns=[
-                            ft.DataColumn(ft.Text("Contraste")),
+                            ft.DataColumn(ft.Text(t("contrast_label", page.session.get("lang") or "pt"))),
                             ft.DataColumn(select_all_checkbox),
                         ],
                         rows=data_rows,
@@ -107,7 +109,7 @@ async def show_preprocess_modal(page, token, user_id):
         ),
         actions=[
             ft.TextButton(
-                "Iniciar pré-processamento",
+                t("preprocess_start", page.session.get("lang") or "pt"),
                 on_click=lambda e: asyncio.run(iniciar_preprocessamento(e)),
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,
@@ -173,7 +175,7 @@ async def show_exploratory_dropdown(page, user_id):
                                         controls=[
                                             ft.Container(height=10),
                                             ft.Row(
-                                                [dropdown],
+                                                [dropdown, close_figure_button(page, container)],
                                                 alignment=ft.MainAxisAlignment.CENTER
                                             ),
                                             img_placeholder

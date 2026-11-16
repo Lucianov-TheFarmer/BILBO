@@ -1,11 +1,14 @@
+from .urls import launch_public_url
 import asyncio
 from urllib.parse import quote
 
+from .translations import t
 import flet as ft
 import httpx
 
 from ..components.general_components import create_button
 from .jobs import wait_for_job
+from .markdown_chunks import split_markdown_report
 from .utils import log_message
 
 
@@ -73,6 +76,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     {
                         "sheet": sheet_name,
                         "files": item.get("files", []),
+                        "status": "COMPLETED",
                     }
                 )
     except Exception as ex:
@@ -81,9 +85,28 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
             f"Erro ao buscar entradas LLM: {ex}",
         )
 
+    try:
+        async with httpx.AsyncClient() as client:
+            stage_response = await client.get(
+                "http://localhost:8890/samples/stages/10", headers=headers)
+        if stage_response.status_code == 200:
+            by_sheet = {entry["sheet"]: entry for entry in files}
+            for stage in stage_response.json():
+                sheet = stage.get("name")
+                if not sheet:
+                    continue
+                if sheet in by_sheet:
+                    by_sheet[sheet]["status"] = stage.get("status") or "COMPLETED"
+                else:
+                    by_sheet[sheet] = {"sheet": sheet, "files": [],
+                                       "status": stage.get("status") or "PENDING"}
+            files = sorted(by_sheet.values(), key=lambda entry: entry["sheet"])
+    except Exception as ex:
+        await log_message(page, f"Erro ao consultar o estado das interpretações: {ex}")
+
     async def _view_md(e, sheet_name):
         try:
-            url = f"http://localhost:8890/llm/file?file=report.md&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=report.md&sheet={quote(str(sheet_name))}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -91,31 +114,80 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
             if resp.status_code != 200:
                 await log_message(page, f"Erro ao buscar .md: {resp.status_code} - {resp.text}")
                 return
-            text = resp.text
+            chunks = split_markdown_report(resp.text)
+            previous_preview_content = container_pre_visualizacao.content
+            loaded = 0
+            lang = page.session.get("lang") or "pt"
 
-            # render in preview container using Markdown renderer
             async def _navigate_md_link(ev):
                 try:
-                    await page.launch_url(ev.data)
+                    await launch_public_url(page, ev.data)
                 except Exception:
                     pass
 
-            container_pre_visualizacao.content = ft.Container(
+            async def _close_viewer(ev):
+                container_pre_visualizacao.content = previous_preview_content
+                page.update()
+
+            progress = ft.Text(size=12)
+            more_button = ft.TextButton(t("viewer_load_more", lang))
+            report_list = ft.ListView(
                 expand=True,
-                content=ft.ListView(
-                    expand=True,
-                    controls=[
+                spacing=8,
+                build_controls_on_demand=True,
+                cache_extent=400,
+                on_scroll_interval=250,
+            )
+
+            def _load_more():
+                nonlocal loaded
+                if loaded >= len(chunks):
+                    return
+                next_chunk = min(loaded + 2, len(chunks))
+                for chunk in chunks[loaded:next_chunk]:
+                    report_list.controls.insert(
+                        len(report_list.controls) - 1,
                         ft.Markdown(
-                            value=text,
+                            value=chunk,
                             selectable=True,
                             extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
                             on_tap_link=_navigate_md_link,
                             fit_content=False,
-                        )
+                        ),
+                    )
+                loaded = next_chunk
+                progress.value = f"{loaded}/{len(chunks)}"
+                more_button.visible = loaded < len(chunks)
+                page.update()
+
+            async def _load_more_clicked(ev):
+                _load_more()
+
+            async def _load_more_on_scroll(ev):
+                if loaded < len(chunks) and ev.pixels >= ev.max_scroll_extent - 500:
+                    _load_more()
+
+            more_button.on_click = _load_more_clicked
+            report_list.on_scroll = _load_more_on_scroll
+            report_list.controls.append(more_button)
+            container_pre_visualizacao.content = ft.Container(
+                expand=True,
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Text(str(sheet_name), expand=True),
+                                progress,
+                                ft.IconButton(icon="close", tooltip=t("viewer_close", lang),
+                                              on_click=_close_viewer),
+                            ],
+                        ),
+                        report_list,
                     ],
                 ),
             )
-            page.update()
+            _load_more()
         except Exception as ex:
             await log_message(page, f"Erro ao visualizar .md: {ex}")
 
@@ -127,13 +199,13 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 f"?file=report.html&sheet={quote(str(sheet_name))}"
                 f"&inline=true&token={quote(str(token))}"
             )
-            await page.launch_url(url)
+            await launch_public_url(page, url)
         except Exception as ex:
             await log_message(page, f"Erro ao abrir relatório HTML: {ex}")
 
     async def _view_json(e, sheet_name):
         try:
-            url = f"http://localhost:8890/llm/file?file=data.json&sheet={sheet_name}"
+            url = f"http://localhost:8890/llm/file?file=data.json&sheet={quote(str(sheet_name))}"
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     url, headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
@@ -142,9 +214,25 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 await log_message(page, f"Erro ao buscar .json: {resp.status_code} - {resp.text}")
                 return
             text = resp.text
+            previous_preview_content = container_pre_visualizacao.content
+
+            async def _close_viewer(ev):
+                container_pre_visualizacao.content = previous_preview_content
+                page.update()
+
             container_pre_visualizacao.content = ft.Container(
                 expand=True,
-                content=ft.ListView(controls=[ft.Text(text, selectable=True)], expand=True),
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.Row(controls=[
+                            ft.Text(str(sheet_name), expand=True),
+                            ft.IconButton(icon="close", tooltip=t("viewer_close", page.session.get("lang") or "pt"),
+                                          on_click=_close_viewer),
+                        ]),
+                        ft.ListView(controls=[ft.Text(text, selectable=True)], expand=True),
+                    ],
+                ),
             )
             page.update()
         except Exception as ex:
@@ -193,18 +281,22 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
     results_select_all = ft.Checkbox(
         value=False,
-        tooltip="Selecionar todos os resultados",
+        tooltip=t("llm_select_all_results", page.session.get("lang") or "pt"),
         on_change=_toggle_all_results,
     )
 
     for entry in files:
         sheet = entry.get("sheet")
+        status = str(entry.get("status") or "PENDING").upper()
+        has_report = status == "COMPLETED" and bool(entry.get("files"))
         result_checkbox = ft.Checkbox(
             value=False,
             data=sheet,
             on_change=_sync_all_results,
+            disabled=not has_report,
         )
-        result_checkboxes.append(result_checkbox)
+        if has_report:
+            result_checkboxes.append(result_checkbox)
 
         async def _view_md_handler(e, sheet_name=sheet):
             await _view_md(e, sheet_name)
@@ -235,14 +327,15 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 cells=[
                     ft.DataCell(ft.Text(sheet)),
                     ft.DataCell(result_checkbox),
+                    ft.DataCell(ft.Text(t({"PENDING": "pipeline_queued",
+                                           "RUNNING": "pipeline_running",
+                                           "COMPLETED": "pipeline_completed",
+                                           "FAILED": "pipeline_failed"}.get(status, status),
+                                         page.session.get("lang") or "pt"))),
                     ft.DataCell(
                         ft.Row(
                             # BILBO_LLM_NO_ROW_DELETE
-                            controls=[
-                                html_btn,
-                                md_btn,
-                                json_btn,
-                            ]
+                            controls=[html_btn, md_btn, json_btn] if has_report else []
                         )
                     ),
                 ]
@@ -256,14 +349,16 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
         columns=[
             ft.DataColumn(
                 ft.Text(
-                    "Contraste",
+                    t("contrast_label", page.session.get("lang") or "pt"),
                     weight=ft.FontWeight.BOLD,
                 )
             ),
             ft.DataColumn(results_select_all),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"),
+                                  weight=ft.FontWeight.BOLD)),
             ft.DataColumn(
                 ft.Text(
-                    "Ações",
+                    t("table_actions", page.session.get("lang") or "pt"),
                     weight=ft.FontWeight.BOLD,
                 )
             ),
@@ -362,30 +457,29 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
 
         confirmation = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Excluir resultados?"),
+            title=ft.Text(t("llm_delete_results", page.session.get("lang") or "pt")),
             content=ft.Column(
                 tight=True,
                 controls=[
                     ft.Text(
-                        "Serão removidas as interpretações:"
+                        t("llm_delete_info", page.session.get("lang") or "pt")
                     ),
                     ft.Text(
                         ", ".join(selected),
                         weight=ft.FontWeight.BOLD,
                     ),
                     ft.Text(
-                        "A clusterização e o banco RAG "
-                        "serão preservados.",
+                        t("llm_preserve_info", page.session.get("lang") or "pt"),
                     ),
                 ],
             ),
             actions=[
                 ft.TextButton(
-                    "Cancelar",
+                    t("btn_cancel", page.session.get("lang") or "pt"),
                     on_click=_cancel_delete,
                 ),
                 ft.ElevatedButton(
-                    "Excluir",
+                    t("delete_selected", page.session.get("lang") or "pt"),
                     icon="delete",
                     color="white",
                     bgcolor="red",
@@ -576,7 +670,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 page.update()
 
             select_all_llm = ft.Checkbox(
-                label="Selecionar todos",
+                label=t("llm_select_all", page.session.get("lang") or "pt"),
                 value=False,
                 on_change=_toggle_all_llm,
             )
@@ -593,6 +687,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 await log_message(page, f"Iniciando interpretação LLM para: {', '.join(selected)}")
 
                 payload = {"sheets": selected}
+                active_terminal = getattr(page, "container_terminal", None)
                 try:
                     async with httpx.AsyncClient(timeout=None) as client:
                         resp = await client.post("http://localhost:8890/llm/run", json=payload, headers=headers)
@@ -603,61 +698,13 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                         job_id = body.get("job_id")
                         if job_id:
                             await log_message(page, f"Interpretação LLM enfileirada (job {job_id}).")
-                            # BILBO_LLM_LIVE_PROGRESS
-                            seen_progress_lines = set()
-
-                            async def _show_llm_progress(job_payload):
-                                # BILBO_LLM_NESTED_PROGRESS
-                                result_payload = job_payload.get('result') or {}
-                                if not isinstance(result_payload, dict):
-                                    result_payload = {}
-
-                                progress_value = (
-                                    job_payload.get('progress')
-                                    or job_payload.get('progress_log')
-                                    or job_payload.get('log')
-                                    or result_payload.get('progress')
-                                    or result_payload.get('progress_log')
-                                    or result_payload.get('log')
-                                    or ''
-                                )
-
-                                if isinstance(progress_value, list):
-                                    progress_lines = [
-                                        str(item)
-                                        for item in progress_value
-                                    ]
-                                else:
-                                    progress_lines = str(
-                                        progress_value
-                                    ).splitlines()
-
-                                for progress_line in progress_lines:
-                                    progress_line = progress_line.strip()
-
-                                    if (
-                                        not progress_line
-                                        or progress_line
-                                        in seen_progress_lines
-                                    ):
-                                        continue
-
-                                    seen_progress_lines.add(
-                                        progress_line
-                                    )
-
-                                    await log_message(
-                                        page,
-                                        progress_line,
-                                    )
-
-                            # BILBO_LLM_UNBOUNDED_WAIT
                             result = await wait_for_job(
                                 token,
                                 job_id,
                                 timeout=None,
-                                on_update=_show_llm_progress,
                             )
+                            if getattr(page, "container_terminal", None) is not active_terminal:
+                                return
                             status = result.get("status")
                             if status == "COMPLETED":
                                 await log_message(page, "Interpretação de clusters e RAG concluída com sucesso.")
@@ -687,7 +734,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 page.update()
 
             dlg = ft.AlertDialog(
-                title=ft.Text("Iniciar Interpretação por LLM"),
+                title=ft.Text(t("llm_start", page.session.get("lang") or "pt")),
                 content=ft.Column(
                     controls=[
                         select_all_llm,
@@ -696,7 +743,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     ],
                     scroll=ft.ScrollMode.AUTO,
                 ),
-                actions=[ft.TextButton("Cancelar", on_click=_cancel), ft.ElevatedButton("Iniciar", on_click=_confirm)],
+                actions=[ft.TextButton(t("btn_cancel", page.session.get("lang") or "pt"), on_click=_cancel), ft.ElevatedButton(t("start_generic", page.session.get("lang") or "pt"), on_click=_confirm)],
                 actions_alignment="end",
             )
 
@@ -739,7 +786,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                 ),
                 ft.Text(rag_label, expand=True),
                 ft.ElevatedButton(
-                    "Inicializar banco RAG",
+                    t("rag_initialize", page.session.get("lang") or "pt"),
                     on_click=_initialize_rag,
                     disabled=rag_ready
                     or rag_state in {

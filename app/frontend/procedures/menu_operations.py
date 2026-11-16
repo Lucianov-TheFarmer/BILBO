@@ -24,6 +24,8 @@ from .results import (
     show_heatmap_modal,
 )
 from .upload import show_upload_fastq_modal
+from .drive_import import show_drive_import_modal
+from .reference_import import show_reference_upload_modal, show_reference_url_modal
 
 
 def _get_image_64(path):
@@ -163,6 +165,10 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
                         t("menu_add_sra", lang),
                         on_click=lambda e: asyncio.run(adicionar_amostra(e, page, token, container_menu_direita, tabela_amostras_local))
                     ),
+                    create_menu_item(
+                        t("menu_import_drive", lang),
+                        on_click=lambda e: asyncio.run(show_drive_import_modal(page, token, atualizar_tabela, container_menu_direita, tabela_amostras_local)),
+                    ),
                 ],
             ),
             ft.SubmenuButton(
@@ -191,6 +197,8 @@ def create_menubar(page, token, container_menu_direita, container_amostras, tabe
                     create_menu_item(
                         t("menu_add_genome", lang),
                         on_click=lambda e: asyncio.run(show_genomes_modal(page, token, user_id))),
+                    create_menu_item(t("menu_reference_upload", lang), on_click=lambda e: asyncio.run(show_reference_upload_modal(page, token))),
+                    create_menu_item(t("menu_reference_url", lang), on_click=lambda e: asyncio.run(show_reference_url_modal(page, token))),
                     create_menu_item(
                         t("menu_align_genome", lang),
                         on_click=lambda e: asyncio.run(show_alignment_modal(page, token, user_id, atualizar_tabela, container_menu_direita, tabela_amostras_local))),

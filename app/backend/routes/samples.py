@@ -1,5 +1,4 @@
 from pathlib import Path
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import FileResponse
@@ -8,7 +7,7 @@ from typing import List, Optional
 
 from ..core.settings import settings
 from ..db.database import get_db
-from ..db.models import PipelineJob, SampleStage, User, Stage
+from ..db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, User, Stage
 from ..services.job_service import audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, get_current_user_compat
@@ -69,17 +68,6 @@ def _latest_samples_download_job(db: Session, user_id: int, sra_code: str) -> Op
             return job
     return None
 
-
-def _is_stale_pending_job(job: PipelineJob, stale_seconds: int = 300) -> bool:
-    if job.status != "PENDING" or job.started_at is not None:
-        return False
-    if job.created_at is None:
-        return True
-    created = job.created_at
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
-    return (now - created).total_seconds() >= stale_seconds
 
 def update_sample_status(db: Session, sra_code: str, status: str, user_id: int):
     """Update the status of a sample."""
@@ -172,6 +160,12 @@ def delete_sample(
     if not all_samples:
         raise HTTPException(status_code=404, detail="Sample not found")
 
+    active_job = _latest_samples_download_job(db, current_user.id, sra_code_basename)
+    if active_job and active_job.status in ("PENDING", "RUNNING"):
+        raise HTTPException(status_code=409, detail="Wait for the active SRA download before deleting this sample")
+
+    deleted_names = [sample.name for sample in all_samples]
+
     sample_dir = safe_resolve_user_path(
         settings.users_root,
         current_user.id,
@@ -196,7 +190,11 @@ def delete_sample(
         metadata_json={"sra_code": sra_code_basename},
     )
 
-    return {"message": "Sample and associated files deleted successfully"}
+    return {
+        "message": "Sample and associated files deleted successfully",
+        "sra_code": sra_code_basename,
+        "deleted_names": deleted_names,
+    }
 
 
 @router.get("/samples/status/{sra_code}")
@@ -225,24 +223,24 @@ def download_pending_samples(db: Session = Depends(get_db), current_user: User =
 
         latest_job = _latest_samples_download_job(db, current_user.id, running_sample.sra_code)
         if latest_job and latest_job.status in ["PENDING", "RUNNING"]:
-            if latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
-                latest_job.status = "FAILED"
-                latest_job.error_message = "Marked as stale and requeued by /samples/download"
-                latest_job.finished_at = datetime.now(timezone.utc)
-                db.commit()
-            else:
-                return {
-                    "job_id": latest_job.id,
-                    "status": latest_job.status,
-                    "message": f"Download already queued/running for sample {running_sample.sra_code}",
-                    "sample_name": running_sample.sra_code,
-                }
+            return {
+                "job_id": latest_job.id,
+                "status": latest_job.status,
+                "message": f"Download already queued/running for sample {running_sample.sra_code}",
+                "sample_name": running_sample.sra_code,
+            }
 
         running_sample.status = "PENDING"
         db.commit()
         pending_sample = running_sample
 
     sra_code = pending_sample.sra_code
+
+    latest_job = _latest_samples_download_job(db, current_user.id, sra_code)
+    if latest_job and latest_job.status in ("PENDING", "RUNNING"):
+        return {"job_id": latest_job.id, "status": latest_job.status,
+                "message": f"Download already queued/running for sample {sra_code}",
+                "sample_name": sra_code}
 
     job = create_job(db, stage="samples_download", user_id=current_user.id, payload={"sra_code": sra_code})
     audit(
@@ -282,6 +280,13 @@ async def update_sample_status_endpoint(
 @router.post("/samples/calculate_size")
 async def calculate_size(sra_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     logger.info(f"Iniciando cálculo de tamanho para {sra_code}")
+    existing_files = db.query(SampleStage).filter(
+        SampleStage.sra_code == sra_code, SampleStage.stage_id == 1,
+        SampleStage.user_id == current_user.id,
+        SampleStage.name.in_([f"{sra_code}_1.fastq", f"{sra_code}_2.fastq"]),
+    ).all()
+    if existing_files and all(row.status == "COMPLETED" for row in existing_files):
+        return {"message": "Sample sizes already recorded", "files": [row.name for row in existing_files]}
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == sra_code, SampleStage.stage_id == 1, SampleStage.user_id == current_user.id
     ).first()
@@ -355,8 +360,6 @@ def get_pending_samples_count(db: Session = Depends(get_db), current_user: User 
         if normalized == "RUNNING":
             latest_job = _latest_samples_download_job(db, current_user.id, row.sra_code)
             if latest_job is None:
-                pending_count += 1
-            elif latest_job.status == "PENDING" and _is_stale_pending_job(latest_job):
                 pending_count += 1
 
     return {"pending_count": pending_count}
@@ -442,6 +445,30 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
             "status": sample_stage.status,
             "name": sample_stage.name,
         })
+    if stage_id == 3:
+        # Automatic pipelines do not create SampleStage rows until a trimmed
+        # FASTQ exists. Show scheduled outputs while the worker is processing.
+        existing = {sample["name"] for sample in samples}
+        active = db.query(PipelineStep, PipelineRun).join(
+            PipelineRun, PipelineStep.run_id == PipelineRun.id).filter(
+                PipelineRun.user_id == current_user.id,
+                PipelineRun.status == "RUNNING",
+                PipelineStep.stage == "trimming",
+                PipelineStep.status.in_(["PENDING", "RUNNING"])).all()
+        for step, run in active:
+            spec = next((item for item in run.config.get("samples", [])
+                         if item.get("name") == step.sample), {})
+            suffixes = ("_1", "_2") if spec.get("paired", True) else ("",)
+            for suffix in suffixes:
+                name = f"{step.sample}{suffix}_trimmed.fastq.gz"
+                if name in existing:
+                    continue
+                path = safe_resolve_user_path(settings.users_root, current_user.id,
+                                              "trimmed", name)
+                size = f"{path.stat().st_size / 1024**2:.2f} MB" if path.is_file() else None
+                samples.append({"id": None, "sra_code": step.sample, "size": size,
+                                "status": step.status, "name": name})
+                existing.add(name)
     return samples
 
 @router.get("/download/{stage_name}/{file_name}")

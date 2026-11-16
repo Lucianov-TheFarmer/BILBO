@@ -12,11 +12,13 @@ import pandas as pd
 
 from ..db.database import get_db
 from ..core.settings import settings
-from ..db.models import PipelineJob, SampleStage, User
+from ..db.models import AnalysisDesign, PipelineJob, SampleStage, User
 from ..services.job_service import audit, create_job
+from ..services.analysis_design import validate_design
+from ..services.deg_workbooks import available_deg_workbooks, selected_deg_workbook
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
-from ..utils_paths import ensure_safe_component, safe_resolve_user_path
+from ..utils_paths import deg_r_progress_path, ensure_safe_component, safe_resolve_user_path
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -31,6 +33,17 @@ async def run_deg(
     user_id = current_user.id
     contrast_ids = data.get("contrast_ids", [])
     genome_accession = data.get("genome_accession")
+    if db.query(PipelineJob).filter(PipelineJob.user_id == user_id, PipelineJob.stage == "deg",
+                                    PipelineJob.status.in_(["PENDING", "RUNNING"])).first():
+        raise HTTPException(409, "A DEG analysis is already running")
+    design_row = db.query(AnalysisDesign).filter(AnalysisDesign.user_id == user_id).first()
+    design = None
+    if design_row and set(design_row.config.get("contrast_ids") or []) == set(contrast_ids):
+        try:
+            validate_design(db, user_id, design_row.config)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        design = design_row.config
     logger.info(f"Iniciando DEG para user_id={user_id} com contrastes {contrast_ids} e genoma {genome_accession}")
 
     preprocess_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "preprocess"))
@@ -69,7 +82,7 @@ async def run_deg(
         db,
         stage="deg",
         user_id=user_id,
-        payload={"contrast_ids": contrast_ids, "genome_accession": genome_accession},
+        payload={"contrast_ids": contrast_ids, "genome_accession": genome_accession, "design": design},
     )
     audit(
         db,
@@ -143,7 +156,7 @@ async def get_deg_job_progress(
         / "jobs"
         / f"{job_id}.progress.log"
     )
-    r_log_path = user_root / "preprocess" / "DEG_R.log"
+    r_log_path = deg_r_progress_path(user_root, job.payload or {})
 
     def read_lines(path: Path) -> list[str]:
         if not path.is_file():
@@ -474,6 +487,7 @@ async def delete_deg_sheets(
         )
 
     sheets = payload.get("sheets", [])
+    run_id = payload.get("run_id")
 
     if not isinstance(sheets, list):
         raise HTTPException(
@@ -495,7 +509,11 @@ async def delete_deg_sheets(
 
     user_id = current_user.id
     user_dir = Path(__file__).resolve().parents[3] / "users" / str(user_id)
-    deg_dir = user_dir / "DEG"
+    if run_id and run_id != "manual":
+        workbook, _ = selected_deg_workbook(db, user_id, run_id)
+        deg_dir = workbook.parent
+    else:
+        deg_dir = user_dir / "DEG"
 
     workbook_paths = [
         deg_dir / "DEG.xlsx",
@@ -536,7 +554,15 @@ async def delete_deg_sheets(
                     image_path.unlink(missing_ok=True)
 
         # Remove resultados derivados por contraste.
+        orphaned = []
         for sheet_name in removed:
+            still_present = any(
+                sheet_name in _xlsx_sheet_names(path)
+                for path, _ in available_deg_workbooks(db, user_id)
+            )
+            if still_present:
+                continue
+            orphaned.append(sheet_name)
             for parent_name in ("clustering", "llm"):
                 parent = (user_dir / parent_name).resolve()
                 target = (parent / sheet_name).resolve()
@@ -550,11 +576,12 @@ async def delete_deg_sheets(
 
         # A limpeza auxiliar do banco não invalida a exclusão dos arquivos.
         try:
-            db.query(SampleStage).filter(
-                SampleStage.user_id == user_id,
-                SampleStage.stage_id.in_([9, 10]),
-                SampleStage.name.in_(list(removed)),
-            ).delete(synchronize_session=False)
+            if orphaned:
+                db.query(SampleStage).filter(
+                    SampleStage.user_id == user_id,
+                    SampleStage.stage_id.in_([9, 10]),
+                    SampleStage.name.in_(orphaned),
+                ).delete(synchronize_session=False)
             db.commit()
         except Exception:
             db.rollback()
@@ -597,14 +624,20 @@ async def get_deg_sheets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    user_id = current_user.id
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
-    if not os.path.exists(deg_xlsx):
-        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    if request.query_params.get("all_runs", "").lower() in ("1", "true"):
+        results = []
+        for workbook, run in available_deg_workbooks(db, current_user.id):
+            for sheet in _xlsx_sheet_names(Path(workbook)):
+                results.append({"sheet": sheet,
+                                "run_id": run.id if run else "manual",
+                                "run_name": (run.config or {}).get("name") if run else None})
+        return {"results": results}
+    deg_xlsx, run = selected_deg_workbook(db, current_user.id,
+                                           request.query_params.get("run_id"))
     try:
         sheet_names = _xlsx_sheet_names(Path(deg_xlsx))
-        return {"sheets": sheet_names}
+        return {"sheets": sheet_names, "run_id": run.id if run else request.query_params.get("run_id"),
+                "run_name": (run.config or {}).get("name") if run else None}
     except Exception as e:
         logger.error(f"Erro ao ler abas do DEG.xlsx: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")
@@ -624,8 +657,7 @@ async def get_deg_sheet_data(
     if not sheet_name:
         raise HTTPException(status_code=400, detail="Sheet name is required.")
     
-    deg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../users", str(user_id), "DEG"))
-    deg_xlsx = os.path.join(deg_dir, "DEG.xlsx")
+    deg_xlsx, _ = selected_deg_workbook(db, user_id, request.query_params.get("run_id"))
     logger.info(f"[DEG] Caminho do arquivo DEG.xlsx: {deg_xlsx}")
     
     if not os.path.exists(deg_xlsx):

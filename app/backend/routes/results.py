@@ -1,25 +1,38 @@
 from __future__ import annotations
 
 import os
+import io
+import json
+import re
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Optional
 
 import openpyxl
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import User
 from ..services.job_service import audit, create_job
+from ..services.deg_workbooks import selected_deg_workbook
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, get_current_user_compat
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 
 router = APIRouter()
+
+
+def _selected_sheets_filename(sheet_names: list[str]) -> str:
+    """Name a downloaded workbook after its selected contrasts, not its user ID."""
+    if len(sheet_names) != 1:
+        return "DEG_contrastes_selecionados.xlsx"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", sheet_names[0]).strip("._-")
+    return f"{stem[:150].rstrip('._-') or 'contraste'}.xlsx"
 
 
 def _deg_dir(user_id: int) -> Path:
@@ -28,15 +41,12 @@ def _deg_dir(user_id: int) -> Path:
 
 @router.get("/results/deg_sheets")
 async def get_deg_sheets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    deg_dir = _deg_dir(current_user.id)
-    deg_xlsx = deg_dir / "DEG.xlsx"
-    if not deg_xlsx.exists():
-        raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    deg_xlsx, run = selected_deg_workbook(db, current_user.id)
     try:
         wb = openpyxl.load_workbook(str(deg_xlsx), read_only=True)
         sheets = wb.sheetnames
         wb.close()
-        return {"sheets": sheets}
+        return {"sheets": sheets, "run_id": run.id if run else None}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Erro ao ler abas do DEG.xlsx: {e}")
 
@@ -126,10 +136,12 @@ async def get_heatmap_files(db: Session = Depends(get_db), current_user: User = 
 def download_deg_sheets(
     request: Request,
     sheets: Optional[str] = None,
+    run_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_compat),
 ):
-    deg_xlsx_path = _deg_dir(current_user.id) / "DEG.xlsx"
+    deg_xlsx_path = (selected_deg_workbook(db, current_user.id, run_id)[0] if run_id
+                     else _deg_dir(current_user.id) / "DEG.xlsx")
     if not deg_xlsx_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
 
@@ -175,20 +187,63 @@ def download_deg_sheets(
 
     return FileResponse(
         path=str(tmp_path),
-        filename=f"DEG_selected_sheets_{current_user.id}.xlsx",
+        filename=_selected_sheets_filename(requested),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
+
+
+@router.get("/results/download_deg_bundle")
+def download_deg_bundle(
+    items: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_compat),
+):
+    """Download selected sheets from different pipeline runs in one archive."""
+    try:
+        selected = json.loads(items)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Seleção de abas inválida.") from exc
+    if (not isinstance(selected, list) or not 1 <= len(selected) <= 100
+            or any(not isinstance(item, dict) or not isinstance(item.get("sheet"), str)
+                   or not isinstance(item.get("run_id"), str)
+                   or not item["run_id"].strip() for item in selected)):
+        raise HTTPException(400, "Seleção de abas inválida.")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index, item in enumerate(selected, start=1):
+            sheet = ensure_safe_component(item["sheet"], "sheet")
+            run_id = item["run_id"]
+            workbook, _ = selected_deg_workbook(db, current_user.id, run_id)
+            with pd.ExcelFile(workbook) as source:
+                if sheet not in source.sheet_names:
+                    raise HTTPException(404, f"Aba não encontrada: {sheet}")
+                frame = pd.read_excel(source, sheet_name=sheet)
+            single = io.BytesIO()
+            with pd.ExcelWriter(single, engine="openpyxl") as writer:
+                frame.to_excel(writer, sheet_name=sheet, index=False)
+            stem = re.sub(r"[^A-Za-z0-9._-]+", "_", sheet).strip("._-")[:80]
+            archive.writestr(f"{index:03d}_{stem}_{run_id[:8]}.xlsx", single.getvalue())
+    output.seek(0)
+    return StreamingResponse(output, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="DEG_contrastes_selecionados.zip"',
+    })
 
 
 @router.get("/results/download_image")
 def download_deg_image(
     request: Request,
     filename: str,
+    run_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_compat),
 ):
-    file_path = safe_resolve_user_path(settings.users_root, current_user.id, "DEG", filename)
+    if run_id and run_id != "manual":
+        selected_deg_workbook(db, current_user.id, run_id)
+        file_path = safe_resolve_user_path(settings.users_root, current_user.id,
+                                           "pipelines", run_id, "DEG", filename)
+    else:
+        file_path = safe_resolve_user_path(settings.users_root, current_user.id, "DEG", filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

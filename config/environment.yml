@@ -18,6 +18,8 @@ dependencies:
   - htseq=2.0.5
   - bedtools=2.31.1
   - stringtie=2.2.3
+  - gffread
+  - diamond
   - ncbi-datasets-cli=18.0.2
   - r-base=4.4.0
   - r-httr

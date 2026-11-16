@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -43,6 +44,7 @@ def extract_basename_from_filename(filename: str) -> str:
     name = filename.replace('.fastq.gz', '').replace('.fq.gz', '').replace('.fastq', '').replace('.fq', '')
     
     # Remove common paired-end suffixes
+    name = re.sub(r'_R([12])_001$', r'_R\1', name, flags=re.IGNORECASE)
     suffixes = ['_1', '_2', '_R1', '_R2']
     for suffix in suffixes:
         if name.endswith(suffix):
@@ -53,7 +55,7 @@ def extract_basename_from_filename(filename: str) -> str:
 
 def detect_sequencing_type(filename: str) -> str:
     """Detect if file is from single-end or paired-end sequencing"""
-    if any(suffix in filename for suffix in ['_1.', '_2.', '_R1.', '_R2.']):
+    if re.search(r'_(?:R?[12])(?:_001)?\.(?:fastq|fq)(?:\.gz)?$', filename, re.IGNORECASE):
         return "Paired-End"
     return "Single-End"
 
@@ -62,7 +64,8 @@ async def upload_fastq_file(file: UploadFile = File(...), db: Session = Depends(
     """Endpoint para salvar arquivos FASTQ e adicionar ao banco de dados"""
     try:
         # Determinar basename e tipo de sequenciamento
-        filename = file.filename or "upload.fastq"
+        original_filename = file.filename or "upload.fastq"
+        filename = re.sub(r'_R([12])(?:_001)?(?=\.(?:fastq|fq)(?:\.gz)?$)', r'_\1', original_filename, flags=re.IGNORECASE)
         basename = extract_basename_from_filename(filename)
         sequencing_type = detect_sequencing_type(filename)
         

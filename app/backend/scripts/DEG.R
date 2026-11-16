@@ -89,8 +89,38 @@ if (nrow(rnaseqmatrix) == 0) {
 analysis_matrix <- DGEList(counts = rnaseqmatrix, group = conditions)
 colnames(analysis_matrix$counts) <- names
 
-design <- model.matrix(~0+group, data=analysis_matrix$samples)
-colnames(design) <- levels(analysis_matrix$samples$group)
+design_data <- data.frame(group=analysis_matrix$samples$group)
+design_formula <- "~0+group"
+metadata_path <- file.path(preprocess_dir, "design_variables.tsv")
+terms_path <- file.path(preprocess_dir, "design_terms.tsv")
+if (file.exists(metadata_path) && file.exists(terms_path)) {
+  metadata <- read.delim(metadata_path, check.names=FALSE, stringsAsFactors=FALSE)
+  terms <- read.delim(terms_path, check.names=FALSE, stringsAsFactors=FALSE)
+  sample_ids <- sub("\\.txt$", "", basename(as.character(targets$files)))
+  sample_index <- match(sample_ids, metadata$sample)
+  if (anyNA(sample_index)) stop("Design metadata is missing selected samples")
+  for (i in seq_len(nrow(terms))) {
+    variable <- terms$name[i]
+    values <- metadata[[variable]][sample_index]
+    if (terms$kind[i] == "categorical") {
+      design_data[[variable]] <- factor(values)
+    } else if (terms$kind[i] == "numeric") {
+      design_data[[variable]] <- as.numeric(values)
+    } else {
+      stop(paste("Unknown design variable type:", variable))
+    }
+    if (anyNA(design_data[[variable]])) stop(paste("Missing design values:", variable))
+    design_formula <- paste0(design_formula, "+", variable)
+  }
+}
+logmsg(paste("Design formula:", design_formula))
+design <- model.matrix(as.formula(design_formula), data=design_data)
+group_levels <- levels(analysis_matrix$samples$group)
+colnames(design)[seq_along(group_levels)] <- group_levels
+if (qr(design)$rank < ncol(design) || nrow(design) <= ncol(design)) {
+  stop("Design matrix is not full rank or has no residual degrees of freedom")
+}
+logmsg(paste("Design coefficients:", paste(colnames(design), collapse=", ")))
 
 analysis_matrix <- calcNormFactors(analysis_matrix)
 analysis_matrix <- estimateGLMCommonDisp(analysis_matrix, design)
@@ -106,7 +136,7 @@ if (file.exists(selected_contrasts_file)) {
 
 logmsg("Obtendo contrastes do Targets.txt")
 # Ordena os grupos alfabeticamente para garantir consistência dos contrastes
-contrasts <- colnames(design)
+contrasts <- group_levels
 
 # Buscar apenas os contrastes selecionados pelo usuário
 all_contrasts <- list()

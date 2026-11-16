@@ -142,27 +142,17 @@ async def start_processing(
         sample_stage.status = "PENDING"
         db.commit()
 
-    job = create_job(
-        db,
-        stage="quantification",
-        user_id=user_id,
-        payload={
-            "samples": request.samples,
-            "feature_type": request.feature_type,
-            "id_attribute": request.id_attribute,
-            "selected_genome": selected_genome,
-        },
-    )
-    audit(
-        db,
-        action="quantification_enqueued",
-        user_id=user_id,
-        stage="quantification",
-        job_id=job.id,
-        metadata_json={"samples": request.samples},
-    )
-    enqueue_pipeline_job(job.id)
-    return {"job_id": job.id, "status": "PENDING", "message": "Quantification job enqueued"}
+    job_ids = []
+    for name in request.samples:
+        job = create_job(db, stage="quantification", user_id=user_id,
+                         payload={"samples": [name], "feature_type": request.feature_type,
+                                  "id_attribute": request.id_attribute, "selected_genome": selected_genome})
+        audit(db, action="quantification_enqueued", user_id=user_id, stage="quantification",
+              job_id=job.id, metadata_json={"samples": [name]})
+        enqueue_pipeline_job(job.id)
+        job_ids.append(job.id)
+    return {"job_id": job_ids[0] if job_ids else None, "job_ids": job_ids,
+            "status": "PENDING", "message": "Quantification jobs enqueued"}
 
 @router.get("/quantification/")
 def get_quantification_samples(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

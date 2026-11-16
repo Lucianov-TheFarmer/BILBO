@@ -41,6 +41,32 @@ MENTION_FIELDS = tuple(dict.fromkeys(tuple(NER_LABEL_FIELDS.values()) + tuple(SP
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9_*\"'(\[])")
+GENERIC_ARTICLE_HEADING_RE = re.compile(
+    r"^(?:(?:open|access|research|original|review|letter|large[- ]scale|"
+    r"biology|article|paper|abstract|summary|introduction|results|discussion|"
+    r"corresponding|author|running|head|title|keywords?|references?|"
+    r"materials?|methods?|and|list)\s*)+:?$",
+    re.IGNORECASE,
+)
+
+
+def clean_heading(value: str) -> str:
+    """Remove PDF-to-Markdown formatting from a displayed heading."""
+    heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", str(value))
+    heading = re.sub(r"<[^>]+>", "", heading)
+    heading = re.sub(r"[*_`#]", "", heading)
+    heading = re.sub(r"^\s*\d+(?:\.\d+)*[.)]?\s+", "", heading)
+    return clean_text(heading).strip(" -:|")
+
+
+def is_generic_article_heading(value: str) -> bool:
+    heading = clean_heading(value)
+    collapsed = re.sub(r"[^a-z]", "", heading.lower())
+    return (
+        not heading
+        or bool(GENERIC_ARTICLE_HEADING_RE.fullmatch(heading))
+        or collapsed in {"researcharticleopenaccess", "researcharticle"}
+    )
 
 
 def normalize_mention(text: str) -> str:
@@ -169,10 +195,16 @@ def payload_from_doc(doc: Any) -> dict[str, Any]:
 
 
 def article_title(text: str, default_title: str) -> str:
-    for line in text.splitlines():
+    for line in text.splitlines()[:80]:
         match = HEADING_RE.match(line.strip())
-        if match and match.group(2).strip().lower() not in {"article", "references"}:
-            return clean_text(match.group(2))
+        if match:
+            title = clean_heading(match.group(2))
+            if title.lower() in {"abstract", "introduction", "results", "discussion",
+                                 "results and discussion"}:
+                break
+            if (not is_generic_article_heading(title)
+                    and len(title) >= 15 and len(title.split()) >= 3):
+                return title
     return default_title
 
 
@@ -195,7 +227,7 @@ def split_sections(text: str) -> list[dict[str, Any]]:
                     }
                 )
             current_level = len(match.group(1))
-            current_title = clean_text(match.group(2))
+            current_title = clean_heading(match.group(2)) or "Article"
             current_lines = [current_title]
         else:
             current_lines.append(line)

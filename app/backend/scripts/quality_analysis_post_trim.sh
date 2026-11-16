@@ -17,7 +17,7 @@ sra_base="$(echo "$without_trimmed" | sed -E 's/(_R?[12])$//')"
 
 output_dir="/users/${user_id}/QC_PostTrim/${sra_base}"
 input_file="/users/${user_id}/trimmed/${sra_code}"
-log_file="/tmp/${sample_stem}_quality_analysis_post_trim.log"
+log_file="${output_dir}/${sample_stem}_quality_analysis_post_trim.log"
 
 mkdir -p "$output_dir"
 

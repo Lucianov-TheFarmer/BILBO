@@ -15,13 +15,18 @@ from .db.database import SessionLocal, engine
 from .db.models import Base, PipelineJob, User
 from .routes import (
     alignment,
+    analysis_design,
     auth,
+    contrast_design,
     contrasts,
     deg,
+    drive_import,
     preprocess,
     quality_analysis,
     quality_analysis_post_trim,
+    reference_import,
     quantification,
+    pipeline_runs,
     results,
     samples,
     trimmagem,
@@ -60,12 +65,17 @@ app.include_router(quality_analysis.router, tags=["quality_analysis"])
 app.include_router(trimmagem.router, tags=["trimmagem"])
 app.include_router(quality_analysis_post_trim.router, tags=["quality_analysis_post_trim"])
 app.include_router(alignment.router, tags=["alignment"])
+app.include_router(analysis_design.router, tags=["analysis_design"])
+app.include_router(pipeline_runs.router, tags=["pipeline"])
 app.include_router(quantification.router, tags=["quantification"])
 app.include_router(contrasts.router, tags=["contrasts"])
+app.include_router(contrast_design.router, tags=["contrasts"])
 app.include_router(preprocess.router, tags=["preprocess"])
 app.include_router(deg.router, tags=["deg"])
 app.include_router(results.router, tags=["results"])
 app.include_router(upload.router, tags=["upload"])
+app.include_router(drive_import.router, tags=["drive_import"])
+app.include_router(reference_import.router, tags=["reference_import"])
 app.include_router(clustering_route.router, tags=["clustering"])
 app.include_router(llm_route.router, tags=["llm"])
 app.include_router(jobs_route.router, tags=["jobs"])

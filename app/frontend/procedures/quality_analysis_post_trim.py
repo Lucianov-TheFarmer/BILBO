@@ -1,10 +1,12 @@
+from .urls import launch_public_url
 import flet as ft
 import asyncio
 import httpx
 import logging
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
+from .translations import t
 from .utils import log_message
-from .viewer import create_dropdown_menu, display_graph
+from .viewer import create_dropdown_menu, display_graph, close_figure_button
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,10 +23,10 @@ def create_tabela_amostras_pos_trimmagem(page, token):
     tabela_amostras_pos_trimmagem = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_pos_trimmagem)),
-            ft.DataColumn(ft.Text("Ações", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight="bold")),
         ],
         rows=[],
     )
@@ -40,12 +42,12 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                 logger.info(f"Data received from backend: {samples}")
                 tabela_amostras_pos_trimmagem.rows.clear()
                 for sample in samples:
-                    def view_sample_details_handler(e, s=sample["name"]):
-                        asyncio.run(view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim"))
+                    async def view_sample_details_handler(e, s=sample["name"]):
+                        await view_sample_details(page, token, s, user_id, analysis_type="QC_PostTrim")
 
                     async def download_handler(e, s=sample["name"]):
                         download_url = f"http://localhost:8890/download/qualidade2/{s}?token={token}"
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
                     # Only show view/download when status is Completed
@@ -97,6 +99,14 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
     dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
 
+    preview = getattr(page, "container_preview", None)
+    if isinstance(preview, ft.Container):
+        preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[
+            ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+            dropdown_menu, initial_graph]))]
+        page.update()
+        return
+
     for control in page.controls:
         if isinstance(control, ft.Row):
             for column in control.controls:
@@ -107,7 +117,9 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
                                 ft.Container(
                                     expand=True,
                                     content=ft.Column(
-                                        controls=[dropdown_menu, initial_graph]
+                                        controls=[ft.Row([close_figure_button(page, container)],
+                                                         alignment=ft.MainAxisAlignment.END),
+                                                  dropdown_menu, initial_graph]
                                     )
                                 )
                             ]
@@ -150,15 +162,15 @@ async def delete_quality_analysis_post_trim_results(page, token, container_menu_
         page.update()
 
     dlg_modal_excluir_analise = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=ft.TextField(
-            hint_text="Digite 'Confirmar' para excluir os resultados selecionados.",
+            hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
             border_radius=4,
             multiline=False,
             expand=1
         ),
         actions=[
-            ft.TextButton("Excluir", on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton(t("delete_selected", page.session.get("lang") or "pt"), on_click=confirm_delete, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
         actions_alignment="center",
     )
@@ -223,12 +235,15 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 response = await client.post("http://bioinfo-container:8890/quality_analysis_post_trim/start", json={"samples": selected_samples}, headers=headers)
                 if response.status_code in (200, 202):
                     body = response.json()
-                    job_id = body.get("job_id")
-                    if job_id:
-                        await log_message(page, f"QC pós-trim enfileirado (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
-                        status = result.get("status")
-                        await log_message(page, f"QC pós-trim finalizado com status {status}.")
+                    async def monitor_qc(name, job_id):
+                        result = await wait_with_progress(page, token, job_id,
+                            f"{t('qc_post_progress', page.session.get('lang') or 'pt')} — {name}")
+                        await log_message(page, f"{name}: {result.get('status')}.")
+                        await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita,
+                            tabela_amostras_local, atualizar_tabela, user_id)
+                    for name, job_id in zip(selected_samples, body.get("job_ids") or [body.get("job_id")]):
+                        if job_id:
+                            page.run_task(monitor_qc, name, job_id)
                     logger.info(f"Análise de qualidade pós-trimmagem iniciada para {selected_samples} com sucesso!")
                     await update_tabela_amostras_pos_trimmagem(page, token, container_menu_direita, tabela_amostras_local, atualizar_tabela, user_id)
                     page.update()
@@ -240,9 +255,9 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
     tabela_analise_qualidade = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
         ],
         rows=[
@@ -261,7 +276,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         empty_message = ft.Column(
             controls=[
                 ft.Divider(height=1, thickness=1, color="black38"),
-                ft.Text("Nenhuma amostra disponível para análise de qualidade pós-trimmagem", style=ft.TextStyle(size=16), text_align="center"),
+                ft.Text(t("qc_post_empty", page.session.get("lang") or "pt"), style=ft.TextStyle(size=16), text_align="center"),
                 ft.Divider(height=1, thickness=1, color="black38"),
             ],
             alignment="center",
@@ -273,7 +288,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         iniciar_analise_disabled = False
 
     dlg_modal_analise_qualidade = ft.AlertDialog(
-        title=ft.Text("Análise de Qualidade Pós-Trimmagem"),
+        title=ft.Text(t("qc_post_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 spacing=10,
@@ -286,7 +301,7 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
         actions=[
             ft.Container(
                 content=ft.TextButton(
-                    "Iniciar análise de qualidade pós-trimmagem",
+                    t("qc_post_start", page.session.get("lang") or "pt"),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=400,
                     height=40,

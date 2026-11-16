@@ -4,9 +4,10 @@ import logging
 import asyncio
 import json
 import re
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
 from .utils import log_message
 from .viewer import view_alignment_log
+from .translations import t
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +43,7 @@ def _trimmed_base(name):
         value,
         flags=re.IGNORECASE,
     )
+    value = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "", value, flags=re.IGNORECASE)
     return value
 
 
@@ -62,9 +64,9 @@ def create_tabela_alinhamento(page, token):
     tabela_alinhamento = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text("Log", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),
         ],
@@ -120,6 +122,20 @@ async def update_tabela_alinhamento(page, token, user_id):
 async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, params, atualizar_tabela, container_menu_direita, tabela_amostras_local):
     """Starts the alignment process for selected samples."""
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+    lang = page.session.get("lang") or "pt"
+
+    async def monitor_alignment(basename, job_id):
+        try:
+            result = await wait_with_progress(page, token, job_id,
+                                              f"{t('menu_alignment', lang)} — {basename}")
+            status = result.get("status")
+            await log_message(page, f"{basename}: {status}" +
+                              (f" — {result.get('error_message')}" if result.get("error_message") else ""))
+            await update_tabela_alinhamento(page, token, user_id)
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+        except Exception:
+            logger.exception("Could not monitor alignment job %s", job_id)
+
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
@@ -136,6 +152,7 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
 
             basenames = sorted({_trimmed_base(sample) for sample in selected_samples})
             
+            queued = 0
             for basename in basenames:
                 response = await client.post(
                     "http://bioinfo-container:8890/alignment/start",
@@ -144,22 +161,17 @@ async def iniciar_alinhamento(page, token, user_id, selected_samples, genome, pa
                     headers=headers,
                 )
                 if response.status_code in (200, 202):
-                    await update_tabela_alinhamento(page, token, user_id)
-                    await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                     body = response.json()
                     job_id = body.get("job_id")
                     if job_id:
                         await log_message(page, f"Alinhamento enfileirado para {basename} (job {job_id}).")
-                        result = await wait_for_job(token, job_id)
-                        status = result.get("status")
-                        if status == "COMPLETED":
-                            await log_message(page, f"Alinhamento concluído para {basename}.")
-                        else:
-                            await log_message(page, f"Alinhamento de {basename} finalizado com status {status}.")
-                        await update_tabela_alinhamento(page, token, user_id)
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                        page.run_task(monitor_alignment, basename, job_id)
+                        queued += 1
                 else:
                     await log_message(page, f"Erro ao iniciar alinhamento para {basename}: {response.text}")
+            if queued:
+                await update_tabela_alinhamento(page, token, user_id)
+                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
     except Exception as e:
         await log_message(page, f"Erro ao iniciar alinhamento: {e}")
 
@@ -189,17 +201,17 @@ async def excluir_alinhamento(page, token, user_id, selected_samples, container_
         page.update()
 
     confirmation_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir os alinhamentos selecionados.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=4,
         multiline=False,
         expand=1,
     )
     dlg_modal_excluir_alinhamento = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirmation_field,
         actions=[
             ft.TextButton(
-                "Excluir",
+                t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=confirm_delete,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,
@@ -236,9 +248,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
     tabela_trimmados = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_trimmados)),
         ],
         rows=[],
@@ -253,9 +265,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
     tabela_genomas_referencia = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Text("")),
         ],
         rows=[],
@@ -349,17 +361,17 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
         await iniciar_alinhamento(page, token, user_id, selected_samples, selected_genomes[0], params, atualizar_tabela, container_menu_direita, tabela_amostras_local)
 
     dlg_modal_alignment = ft.AlertDialog(
-        title=ft.Text("Configurar Alinhamento"),
+        title=ft.Text(t("align_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
-                    ft.Text("Amostras Trimmadas", weight="bold", size=14),
+                    ft.Text(t("align_trimmed", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_trimmados,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Genomas de Referência", weight="bold", size=14),
+                    ft.Text(t("genomes_title", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_genomas_referencia,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Parâmetros adicionais do STAR", weight="bold", size=14),
+                    ft.Text(t("align_star_params", page.session.get("lang") or "pt"), weight="bold", size=14),
                     ft.Row(
                         controls=[
                             ft.Column(controls=[threads_field, out_filter_type_field, out_filter_multimap_field, align_sj_overhang_min_field, align_sjdb_overhang_min_field], spacing=20, horizontal_alignment="center"),
@@ -372,7 +384,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
             ),
             width=900,
         ),
-        actions=[ft.TextButton("Iniciar Alinhamento", on_click=start_alignment)],
+        actions=[ft.TextButton(t("align_start", page.session.get("lang") or "pt"), on_click=start_alignment)],
         actions_alignment="center",
     )
 
@@ -384,7 +396,7 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
 # Reference Genome Management
 # ----------------------------------------
 
-async def show_genomes_modal(page, token, user_id):
+async def show_genomes_modal(page, token, user_id, on_closed=None):
     """Exibe o modal para visualizar e excluir genomas de referência."""
     global tabela_genomas_referencia, tabela_genomas_disponiveis
 
@@ -394,8 +406,39 @@ async def show_genomes_modal(page, token, user_id):
             async with httpx.AsyncClient() as client:
                 response = await client.get("http://bioinfo-container:8890/genomes/", headers=headers)
                 if response.status_code == 200:
+                    imports_response = await client.get(
+                        "http://bioinfo-container:8890/genomes/import/jobs", headers=headers)
+                    import_errors = ({job.get("accession"): (job.get("error_message")
+                                                              if job.get("status") == "FAILED" else None)
+                                      for job in reversed(imports_response.json())}
+                                     if imports_response.status_code == 200 else {})
                     tabela_genomas_referencia.rows.clear()
                     for genome in response.json():
+                        accession = genome["name"].split("(")[-1].strip(")")
+                        failure = import_errors.get(accession)
+                        completed = genome.get("status", "").lower() == "completed"
+                        actions = []
+                        if failure:
+                            def show_import_error(e, message=failure):
+                                error_dialog = ft.AlertDialog(
+                                    title=ft.Text(t("reference_error_detail", page.session.get("lang") or "pt")),
+                                    content=ft.Text(message, selectable=True),
+                                    actions=[ft.TextButton("OK", on_click=lambda event: page.close(error_dialog))])
+                                page.open(error_dialog)
+                            actions.append(ft.IconButton(icon="error_outline", icon_color="red",
+                                                         tooltip=failure, on_click=show_import_error))
+                        actions.extend([
+                            ft.IconButton(
+                                icon="description",
+                                on_click=lambda e, acc=accession: view_gff_analysis(acc, page, token),
+                                disabled=not completed
+                            ),
+                            ft.IconButton(
+                                icon="delete",
+                                icon_color="red",
+                                on_click=lambda e, acc=accession: open_confirmation_modal(acc),
+                            ),
+                        ])
                         tabela_genomas_referencia.rows.append(
                             ft.DataRow(
                                 cells=[
@@ -403,22 +446,7 @@ async def show_genomes_modal(page, token, user_id):
                                     ft.DataCell(ft.Text(genome["size"], size=12)),
                                     ft.DataCell(ft.Text(genome["status"], size=12)),
                                     ft.DataCell(
-                                        ft.Row(
-                                            controls=[
-                                                ft.IconButton(
-                                                    icon="description",
-                                                    on_click=lambda e, acc=genome["name"].split('(')[-1].strip(')'): view_gff_analysis(acc, page, token) if genome.get("status", "").lower() == "completed" else None,
-                                                    disabled=genome.get("status", "").lower() != "completed"
-                                                ),
-                                                ft.IconButton(
-                                                    icon="delete",
-                                                    icon_color="red",
-                                                    on_click=lambda e, acc=genome["name"].split('(')[-1].strip(')'): open_confirmation_modal(acc),
-                                                ),
-                                            ],
-                                            alignment="center",
-                                            spacing=10,
-                                        )
+                                        ft.Row(controls=actions, alignment="center", spacing=10)
                                     ),
                                 ],
                             )
@@ -441,7 +469,7 @@ async def show_genomes_modal(page, token, user_id):
     def view_gff_analysis(accession, page, token):
         dlg_gff_analysis = ft.AlertDialog(
             title=ft.Text(f"Análise do GFF para {accession}"),
-            content=ft.Text("Carregando..."),
+            content=ft.Text(t("loading", page.session.get("lang") or "pt")),
         )
         page.open(dlg_gff_analysis)
         analysis_result = asyncio.run(fetch_gff_analysis(accession, token))
@@ -466,11 +494,11 @@ async def show_genomes_modal(page, token, user_id):
     def open_confirmation_modal(accession):
         global dlg_modal_excluir_genoma
         dlg_modal_excluir_genoma = ft.AlertDialog(
-            title=ft.Text("Confirmar exclusão"),
-            content=ft.TextField(hint_text="Digite 'Confirmar' para excluir."),
+            title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
+            content=ft.TextField(hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt")),
             actions=[
                 ft.TextButton(
-                    "Excluir",
+                    t("delete_selected", page.session.get("lang") or "pt"),
                     on_click=lambda e: asyncio.run(delete_genome(accession)),
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 ),
@@ -482,10 +510,10 @@ async def show_genomes_modal(page, token, user_id):
     tabela_genomas_referencia = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[],
     )
@@ -507,7 +535,7 @@ async def show_genomes_modal(page, token, user_id):
     )
 
     search_type_dropdown = ft.Dropdown(options=[ft.dropdown.Option("taxon"), ft.dropdown.Option("accession")], value="taxon", width=150)
-    search_field = ft.TextField(label="Digite o termo de pesquisa", width=300)
+    search_field = ft.TextField(label=t("search_term", page.session.get("lang") or "pt"), width=300)
     sjdb_overhang_field = ft.TextField(label="sjdbOverhang", value="100", width=140)
     threads_field = ft.TextField(label="Threads", value="4", width=90)
 
@@ -546,6 +574,17 @@ async def show_genomes_modal(page, token, user_id):
         dlg_modal_genomas.open = False
         page.update()
         await download_genome(page, token, accession, organism_name, sjdb_overhang, threads)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
+
+    async def close_genomes():
+        page.close(dlg_modal_genomas)
+        if on_closed:
+            result = on_closed()
+            if asyncio.iscoroutine(result):
+                await result
 
     def update_rows_with_checkboxes(data):
         tabela_genomas_disponiveis.rows.clear()
@@ -571,20 +610,25 @@ async def show_genomes_modal(page, token, user_id):
     )
 
     dlg_modal_genomas = ft.AlertDialog(
-        title=ft.Text("Genomas de Referência"),
+        title=ft.Text(t("genomes_title", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
                     tabela_genomas_referencia,
                     ft.Divider(height=1, thickness=1, color="black38"),
-                    ft.Text("Buscar genomas disponíveis", weight="bold", size=14),
+                    ft.Text(t("genomes_search", page.session.get("lang") or "pt"), weight="bold", size=14),
                     form_layout,
                     tabela_genomas_disponiveis,
                 ],
             ),
             width=800,
         ),
-        actions=[ft.TextButton("Indexar Genoma", on_click=indexar_genoma_handler)],
+        actions=[
+            ft.TextButton(t("menu_close", page.session.get("lang") or "pt"),
+                          on_click=lambda _: page.run_task(close_genomes)),
+            ft.TextButton(t("genome_index", page.session.get("lang") or "pt"),
+                          on_click=indexar_genoma_handler),
+        ],
         actions_alignment="center",
     )
     page.open(dlg_modal_genomas)

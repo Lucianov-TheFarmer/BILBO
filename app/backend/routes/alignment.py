@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from ..db.database import get_db
-from ..db.models import SampleStage, User
+from ..db.models import PipelineJob, SampleStage, User
 from ..services.job_service import audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager  # Atualizado para incluir manager
@@ -38,7 +38,13 @@ def _resolve_trimmed_pair(base_path: str, basename: str):
         if os.path.isfile(path1) and os.path.isfile(path2):
             return path1, path2
 
-    return candidates[0]
+    for suffix in ("_trimmed", "_1_trimmed", "_R1_trimmed", "_2_trimmed", "_R2_trimmed"):
+        for extension in (".fastq.gz", ".fastq"):
+            path = os.path.join(base_path, f"{basename}{suffix}{extension}")
+            if os.path.isfile(path):
+                return path, None
+
+    return candidates[0][0], None
 
 
 
@@ -51,6 +57,7 @@ def _trimmed_base(name: str) -> str:
         value,
         flags=re.IGNORECASE,
     )
+    value = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "", value, flags=re.IGNORECASE)
     return value
 
 
@@ -85,7 +92,7 @@ def tail_text_file(path: str, max_chars: int = 2000) -> str:
 # ----------------------------------------
 
 class AdditionalParams(BaseModel):
-    threads: int = Field(..., description="Número de threads para o STAR")
+    threads: int = Field(..., ge=1, le=256, description="Número de threads para o STAR e samtools")
     outFilterType: Optional[str] = Field(None, description="Reduz junções espúrias (Opcional)")
     outFilterMultimapNmax: Optional[str] = Field(None, description="Máximo de alinhamentos múltiplos permitidos (Opcional)")
     alignSJoverhangMin: Optional[str] = Field(None, description="Sobreposição mínima para junções não anotadas (Opcional)")
@@ -138,11 +145,18 @@ def add_samples(
     for basename in basenames:
         sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
-        if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+        if not os.path.exists(sample_path_1):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
             )
+
+        existing = db.query(SampleStage).filter(
+            SampleStage.stage_id == 5, SampleStage.user_id == user_id,
+            SampleStage.sra_code == basename,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Alignment already registered for {basename}")
 
         # Adicionar basename ao banco de dados com status 'Pending'
         new_stage = SampleStage(
@@ -161,7 +175,7 @@ def add_samples(
 async def start_alignment(
     sample: str = Form(...),
     genome: str = Form(...),
-    threads: int = Query(..., description="Número de threads para o STAR"),
+    threads: int = Query(..., ge=1, le=256, description="Número de threads para o STAR e samtools"),
     additional_params: AdditionalParams = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -188,13 +202,13 @@ async def start_alignment(
     basename = ensure_safe_component(_trimmed_base(sample), "sample")
     sample_path_1, sample_path_2 = _resolve_trimmed_pair(base_path, basename)
 
-    if not os.path.exists(sample_path_1) or not os.path.exists(sample_path_2):
+    if not os.path.exists(sample_path_1):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
         )
 
-    # Update sample status to 'Aligning'
+    # Keep the sample queued until a worker actually starts it.
     sample_stage = db.query(SampleStage).filter(
         SampleStage.sra_code == basename,
         SampleStage.stage_id == 5,
@@ -207,8 +221,12 @@ async def start_alignment(
     if normalize_status(sample_stage.status) != "PENDING":
         raise HTTPException(status_code=400, detail="Sample is already being processed or completed")
 
-    sample_stage.status = "RUNNING"
-    db.commit()
+    active_jobs = db.query(PipelineJob).filter(
+        PipelineJob.stage == "alignment", PipelineJob.user_id == user_id,
+        PipelineJob.status.in_(["PENDING", "RUNNING"]),
+    ).all()
+    if any((job.payload or {}).get("sample") == basename for job in active_jobs):
+        raise HTTPException(status_code=409, detail="Alignment is already queued")
 
     extra_params: list[str] = []
     if additional_params:
@@ -235,7 +253,7 @@ async def start_alignment(
         job_id=job.id,
         metadata_json={"sample": basename, "genome": accession},
     )
-    enqueue_pipeline_job(job.id)
+    enqueue_pipeline_job(job.id, queue="alignment")
 
     return {"job_id": job.id, "status": "PENDING", "message": f"Alignment job enqueued for {basename}"}
 

@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from ..pipeline_rag.run import run_rag
+from ..pipeline_rag.retrieval import load_prioritized_genes
 from .cluster_interpretation import run_cluster_interpretation
 from .generate_rag_html import generate_report_bundle
 from .prioritize_genes import run_prioritization
@@ -108,6 +109,56 @@ def _write_report(
     output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+def publish_saved_llm_results(sheet_name: str, user_id: int | str,
+                              out_dir: str | Path) -> dict[str, Any]:
+    """Publish a complete RAG checkpoint without repeating model inference."""
+    clustering_dir = _users_root() / str(user_id) / "clustering" / sheet_name
+    output_dir = Path(out_dir).resolve()
+    interpretations_path = clustering_dir / "clusters" / "interpretations.csv"
+    prioritized_path = clustering_dir / "outputs" / "prioritized_genes.csv"
+    rag_path = output_dir / "rag_gene_evidence.json"
+    for path in (interpretations_path, prioritized_path, rag_path):
+        if not path.is_file():
+            raise FileNotFoundError(f"Required interpretation artifact missing: {path}")
+    rag_results = json.loads(rag_path.read_text(encoding="utf-8"))
+    if not isinstance(rag_results, list):
+        raise ValueError("RAG checkpoint is not a list")
+    selected = load_prioritized_genes(prioritized_path, selected_only=True, limit=None)
+    expected = selected["gene_id"].astype(str).tolist()
+    actual = [str(item.get("gene_id")) for item in rag_results if isinstance(item, dict)]
+    if len(actual) != len(expected) or set(actual) != set(expected):
+        raise ValueError("RAG checkpoint does not cover all selected genes")
+    cluster_interpretations = _read_csv_records(interpretations_path)
+    prioritized = pd.read_csv(prioritized_path)
+    prioritized_records = json.loads(prioritized.to_json(orient="records"))
+    models = {
+        "cluster_interpretation": os.getenv("CLUSTER_INTERPRETATION_MODEL", "gemma4:e4b"),
+        "embedding": os.getenv("RAG_EMBEDDING_MODEL", "bge-m3:latest"),
+        "rag_synthesis": os.getenv("RAG_LLM_MODEL", "gemma4:e4b"),
+    }
+    combined = {
+        "method": "bilbo_prototype_cluster_interpretation_and_hybrid_rag",
+        "sheet": sheet_name,
+        "models": models,
+        "cluster_interpretations": cluster_interpretations,
+        "prioritized_genes": prioritized_records,
+        "rag_gene_evidence": rag_results,
+    }
+    generate_report_bundle(
+        base_payload=combined, clustering_dir=clustering_dir, output_dir=output_dir,
+        title=f"BILBO - Semantic clustering and traceable RAG report - {sheet_name}",
+    )
+    return {
+        "report": str(output_dir / "report.md"), "html": str(output_dir / "report.html"),
+        "json": str(output_dir / "data.json"), "rag_json": str(rag_path),
+        "cluster_interpretations": str(interpretations_path),
+        "prioritized_genes": str(prioritized_path),
+        "interpreted_clusters": len(cluster_interpretations),
+        "selected_genes": len(expected), "interpreted_genes": len(rag_results),
+        "models": models,
+    }
+
+
 def run_llm(
     file_path: str | None = None,
     sheet_name: str | None = None,
@@ -143,15 +194,11 @@ def run_llm(
     cluster_interpretations_path = clusters_dir / "interpretations.csv"
     prioritized_path = clustering_dir / "outputs" / "prioritized_genes.csv"
     rag_output_path = output_dir / "rag_gene_evidence.json"
-    combined_output_path = output_dir / "data.json"
-    report_path = output_dir / "report.md"
-    html_report_path = output_dir / "report.html"
 
     cluster_model = os.getenv("CLUSTER_INTERPRETATION_MODEL", "gemma4:e4b")
     rag_model = os.getenv("RAG_LLM_MODEL", "gemma4:e4b")
-    embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "bge-m3:latest")
 
-    interpretation_info = run_cluster_interpretation(
+    run_cluster_interpretation(
         clusters_dir,
         cluster_interpretations_path,
         ollama_url=_ollama_api("/api/chat"),
@@ -167,10 +214,9 @@ def run_llm(
     )
 
     if prioritized.empty or not prioritized["selected_for_search"].astype(bool).any():
-        rag_results: list[dict[str, Any]] = []
         rag_output_path.write_text("[]\n", encoding="utf-8")
     else:
-        rag_results = run_rag(
+        run_rag(
             input_file=prioritized_path,
             output_file=rag_output_path,
             interpretations_file=cluster_interpretations_path,
@@ -186,39 +232,4 @@ def run_llm(
             max_chunks_per_source=int(os.getenv("RAG_MAX_CHUNKS_PER_SOURCE", "2")),
         )
 
-    cluster_interpretations = _read_csv_records(cluster_interpretations_path)
-    prioritized_records = json.loads(prioritized.to_json(orient="records")) if not prioritized.empty else []
-    combined = {
-        "method": "bilbo_prototype_cluster_interpretation_and_hybrid_rag",
-        "sheet": sheet_name,
-        "models": {
-            "cluster_interpretation": cluster_model,
-            "embedding": embedding_model,
-            "rag_synthesis": rag_model,
-        },
-        "cluster_interpretations": cluster_interpretations,
-        "prioritized_genes": prioritized_records,
-        "rag_gene_evidence": rag_results,
-    }
-    generate_report_bundle(
-        base_payload=combined,
-        clustering_dir=clustering_dir,
-        output_dir=output_dir,
-        title=(
-            "BILBO - Semantic clustering and "
-            f"traceable RAG report - {sheet_name}"
-        ),
-    )
-
-    return {
-        "report": str(report_path),
-        "html": str(html_report_path),
-        "json": str(combined_output_path),
-        "rag_json": str(rag_output_path),
-        "cluster_interpretations": str(cluster_interpretations_path),
-        "prioritized_genes": str(prioritized_path),
-        "interpreted_clusters": interpretation_info["interpreted_clusters"],
-        "selected_genes": int(prioritized["selected_for_search"].sum()) if not prioritized.empty else 0,
-        "interpreted_genes": len(rag_results),
-        "models": combined["models"],
-    }
+    return publish_saved_llm_results(sheet_name, user_id, output_dir)

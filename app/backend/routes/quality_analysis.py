@@ -55,28 +55,26 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
                     name=output_name,
                     sra_code=db_sample_stage.sra_code,
                     size=None,
-                    status="RUNNING",
+                    status="PENDING",
                     user_id=user_id,
                 )
             )
         else:
-            exists.status = "RUNNING"
+            exists.status = "PENDING"
             db.add(exists)
         to_process.append(name)
 
     db.commit()
 
-    job = create_job(db, stage="quality_analysis", user_id=user_id, payload={"samples": to_process})
-    audit(
-        db,
-        action="quality_analysis_enqueued",
-        user_id=user_id,
-        stage="quality_analysis",
-        job_id=job.id,
-        metadata_json={"samples": to_process},
-    )
-    enqueue_pipeline_job(job.id)
-    return {"job_id": job.id, "status": "PENDING", "message": "Quality analysis job enqueued"}
+    job_ids = []
+    for name in to_process:
+        job = create_job(db, stage="quality_analysis", user_id=user_id, payload={"samples": [name]})
+        audit(db, action="quality_analysis_enqueued", user_id=user_id, stage="quality_analysis",
+              job_id=job.id, metadata_json={"samples": [name]})
+        enqueue_pipeline_job(job.id, queue="quality")
+        job_ids.append(job.id)
+    return {"job_id": job_ids[0] if job_ids else None, "job_ids": job_ids,
+            "status": "PENDING", "message": "Quality analysis jobs enqueued"}
         
 @router.post("/quality_analysis/update_status")
 async def update_quality_analysis_status(

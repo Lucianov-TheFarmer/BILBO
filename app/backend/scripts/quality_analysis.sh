@@ -5,17 +5,10 @@ set -euo pipefail
 sra_code="$1"
 user_id="$2"
 
-case "$sra_code" in
-  *_1.fastq.gz) sra_code_base="${sra_code%_1.fastq.gz}" ;;
-  *_2.fastq.gz) sra_code_base="${sra_code%_2.fastq.gz}" ;;
-  *_1.fq.gz)    sra_code_base="${sra_code%_1.fq.gz}" ;;
-  *_2.fq.gz)    sra_code_base="${sra_code%_2.fq.gz}" ;;
-  *_1.fastq)    sra_code_base="${sra_code%_1.fastq}" ;;
-  *_2.fastq)    sra_code_base="${sra_code%_2.fastq}" ;;
-  *_1.fq)       sra_code_base="${sra_code%_1.fq}" ;;
-  *_2.fq)       sra_code_base="${sra_code%_2.fq}" ;;
-  *)            sra_code_base="$sra_code" ;;
-esac
+sample_stem="${sra_code%.gz}"
+sample_stem="${sample_stem%.fastq}"
+sample_stem="${sample_stem%.fq}"
+sra_code_base="$(printf '%s' "$sample_stem" | sed -E 's/(_R?[12])$//')"
 input_file="/users/${user_id}/samples/${sra_code_base}/${sra_code}"
 output_dir="/users/${user_id}/QC/${sra_code_base}"
 log_file="${output_dir}/${sra_code}_quality_analysis.log"

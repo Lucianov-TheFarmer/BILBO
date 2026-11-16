@@ -7,6 +7,17 @@ import os
 from io import BytesIO
 import base64  # New import
 import re  # Importar regex
+from .translations import t
+
+
+def close_figure_button(page, preview):
+    """Return a localized close control for the shared figure preview."""
+    def close(_):
+        preview.content.controls = [ft.Container(expand=True)]
+        page.update()
+
+    return ft.IconButton(icon="close", tooltip=t("viewer_close", page.session.get("lang") or "pt"),
+                         on_click=close)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -236,6 +247,12 @@ def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
         selected_graph = e.control.value
         graph_control = await display_graph(page, token, selected_graph, sample_name, user_id, analysis_type)
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls[0].content.controls[1] = graph_control
+            page.update()
+            return
+
         # Find the container_pre_visualizacao and update its content
         for control in page.controls:
             if isinstance(control, ft.Row):
@@ -327,7 +344,8 @@ async def view_barplot_image(page, token, user_id, filename):
                                         expand=True,
                                         content=ft.Column(
                                             controls=[
-                                                ft.Container(height=10),
+                                                ft.Row([close_figure_button(page, container)],
+                                                       alignment=ft.MainAxisAlignment.END),
                                                 interactive_viewer
                                             ],
                                             alignment=ft.MainAxisAlignment.CENTER,
@@ -416,7 +434,8 @@ async def view_venn_image(page, token, user_id, filename):
                                         expand=True,
                                         content=ft.Column(
                                             controls=[
-                                                ft.Container(height=10),
+                                                ft.Row([close_figure_button(page, container)],
+                                                       alignment=ft.MainAxisAlignment.END),
                                                 interactive_viewer
                                             ],
                                             alignment=ft.MainAxisAlignment.CENTER,
@@ -491,6 +510,8 @@ async def view_heatmap_image(page, token, filename, user_id):
         if container_pre_visualizacao:
             # Atualiza o conteúdo com o heatmap
             container_pre_visualizacao.content.controls = [
+                ft.Row([close_figure_button(page, container_pre_visualizacao)],
+                       alignment=ft.MainAxisAlignment.END),
                 ft.Container(
                     content=ft.InteractiveViewer(
                         content=ft.Image(

@@ -2,7 +2,8 @@ import flet as ft
 import asyncio
 import httpx
 import logging
-from .jobs import wait_for_job
+from .jobs import wait_with_progress
+from .translations import t
 from .utils import log_message
 from .viewer import view_quantification_log
 
@@ -48,9 +49,9 @@ def create_tabela_quantificacao(page, token):
     tabela_quantificacao = ft.DataTable(
         heading_row_color="primary",
         columns=[
-            ft.DataColumn(ft.Text("Identificação", weight="bold")),
-            ft.DataColumn(ft.Text("Tamanho", weight="bold")),
-            ft.DataColumn(ft.Text("Status", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text("Log", weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_quantification)),
         ],
@@ -132,9 +133,9 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
     tabela_quantificacao_modal = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all)),
         ],
         rows=[],
@@ -152,10 +153,10 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
     tabela_genomas_referencia_modal = ft.DataTable(
         heading_row_color="black12",
         columns=[
-            ft.DataColumn(ft.Text("Identificação")),
-            ft.DataColumn(ft.Text("Tamanho")),
-            ft.DataColumn(ft.Text("Status")),
-            ft.DataColumn(ft.Text("Selecionar")),
+            ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_select", page.session.get("lang") or "pt"))),
         ],
         rows=[],
     )
@@ -275,21 +276,9 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                 )
                 if response.status_code in (200, 202):
                     body = response.json()
-                    job_id = body.get("job_id")
-                    if job_id:
-                        await log_message(page, f"Quantificação enfileirada (job {job_id}).")
-
-                        async def refresh_quantification_status(_job_payload):
-                            await update_tabela_quantificacao(page, token, user_id)
-                            page.update()
-
+                    async def monitor_quantification(name, job_id):
                         try:
-                            result = await wait_for_job(
-                                token,
-                                job_id,
-                                interval=5.0,
-                                on_update=refresh_quantification_status,
-                            )
+                            result = await wait_with_progress(page, token, job_id, f"{t('menu_quant', page.session.get('lang') or 'pt')} — {name}")
                         except httpx.HTTPStatusError as exc:
                             if exc.response.status_code == 401:
                                 await log_message(
@@ -300,15 +289,18 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
                                 )
                                 return
                             raise
-
                         status = result.get("status")
-                        await log_message(page, f"Quantificação finalizada com status {status}.")
-
+                        await log_message(page, f"{name}: {status}.")
                         if status != "COMPLETED":
                             details = _extract_quantification_error(result)
                             if details:
                                 await log_message(page, f"Detalhe do erro: {details}")
                             await log_message(page, "Abra o log da quantificação para ver o diagnóstico completo.")
+                        await update_tabela_quantificacao(page, token, user_id)
+                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
+                    for name, job_id in zip(selected_samples, body.get("job_ids") or [body.get("job_id")]):
+                        if job_id:
+                            page.run_task(monitor_quantification, name, job_id)
                     await update_tabela_quantificacao(page, token, user_id)
                     await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                     page.update()
@@ -318,21 +310,21 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
             logger.error(f"Erro ao iniciar quantificação: {e}", exc_info=True)
 
     dlg_modal_quantificacao = ft.AlertDialog(
-        title=ft.Text("Iniciar Quantificação"),
+        title=ft.Text(t("quant_start", page.session.get("lang") or "pt")),
         content=ft.Container(
             content=ft.ListView(
                 controls=[
-                    ft.Text("Amostras Alinhadas", weight="bold", size=14),
+                    ft.Text(t("quant_aligned", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_quantificacao_modal,
                     ft.Container(height=10),
                     ft.Divider(height=1, thickness=1, color="black38"),
                     ft.Container(height=10),
-                    ft.Text("Genomas de Referência", weight="bold", size=14),
+                    ft.Text(t("genomes_title", page.session.get("lang") or "pt"), weight="bold", size=14),
                     tabela_genomas_referencia_modal,
                     ft.Container(height=10),
                     ft.Divider(height=1, thickness=1, color="black38"),
                     ft.Container(height=10),
-                    ft.Text("Parâmetros do htseq-count", weight="bold", size=14),
+                    ft.Text(t("quant_params", page.session.get("lang") or "pt"), weight="bold", size=14),
                     ft.Row(
                         controls=[
                             feature_type_field,
@@ -346,7 +338,7 @@ async def show_quantification_modal(page, token, container_menu_direita, tabela_
         ),
         actions=[
             ft.TextButton(
-                "Iniciar Quantificação",
+                t("quant_start", page.session.get("lang") or "pt"),
                 on_click=start_quantification,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
             ),
@@ -382,17 +374,17 @@ async def excluir_quantificacao(page, token, user_id, selected_samples, containe
         page.update()
 
     confirmation_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=4,
         multiline=False,
         expand=1,
     )
     dlg_modal_excluir_quantificacao = ft.AlertDialog(
-        title=ft.Text("Confirmar Exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirmation_field,
         actions=[
             ft.TextButton(
-                "Excluir",
+                t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=confirm_delete,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=200,

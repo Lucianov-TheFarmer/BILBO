@@ -1,3 +1,5 @@
+from .urls import launch_public_url
+from .translations import t
 import flet as ft
 import httpx
 import asyncio
@@ -84,8 +86,8 @@ async def show_barplots_table(page, token, user_id, container_amostras):
     
     table = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("Barplots salvos")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("barplots_saved", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
             ft.DataRow([
@@ -99,7 +101,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar barplot",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -113,7 +115,7 @@ async def show_barplots_table(page, token, user_id, container_amostras):
         expand=True,
     )
     btn = ft.ElevatedButton(
-        "Gerar novo barplot",
+        t("new_barplot", page.session.get("lang") or "pt"),
         icon="add",
         on_click=lambda e: asyncio.run(show_barplots_modal(page, token, user_id, container_amostras)),
     )
@@ -142,8 +144,8 @@ async def show_venn_table(page, token, user_id, container_amostras):
     
     table = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("Diagramas de Venn salvos")),
-            ft.DataColumn(ft.Text("Ações")),
+            ft.DataColumn(ft.Text(t("venns_saved", page.session.get("lang") or "pt"))),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"))),
         ],
         rows=[
             ft.DataRow([
@@ -157,7 +159,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
                     ft.IconButton(
                         icon="file_download",
                         tooltip="Baixar diagrama de Venn",
-                        on_click=lambda e, filename=f: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
+                        on_click=lambda e, filename=f: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(filename, safe='')}&token={token}")
                     ),
                     ft.IconButton(
                         icon="delete",
@@ -171,7 +173,7 @@ async def show_venn_table(page, token, user_id, container_amostras):
         expand=True,
     )
     btn = ft.ElevatedButton(
-        "Gerar novo diagrama de Venn",
+        t("new_venn", page.session.get("lang") or "pt"),
         icon="add",
         on_click=lambda e: asyncio.run(show_venn_modal(page, token, user_id, container_amostras)),
     )
@@ -188,7 +190,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
     sheets = await fetch_deg_sheets(token, user_id)
     selected = set()
     checkboxes = []
-    title_field = ft.TextField(label="Título do Barplot", width=350)
+    title_field = ft.TextField(label=t("results_barplot_title", page.session.get("lang") or "pt"), width=350)
     divider = ft.Divider(height=1, thickness=1, color="black")
 
     def on_select_all_change(e):
@@ -235,8 +237,8 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
         )
 
     columns = [
-        ft.DataColumn(ft.Text("Aba")),
-        ft.DataColumn(select_all_checkbox if show_select_all else ft.Text("Selecionar")),
+        ft.DataColumn(ft.Text(t("sheet_label", page.session.get("lang") or "pt"))),
+        ft.DataColumn(select_all_checkbox if show_select_all else ft.Text(t("table_select", page.session.get("lang") or "pt"))),
     ]
 
     dlg_modal = ft.AlertDialog(
@@ -263,7 +265,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
         ),
         actions=[
             ft.TextButton(
-                "Confirmar",
+                t("confirm_delete", page.session.get("lang") or "pt"),
                 # Use asyncio.run para garantir execução correta no handler do Flet
                 on_click=lambda e: asyncio.run(on_confirm(title_field.value, list(selected), dlg_modal)),
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
@@ -279,7 +281,7 @@ async def show_deg_modal(page, token, user_id, title, max_select=None, show_sele
 async def show_barplots_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
+            dlg_modal.title = ft.Text(t("results_title_required", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         result = await create_barplot_file(token, user_id, title, contrasts)
@@ -303,11 +305,11 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
 async def show_venn_modal(page, token, user_id, container_amostras):
     async def on_confirm(title, contrasts, dlg_modal):
         if not title.strip():
-            dlg_modal.title = ft.Text("Título obrigatório!", color="red")
+            dlg_modal.title = ft.Text(t("results_title_required", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         if len(contrasts) < 2 or len(contrasts) > 4:
-            dlg_modal.title = ft.Text("Selecione entre 2 e 4 contrastes!", color="red")
+            dlg_modal.title = ft.Text(t("results_select_contrasts", page.session.get("lang") or "pt"), color="red")
             page.update()
             return
         result = await create_venn_file(token, user_id, title, contrasts)
@@ -455,14 +457,14 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
 
             delete_button = ft.IconButton(
                 icon="delete",
-                tooltip="Excluir",
+                tooltip=t("delete_selected", page.session.get("lang") or "pt"),
                 on_click=on_delete_click
             )
 
             download_button = ft.IconButton(
                 icon="file_download",
                 tooltip="Baixar heatmap",
-                on_click=lambda e, fname=filename: page.launch_url(f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
+                on_click=lambda e, fname=filename: launch_public_url(page, f"http://localhost:8890/results/download_image?filename={__import__('urllib.parse', fromlist=['quote']).quote(fname, safe='')}&token={token}")
             )
             
             row = ft.DataRow(
@@ -479,8 +481,8 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         if rows:
             table = ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Nome do Heatmap", weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text(t("heatmap_name", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight=ft.FontWeight.BOLD)),
                 ],
                 rows=rows,
                 # border=ft.border.all(1, ft.colors.OUTLINE),
@@ -491,7 +493,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         else:
             table = ft.Container(
                 content=ft.Text(
-                    "Nenhum heatmap encontrado. Clique em 'Novo Heatmap' para criar um.",
+                    t("heatmap_empty", page.session.get("lang") or "pt"),
                     text_align=ft.TextAlign.CENTER,
                     size=16,
                 ),
@@ -501,7 +503,7 @@ async def show_heatmaps_table(page, token, user_id, container_amostras):
         
         # Botão para criar novo heatmap
         btn = ft.ElevatedButton(
-            "Gerar novo heatmap",
+            t("new_heatmap", page.session.get("lang") or "pt"),
             icon="add",
             on_click=lambda e: asyncio.run(show_heatmap_modal(page, token, user_id, container_amostras)),
         )

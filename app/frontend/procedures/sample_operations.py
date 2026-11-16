@@ -1,9 +1,11 @@
+from .urls import launch_public_url
 import flet as ft
 import httpx
 import logging
 import asyncio
 from .jobs import wait_for_job
 from .utils import log_message
+from .translations import t
 from .quality_analysis import update_quality_analysis_table
 from ..components.general_components import create_table  # Import reusable table
 
@@ -58,7 +60,7 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         page.update()
 
     sra_code_field = ft.TextField(
-        hint_text="Insira um ou mais códigos SRA separados por vírgulas",
+        hint_text=t("sample_sra_hint", page.session.get("lang") or "pt"),
         border_radius=ft.border_radius.all(4),
         multiline=False,
         min_lines=1,
@@ -68,10 +70,10 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
         await inserir_sra_na_fila(sra_code_field.value)
 
     dlg_modal_adicionar_amostra = ft.AlertDialog(
-        title=ft.Text("Adicionar via SRA"),
+        title=ft.Text(t("sample_add_sra", page.session.get("lang") or "pt")),
         content=sra_code_field,
         actions=[
-            ft.TextButton("Submeter", on_click=inserir_sra_na_fila_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=500, height=40),
+            ft.TextButton(t("sample_submit", page.session.get("lang") or "pt"), on_click=inserir_sra_na_fila_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=500, height=40),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER
     )
@@ -81,9 +83,9 @@ async def adicionar_amostra(e, page, token, container_menu_direita, tabela_amost
 async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, tabela_amostras_local):
     async def confirmar_exclusao():
         amostras_selecionadas_para_exclusao = []
-        dlg_modal_excluir_amostra.open = False
+        page.close(dlg_modal_excluir_amostra)
         for row in tabela_amostras_local.rows:
-            if isinstance(row.cells[3].content, ft.Checkbox) and row.cells[3].content.value:
+            if isinstance(row.cells[3].content, ft.Checkbox) and not row.cells[3].content.disabled and row.cells[3].content.value:
                 sample_name = row.cells[0].content.value
                 if isinstance(sample_name, str):
                     amostras_selecionadas_para_exclusao.append(sample_name)
@@ -93,26 +95,29 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
             return
 
         headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
+        deleted_names = set()
         try:
             async with httpx.AsyncClient() as client:
-                for sra_code in amostras_selecionadas_para_exclusao:
-                    response = await client.delete(f"http://bioinfo-container:8890/samples/{sra_code}", headers=headers)
+                for sample_name in amostras_selecionadas_para_exclusao:
+                    if sample_name in deleted_names:
+                        continue
+                    response = await client.delete(f"http://bioinfo-container:8890/samples/{sample_name}", headers=headers)
                     if response.status_code == 200:
-                        logger.info(f"Amostra {sra_code} excluída com sucesso!")
-                        await log_message(page, f"Amostra {sra_code} excluída com sucesso!")
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        page.update()
+                        result = response.json()
+                        deleted_names.update(result.get("deleted_names") or [sample_name])
+                        sample_code = result.get("sra_code") or sample_name
+                        logger.info("Amostra %s excluída com sucesso!", sample_code)
+                        await log_message(page, f"Amostra {sample_code} excluída com sucesso!")
                     else:
-                        logger.error(f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
-                        await log_message(page, f"Erro ao excluir amostra {sra_code}: {response.status_code} - {response.text}")
-                        await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
-                        page.update()
+                        logger.error("Erro ao excluir amostra %s: %s - %s", sample_name, response.status_code, response.text)
+                        await log_message(page, f"Erro ao excluir amostra {sample_name}: {response.status_code} - {response.text}")
+            await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
             
         except Exception as e:
             logger.error(f"Erro ao excluir amostras: {e}", exc_info=True)
 
     confirm_field = ft.TextField(
-        hint_text="Digite 'Confirmar' para excluir as amostras selecionadas.",
+        hint_text=t("confirm_delete_hint", page.session.get("lang") or "pt"),
         border_radius=ft.border_radius.all(4),
         multiline=False,
         expand=1
@@ -123,10 +128,10 @@ async def excluir_amostras_selecionadas(e, page, token, container_menu_direita, 
             await confirmar_exclusao()
 
     dlg_modal_excluir_amostra = ft.AlertDialog(
-        title=ft.Text("Confirmar exclusão"),
+        title=ft.Text(t("confirm_delete", page.session.get("lang") or "pt")),
         content=confirm_field,
         actions=[
-            ft.TextButton("Excluir", on_click=confirmar_exclusao_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
+            ft.TextButton(t("delete_selected", page.session.get("lang") or "pt"), on_click=confirmar_exclusao_handler, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), width=200, height=40),
         ],
         actions_alignment=ft.MainAxisAlignment.CENTER,
     )
@@ -160,6 +165,10 @@ def _get_terminal_listview(page):
     return None
 
 async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local):
+    lang = page.session.get("lang") or "pt"
+    for column, key in zip(tabela_amostras.columns,
+                           ("table_identification", "table_size", "table_status")):
+        column.label.value = t(key, lang)
     global first_check_done
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     if not first_check_done:
@@ -171,17 +180,21 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
 
     async def toggle_select_all(e):
         for row in tabela_amostras_local.rows:
-            row.cells[3].content.value = e.control.value
+            if not row.cells[3].content.disabled:
+                row.cells[3].content.value = e.control.value
         page.update()
 
     tabela_amostras_local.rows.clear()
     tabela_amostras_local.columns[3] = ft.DataColumn(ft.Checkbox(on_change=toggle_select_all))
     for sample in samples:
+        lang = page.session.get("lang") or "pt"
+        display_size = t("sra_size_pending", lang) if str(sample.get("size") or "").lower() in ("unknown", "none", "") else sample["size"]
+        display_status = {"PENDING": t("drive_queued", lang), "RUNNING": t("status_running", lang)}.get(str(sample.get("status") or "").upper(), sample["status"])
         
         async def download_sample_file(e, sample_name=sample["name"]):
             try:
                 download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
-                page.launch_url(download_url)
+                launch_public_url(page, download_url)
                 await log_message(page, f"Download iniciado para {sample_name}")
                 
             except Exception as e:
@@ -206,13 +219,42 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
             ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(sample["name"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["size"], style=ft.TextStyle(size=12))),
-                    ft.DataCell(ft.Text(sample["status"], style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(display_size, style=ft.TextStyle(size=12))),
+                    ft.DataCell(ft.Text(display_status, style=ft.TextStyle(size=12))),
                     ft.DataCell(ft.Checkbox()),
                     ft.DataCell(ft.Row(actions)),
                 ],
             )
         )
+
+    # Drive imports are jobs until both FASTQ files pass verification. Show
+    # their live state without presenting an incomplete file as a ready sample.
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            drive_response = await client.get("http://bioinfo-container:8890/drive/jobs", headers=headers)
+            drive_response.raise_for_status()
+            drive_jobs = drive_response.json()
+        lang = page.session.get("lang") or "pt"
+        for job in drive_jobs:
+            if job["status"] not in ("PENDING", "RUNNING"):
+                continue
+            progress = job.get("progress") or {}
+            status_key = "drive_queued" if job["status"] == "PENDING" else "drive_downloading"
+            status_text = t(status_key, lang)
+            if job["status"] == "RUNNING" and progress.get("total"):
+                mate = "R2" if str(progress.get("file", "")).endswith("_2.fastq.gz") else "R1"
+                done = int(progress.get("bytes", 0)) / 1024**3
+                total = int(progress["total"]) / 1024**3
+                status_text += f" {mate} ({done:.1f}/{total:.1f} GiB)"
+            tabela_amostras_local.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(f"Drive: {job['base']}", size=12)),
+                ft.DataCell(ft.Text(f"{job['size'] / 1024**3:.1f} GiB", size=12)),
+                ft.DataCell(ft.Text(status_text, size=12)),
+                ft.DataCell(ft.Checkbox(disabled=True)),
+                ft.DataCell(ft.Row([])),
+            ]))
+    except Exception as exc:
+        logger.warning("Could not load active Drive imports: %s", exc)
 
     stage_counts = {}
     # Fetch counts for stages 1..10
@@ -220,14 +262,6 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
         try:
             response = await make_request("GET", f"http://bioinfo-container:8890/samples/stages/{stage_id}", headers=headers)
             stage_rows = response.json()
-            if stage_id in (9, 10):
-                stage_rows = [
-                    row
-                    for row in stage_rows
-                    if str(
-                        row.get("status", "")
-                    ).upper() == "COMPLETED"
-                ]
             stage_counts[stage_id] = len(stage_rows)
         except Exception:
             stage_counts[stage_id] = 0
@@ -239,11 +273,12 @@ async def atualizar_tabela(page, token, container_menu_direita, tabela_amostras_
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "http://bioinfo-container:8890/results/deg_sheets",
+                "http://bioinfo-container:8890/deg/sheets",
                 headers=headers,
+                params={"all_runs": "true"},
             )
             if resp.status_code == 200:
-                stage_counts[7] = len(resp.json().get("sheets", []))
+                stage_counts[7] = len({entry["sheet"] for entry in resp.json().get("results", [])})
             else:
                 stage_counts[7] = 0
     except Exception:
@@ -277,7 +312,7 @@ async def atualizar_tabela_por_estagio(e, page, token, stage_id, tabela_amostras
                 async def download_sample_file(e, sample_name=sample["name"]):
                     try:
                         download_url = f"http://localhost:8890/download/obtencao/{sample_name}?token={token}"
-                        page.launch_url(download_url)
+                        launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {sample_name}")
                         
                     except Exception as e:
@@ -323,9 +358,10 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         await log_message(page, f"Iniciando o download da amostra {sample_name}.")
 
                         terminal_listview = _get_terminal_listview(page)
-                        progress_bar = ft.ProgressBar(value=0, width=260, color="green")
-                        progress_title = ft.Text(f"Download {sample_name}: 0%")
-                        progress_detail = ft.Text("Aguardando início do download...", size=11, color="black54")
+                        lang = page.session.get("lang") or "pt"
+                        progress_bar = ft.ProgressBar(value=None, width=260, color="green")
+                        progress_title = ft.Text(f"Download {sample_name}: {t('drive_queued', lang)}")
+                        progress_detail = ft.Text(t("sra_waiting_worker", lang), size=11, color="black54")
                         progress_container = ft.Container(
                             border=ft.border.all(1, "black12"),
                             border_radius=8,
@@ -339,10 +375,13 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                         if progress_visible:
                             terminal_listview.controls.append(progress_container)
 
+                        last_table_status = None
+
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
 
                         async def update_download_progress(job_payload):
+                            nonlocal last_table_status
                             if not progress_visible:
                                 return
 
@@ -350,15 +389,14 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             result_payload = job_payload.get("result") or {}
                             progress_percent = result_payload.get("progress_percent")
                             progress_message = str(result_payload.get("progress_message") or "").strip()
+                            progress_phase = str(result_payload.get("progress_phase") or "").strip()
                             error_message = str(job_payload.get("error_message") or "").strip()
 
                             try:
-                                percent = float(progress_percent)
+                                percent = max(0.0, min(float(progress_percent), 100.0))
                             except (TypeError, ValueError):
-                                percent = (progress_bar.value or 0.0) * 100.0
-
-                            percent = max(0.0, min(percent, 100.0))
-                            if status == "RUNNING" and percent >= 100.0:
+                                percent = None
+                            if status == "RUNNING" and percent is not None and percent >= 100.0:
                                 percent = 99.0
 
                             if status == "COMPLETED":
@@ -367,28 +405,33 @@ async def baixar_amostras(e, page, token, container_menu_direita, tabela_amostra
                             elif status in {"FAILED", "CANCELED"}:
                                 progress_bar.color = "red"
 
-                            progress_bar.value = percent / 100.0
-                            progress_title.value = f"Download {sample_name}: {percent:.1f}%"
+                            progress_bar.value = percent / 100.0 if percent is not None else None
+                            progress_title.value = f"Download {sample_name}: {percent:.1f}%" if percent is not None else f"Download {sample_name}: {t('drive_queued', lang) if status == 'PENDING' else t('status_running', lang)}"
 
-                            if progress_message:
+                            if status == "RUNNING" and progress_phase and percent is not None:
+                                progress_detail.value = f"{t('sra_phase', lang)} {progress_phase}: {percent:.1f}%"
+                            elif progress_message:
                                 progress_detail.value = progress_message
+                            elif status == "PENDING":
+                                progress_detail.value = t("sra_waiting_worker", lang)
                             elif status == "RUNNING":
-                                progress_detail.value = "Baixando..."
+                                progress_detail.value = t("sra_downloading", lang)
                             elif status == "COMPLETED":
-                                progress_detail.value = "Download concluído."
+                                progress_detail.value = t("sra_completed", lang)
                             elif status == "FAILED":
-                                progress_detail.value = error_message or "Download falhou."
+                                progress_detail.value = error_message or t("sra_failed", lang)
                             elif status == "CANCELED":
-                                progress_detail.value = "Download cancelado."
+                                progress_detail.value = t("sra_canceled", lang)
 
                             page.update()
+                            if status != last_table_status:
+                                last_table_status = status
+                                await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
 
                         if job_id:
                             result = await wait_for_job(token, job_id, on_update=update_download_progress)
                             final_status = result.get("status")
                             await log_message(page, f"Download da amostra {sample_name} finalizado com status {final_status}.")
-                            if final_status == "COMPLETED":
-                                await atualizar_tamanho_amostras(page, token, sample_name, container_menu_direita)
 
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         page.update()
