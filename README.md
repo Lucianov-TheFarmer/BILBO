@@ -1,81 +1,121 @@
-# BILBO — Bioinformatics Integration for Large-scale Biological Operations
+# BILBO: Bioinformatics Integration for Large-scale Biological Operations
 
-BILBO reúne as etapas de RNA-Seq, da obtenção de reads à análise diferencial, clusterização semântica e interpretação com LLM, em uma interface web. As análises rodam em containers Docker com filas Celery e resultados persistidos no PostgreSQL.
+[![Docker](https://img.shields.io/badge/Docker-Enabled-blue?logo=docker)](https://www.docker.com/)
+[![Python](https://img.shields.io/badge/Python-3.9+-yellow?logo=python)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Flet](https://img.shields.io/badge/Frontend-Flet-orange)](https://flet.dev/)
 
-## Instalação rápida
+## Overview
 
-Requisitos: Git, Python 3.9+ e Docker com o plugin Compose em execução. Reserve espaço para a imagem de bioinformática, os modelos Ollama, o índice de literatura e os dados das análises.
+BILBO is a containerized RNA-Seq platform that brings together read acquisition, differential expression analysis, semantic clustering, and LLM-assisted interpretation in one web interface. Analyses run through Celery workers, with sample and job records stored in PostgreSQL.
 
-Em Linux ou macOS, cole uma linha no terminal:
+## Getting Started
+
+### Prerequisites
+
+Install Git, Python 3.9+, and Docker with the Compose plugin. The first run also needs enough disk space for the bioinformatics image, Ollama models, the literature index, and analysis data.
+
+### One-line installation
+
+On Linux or macOS:
 
 ```bash
 git clone https://github.com/Lucianov-TheFarmer/BILBO.git && python3 BILBO/init.py
 ```
 
-No PowerShell:
+On Windows PowerShell:
 
 ```powershell
 git clone https://github.com/Lucianov-TheFarmer/BILBO.git; if ($LASTEXITCODE -eq 0) { python BILBO/init.py }
 ```
 
-O inicializador cria um `.env` privado a partir de [`.env.example`](.env.example), gera senhas locais, valida as portas, constrói as imagens e inicia os serviços. Os modelos Ollama e o índice RAG começam a baixar em segundo plano. **A primeira inicialização pode demorar**; acompanhe com `docker compose logs -f bioinfo ollama rag-bootstrap` dentro da pasta `BILBO`.
-
-Quando o serviço estiver pronto, abra [http://localhost:8890/frontend](http://localhost:8890/frontend). A instalação não exige Google Cloud: o importador do Drive fica opcional até os mantenedores configurarem um único projeto OAuth do BILBO.
-
-### Configuração local
-
-Edite `BILBO/.env` antes de iniciar, ou altere-o depois e execute `python3 init.py --no-build` na pasta do projeto. O arquivo `.env` é ignorado pelo Git. O inicializador mantém os valores que você já configurou e só gera os segredos que estiverem vazios.
-
-| Variável | Uso | Padrão |
-| --- | --- | --- |
-| `BILBO_HOST_PORT` | Porta para abrir o BILBO no navegador | `8890` |
-| `BILBO_BIND_ADDRESS` | Interface de rede do hospedeiro | `127.0.0.1` |
-| `BILBO_PUBLIC_BASE_URL` | Origem pública, se usar domínio ou proxy HTTPS | vazio; usa `http://localhost:BILBO_HOST_PORT` |
-| `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `QDRANT_HOST_PORT`, `QDRANT_GRPC_HOST_PORT`, `OLLAMA_HOST_PORT` | Portas externas dos serviços auxiliares | ver `.env.example` |
-| `SECRET_KEY`, `POSTGRES_PASSWORD` | Segredos gerados na primeira inicialização | gerados localmente |
-| `GOOGLE_DRIVE_*` | Credenciais do projeto OAuth mantido pelo BILBO | vazias; integração desativada |
-
-As portas **internas** dos containers permanecem fixas; altere apenas as portas externas no `.env`. Assim, uma alteração de `BILBO_HOST_PORT` atualiza os links de download, upload, visualização, CORS e o retorno OAuth. Se o Google Drive estiver ativado, cadastre a nova URI de retorno no projeto Google Cloud. Veja o [guia de importação do Drive](docs/google-drive-import.md).
-
-Por padrão as portas são acessíveis só no próprio servidor. Para abrir o BILBO de outro computador por SSH, use um túnel; troque `8890` pelo valor de `BILBO_HOST_PORT` e `usuario@servidor` pelo seu acesso:
+The initializer creates a private `.env` from [`.env.example`](.env.example), generates local passwords, validates host ports, builds the images, and starts the services. Ollama models and the shared RAG index begin downloading in the background. **The first startup can take time.** From the `BILBO` directory, follow its progress with:
 
 ```bash
-ssh -L 8890:127.0.0.1:8890 usuario@servidor
+docker compose logs -f bioinfo ollama rag-bootstrap
 ```
 
-Para acesso direto pela rede, configure `BILBO_BIND_ADDRESS=0.0.0.0` e uma origem HTTPS em `BILBO_PUBLIC_BASE_URL`, com proteção de acesso adequada ao servidor. O endereço OAuth do Google deve corresponder exatamente à origem configurada.
+When the service is ready, open [http://localhost:8890/frontend](http://localhost:8890/frontend). Google Cloud is not needed for installation; Drive import remains optional until the BILBO maintainers configure one shared OAuth project.
 
-Comandos úteis, executados dentro de `BILBO`:
+### Local configuration
+
+Edit `BILBO/.env` before startup, or edit it later and run `python3 init.py --no-build` from the repository directory. Git ignores the private file. The initializer preserves existing settings and fills only empty secrets.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `BILBO_HOST_PORT` | Port used to open BILBO in the browser | `8890` |
+| `BILBO_BIND_ADDRESS` | Host network interface | `127.0.0.1` |
+| `BILBO_PUBLIC_BASE_URL` | Public origin when using a domain or HTTPS proxy | Empty; uses `http://localhost:BILBO_HOST_PORT` |
+| `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `QDRANT_HOST_PORT`, `QDRANT_GRPC_HOST_PORT`, `OLLAMA_HOST_PORT` | External ports for supporting services | See `.env.example` |
+| `SECRET_KEY`, `POSTGRES_PASSWORD` | Application secrets | Generated locally |
+| `GOOGLE_DRIVE_*` | Credentials for the BILBO OAuth project | Empty; Drive import disabled |
+
+Container **internal** ports stay fixed. Changing `BILBO_HOST_PORT` updates browser downloads, uploads, viewers, CORS, and the derived OAuth callback URL. If Drive import is enabled, register the new callback URI in Google Cloud. See the [Drive import guide](docs/google-drive-import.md).
+
+By default, host ports are accessible only on the server itself. To open BILBO from another computer, use an SSH tunnel. Replace both instances of `8890` with `BILBO_HOST_PORT` and replace `user@server` with your login:
 
 ```bash
-python3 init.py --check       # valida .env e Compose sem iniciar containers
-python3 init.py --no-build    # reinicia sem reconstruir a imagem
+ssh -L 8890:127.0.0.1:8890 user@server
+```
+
+For direct network access, set `BILBO_BIND_ADDRESS=0.0.0.0` and configure an HTTPS origin in `BILBO_PUBLIC_BASE_URL`. The Google OAuth redirect URI must match that origin exactly.
+
+Useful commands from the `BILBO` directory:
+
+```bash
+python3 init.py --check       # Validate .env and Compose without starting containers
+python3 init.py --no-build    # Restart without rebuilding the image
 docker compose ps
 docker compose logs -f bioinfo worker
 docker compose down
 ```
 
-## Etapas de análise
+## Core Capabilities
 
-O BILBO oferece importação de amostras por SRA, upload ou Google Drive; genoma de referência por NCBI, URL ou upload; FastQC, Trimmomatic, STAR, quantificação, edgeR, figuras, clusterização por GO e interpretação RAG. O modal **Configurar pipeline** permite escolher etapas e parâmetros antes de iniciar uma execução automática.
+BILBO supports sample acquisition through SRA, local upload, or Google Drive; reference genomes from NCBI, a URL, or local files; FastQC, Trimmomatic, STAR, read quantification, edgeR, scientific figures, GO-based semantic clustering, and RAG interpretation. The **Configure pipeline** dialog lets users select stages and parameters before starting an automatic run.
 
-O conjunto público de teste SEQC (GSE47774) está descrito em [examples/test_data/README.md](examples/test_data/README.md). Os FASTQ são obtidos do SRA e não ficam no repositório.
+A public SEQC test subset (GSE47774) is described in [examples/test_data/README.md](examples/test_data/README.md). FASTQ files are retrieved from SRA rather than stored in this repository.
 
-## Documentação técnica
+## Technical Architecture
 
-- [Camada de IA e RAG, índice de literatura e modo independente](docs/ai-and-rag.md)
-- [Configuração do Google Drive](docs/google-drive-import.md)
-- [Instalação detalhada](docs/source/installation.rst)
+1. **Interface:** Flet.
+2. **API:** FastAPI and Uvicorn.
+3. **Persistence:** PostgreSQL.
+4. **Background work:** Celery and Redis.
+5. **Analysis tools:** Python, R, and established RNA-Seq software in Docker containers.
 
-## Organização
+For implementation and administration details, see:
+
+- [AI and RAG layer, literature index, and standalone mode](docs/ai-and-rag.md)
+- [Google Drive configuration](docs/google-drive-import.md)
+- [Detailed installation guide](docs/source/installation.rst)
+
+## Repository Organization
 
 ```text
-app/backend/       FastAPI, Celery e scripts científicos
-app/frontend/      interface Flet
-config/            ambiente Conda
-docker-compose.yml serviços e portas
-init.py            instalação em um comando
-.env.example       opções de configuração, sem credenciais reais
+BILBO/
+├── app/
+│   ├── backend/        # FastAPI, Celery, and scientific scripts
+│   ├── frontend/       # Flet interface
+│   └── assets/         # Icons and institutional logos
+├── config/             # Conda environment
+├── docker-compose.yml  # Services and host ports
+├── .env.example        # Configuration template; no real credentials
+└── init.py             # One-line installation entry point
 ```
 
-Desenvolvido por Vitor Luciano Costa da Silva e Joao Vitor Reis Alvarenga, com apoio de Manoel Viana Linhares-Neto, Muhammad Noman e Antonio Chalfun-Junior, no LFMP/UFLA.
+## Authors
+
+Developed by Vitor Luciano Costa da Silva and Joao Vitor Reis Alvarenga, with support from Manoel Viana Linhares-Neto, Muhammad Noman, and Antonio Chalfun-Junior, at the Plant Molecular Physiology Laboratory (LFMP/UFLA).
+
+<div align="center" style="display: flex; gap: 20px; justify-content: center; background-color: white;">
+  <img src="app/assets/src/UFLA.png" alt="UFLA logo" style="width: 150px; height: auto;">
+  <img src="app/assets/src/LFMP.png" alt="LFMP logo" style="width: 150px; height: auto;">
+</div>
+
+<br>
+
+<div align="right">
+  <i>"Happiness is either shared or lost, because no one can be happy alone."</i><br>
+  — Carlos Bernardo Gonzalez Pecotche
+</div>
