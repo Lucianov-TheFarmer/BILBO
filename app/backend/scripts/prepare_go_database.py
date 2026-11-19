@@ -84,7 +84,7 @@ def ensure_database(directory, diamond):
                 shutil.copyfileobj(source, target)
             staged_db = staging / "viridiplantae_reviewed.dmnd"
             subprocess.run([str(diamond), "makedb", "--in", str(fasta),
-                            "--db", str(staged_db)], check=True, timeout=3600,
+                            "--db", str(staged_db)], check=True,
                            stdout=subprocess.DEVNULL)
             with gzip.open(tsv_gz, "rt", encoding="utf-8") as table:
                 header = table.readline().strip().split("\t")

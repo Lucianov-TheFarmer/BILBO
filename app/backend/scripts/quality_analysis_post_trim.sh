@@ -28,19 +28,7 @@ if [ ! -f "$input_file" ]; then
 fi
 
 set +e
-if command -v timeout >/dev/null 2>&1; then
-    timeout --signal=TERM --kill-after=30s "${BILBO_FASTQC_TIMEOUT:-170m}" fastqc \
-        -t 4 \
-        -o "$output_dir" \
-        "$input_file" \
-        > "$log_file" 2>&1
-else
-    fastqc \
-        -t 4 \
-        -o "$output_dir" \
-        "$input_file" \
-        > "$log_file" 2>&1
-fi
+fastqc -t 4 -o "$output_dir" "$input_file" > "$log_file" 2>&1
 
 exit_code=$?
 set -e
@@ -59,8 +47,6 @@ fi
 if [ "$exit_code" -eq 0 ]; then
     echo "Post-trim FastQC exited successfully but its HTML or ZIP report is missing." >> "$log_file"
     exit_code=3
-elif [ "$exit_code" -eq 124 ]; then
-    echo "Post-trim FastQC exceeded the ${BILBO_FASTQC_TIMEOUT:-170m} time limit (exit code 124)." >> "$log_file"
 elif [ "$exit_code" -eq 137 ]; then
     echo "Post-trim FastQC was killed (exit code 137); check container memory and worker logs." >> "$log_file"
 else

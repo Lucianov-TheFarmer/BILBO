@@ -47,7 +47,7 @@ def _queue(db: Session, user: User, label: str, source: dict, threads: int, over
                      {"accession": accession, "row_id": row.id, "label": clean,
                       "source": source, "threads": threads, "sjdb_overhang": overhang})
     try:
-        import_reference.delay(job.id)
+        import_reference.apply_async(args=[job.id], task_id=job.id)
     except Exception:
         row.status = "FAILED"
         db.commit()

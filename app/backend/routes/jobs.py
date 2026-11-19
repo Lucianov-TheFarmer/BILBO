@@ -196,7 +196,34 @@ def _fastqc_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     percent = min(99.9, round(100 * (completed + current / 100) / len(samples), 1))
     return {"progress_percent": percent, "progress_message": f"{sample}: {current:.0f}%",
             "completed_samples": completed, "total_samples": len(samples),
-            "progress_source": "fastqc_log"}
+            "progress_source": "fastqc_log", "tool_log_path": str(path)}
+
+
+def _active_tool_log(job: PipelineJob) -> Optional[Path]:
+    """Find the current tool log; elapsed time alone never fails a job."""
+    if not job.started_at:
+        return None
+    payload = job.payload or {}
+    sample = str(payload.get("sample") or "")
+    root = Path('/users') / str(job.user_id)
+    paths = {
+        'trimming': root / 'logs' / 'trimming' / f'{sample}.log',
+        'alignment': root / 'alignment' / sample / f'{sample}_custom.log',
+        'samples_download': Path('/app/backend/logs') / f"{payload.get('sra_code', '')}_download.log",
+    }
+    if job.stage == 'quantification':
+        names = payload.get('samples') or []
+        if len(names) == 1:
+            sample = str(names[0])
+            paths['quantification'] = root / 'logs' / 'quantification' / f'{sample}.log'
+    path = paths.get(job.stage)
+    if not path or not re.fullmatch(r'[A-Za-z0-9_.-]+', sample if job.stage != 'samples_download' else str(payload.get('sra_code') or '')):
+        return None
+    try:
+        started = job.started_at.timestamp()
+        return path if path.is_file() and path.stat().st_mtime >= started - 2 else None
+    except OSError:
+        return None
 
 
 def _alignment_progress(job: PipelineJob) -> Optional[dict[str, object]]:
@@ -282,6 +309,14 @@ def get_job_status(
         if progress_data:
             result_payload.update(progress_data)
 
+    if job.status == PipelineStatus.RUNNING.value and not result_payload.get('progress_message'):
+        tool_log = _active_tool_log(job)
+        if tool_log:
+            lines = _tail_text_file(str(tool_log), 4096).splitlines()
+            if lines:
+                result_payload['progress_message'] = lines[-1].strip()[:300]
+                result_payload['progress_source'] = 'tool_log'
+
     # BILBO_GENERIC_JOB_PROGRESS
     try:
         progress_path = (
@@ -295,6 +330,16 @@ def get_job_status(
             progress_log = _tail_text_file(str(progress_path))
             if progress_log:
                 result_payload['progress_log'] = progress_log
+            if job.status == PipelineStatus.RUNNING.value:
+                tool_path = result_payload.get('tool_log_path')
+                activity_path = Path(tool_path) if tool_path else _active_tool_log(job) or progress_path
+                silent_seconds = int(datetime.now(timezone.utc).timestamp() - activity_path.stat().st_mtime)
+                if silent_seconds > 300:
+                    result_payload['monitor_warning'] = {
+                        'code': 'no_recent_tool_output' if activity_path != progress_path else 'no_recent_events',
+                        'silent_seconds': silent_seconds,
+                    }
+        result_payload.pop('tool_log_path', None)
     except OSError:
         pass
 

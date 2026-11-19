@@ -309,11 +309,7 @@ fi
 log "Executando Trimmomatic."
 
 
-if command -v timeout >/dev/null 2>&1; then
-    RUN_CMD=(timeout 24h "${command[@]}")
-else
-    RUN_CMD=("${command[@]}")
-fi
+RUN_CMD=("${command[@]}")
 
 if "${RUN_CMD[@]}" >> "$log_file" 2>&1; then
     exit_code=0

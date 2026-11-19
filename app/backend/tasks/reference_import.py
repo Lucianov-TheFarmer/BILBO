@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -87,7 +89,19 @@ def import_reference(job_id: str) -> None:
         append_job_event(job.user_id, job_id, "Referência: construindo índice STAR.")
         command = ["bash", "/app/backend/scripts/index_genome_star.sh", str(final),
                    str(payload["sjdb_overhang"]), str(payload["threads"])]
-        run = subprocess.run(command, capture_output=True, text=True, timeout=172800)
+        heartbeat_stop = threading.Event()
+        index_started = time.monotonic()
+        def index_heartbeat():
+            while not heartbeat_stop.wait(60):
+                append_job_event(job.user_id, job_id,
+                                 f"Referência: índice STAR em construção há {int(time.monotonic() - index_started)} s.")
+        heartbeat = threading.Thread(target=index_heartbeat, daemon=True)
+        heartbeat.start()
+        try:
+            run = subprocess.run(command, capture_output=True, text=True)
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=1)
         if run.returncode or not (final / "STAR_index" / "Genome").is_file():
             log = Path("/app/backend/logs/index_genome_star.log")
             tail = log.read_text(errors="replace")[-3000:] if log.exists() else run.stderr[-3000:]
@@ -114,6 +128,8 @@ def import_reference(job_id: str) -> None:
 
 def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> None:
     previous_phase = (job.result or {}).get("phase")
+    logged_percent = float((job.result or {}).get("logged_percent") or 0) if previous_phase == phase else 0.0
+    logged_bytes = int((job.result or {}).get("logged_bytes") or 0) if previous_phase == phase else 0
     if phase != previous_phase and phase.startswith("download_"):
         append_job_event(job.user_id, job.id, f"Referência: baixando {phase.removeprefix('download_')}.")
     if total and phase == "download_fasta":
@@ -124,7 +140,14 @@ def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> Non
         percent = 75
     else:
         percent = None
+    if percent is not None and total and phase.startswith("download_") and percent - logged_percent >= 5:
+        append_job_event(job.user_id, job.id, f"Referência: {phase.removeprefix('download_')} {written}/{total} bytes.")
+        logged_percent = percent
+    if percent is None and phase.startswith("download_") and written - logged_bytes >= 64 * 1024**2:
+        append_job_event(job.user_id, job.id, f"Referência: {phase.removeprefix('download_')} {written}/{total} bytes.")
+        logged_bytes = written
     job.result = {"phase": phase, "bytes": written, "total_bytes": total,
-                  "progress_percent": percent, "progress_message": phase}
+                  "progress_percent": percent, "progress_message": phase,
+                  "logged_bytes": logged_bytes, "logged_percent": logged_percent}
     db.add(job)
     db.commit()

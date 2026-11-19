@@ -525,7 +525,6 @@ def run_wang(features_file: Path, features_dir: Path, metrics_path: Path) -> dic
         ["Rscript", str(WANG_SCRIPT), str(features_file), str(features_dir), str(metrics_path)],
         capture_output=True,
         text=True,
-        timeout=172800,
         check=False,
     )
     if process.returncode != 0:

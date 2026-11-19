@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -209,16 +210,18 @@ def _acquire_lock() -> bool:
         return False
 
 
-def _wait_for_other_initializer(timeout: int = 7200) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+def _wait_for_other_initializer() -> dict[str, Any]:
+    while True:
         status = rag_status()
         if status["ready"]:
             return status
-        if not LOCK_PATH.exists():
-            break
+        try:
+            stale_lock = LOCK_PATH.exists() and time.time() - LOCK_PATH.stat().st_mtime > 6 * 60 * 60
+        except OSError:
+            stale_lock = False
+        if stale_lock or not LOCK_PATH.exists():
+            return ensure_rag_database()
         time.sleep(5)
-    raise TimeoutError("Timed out waiting for another RAG initialization job.")
 
 
 def _download_archive() -> Path:
@@ -398,6 +401,17 @@ def ensure_rag_database() -> dict[str, Any]:
     if not _acquire_lock():
         return _wait_for_other_initializer()
 
+    heartbeat_stop = threading.Event()
+    def refresh_lock():
+        while not heartbeat_stop.wait(60):
+            try:
+                LOCK_PATH.touch(exist_ok=False)
+            except FileExistsError:
+                os.utime(LOCK_PATH, None)
+            except OSError:
+                return
+    heartbeat = threading.Thread(target=refresh_lock, daemon=True)
+    heartbeat.start()
     try:
         _write_status("checking", "Checking disk space and RAG prerequisites.")
 
@@ -453,6 +467,8 @@ def ensure_rag_database() -> dict[str, Any]:
         )
         raise
     finally:
+        heartbeat_stop.set()
+        heartbeat.join(timeout=1)
         LOCK_PATH.unlink(missing_ok=True)
         if WORK_DIR.exists():
             shutil.rmtree(WORK_DIR, ignore_errors=True)

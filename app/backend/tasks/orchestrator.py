@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..core.settings import settings
 from ..db.database import SessionLocal
 from ..db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage
-from ..services.job_service import create_job
+from ..schemas.common import PipelineStatus
+from ..services.job_service import create_job, set_job_finished
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 from .celery_app import celery_app
 from .pipeline_tasks import enqueue_pipeline_job
@@ -361,5 +362,77 @@ def reconcile_all():
         runs = db.query(PipelineRun).filter(PipelineRun.status == "RUNNING").all()
         for run in runs:
             _advance_run(db, run)
+    finally:
+        db.close()
+
+
+def _mark_worker_failed_rows(db, job: PipelineJob) -> None:
+    """Keep stage tables consistent when a Celery child dies outside our handler."""
+    payload = job.payload or {}
+    stage = job.stage
+    filters = {"user_id": job.user_id, "status": "RUNNING"}
+    rows = []
+    if stage == "samples_download":
+        rows = db.query(SampleStage).filter_by(stage_id=1, sra_code=payload.get("sra_code"), **filters).all()
+    elif stage == "trimming":
+        rows = db.query(SampleStage).filter_by(stage_id=3, sra_code=payload.get("sample"), **filters).all()
+    elif stage == "alignment":
+        rows = db.query(SampleStage).filter_by(stage_id=5, sra_code=payload.get("sample"), **filters).all()
+    elif stage == "quantification":
+        names = [str(name).removesuffix(".bam") + ".txt" for name in payload.get("samples", [])]
+        rows = db.query(SampleStage).filter(SampleStage.user_id == job.user_id,
+            SampleStage.stage_id == 6, SampleStage.status == "RUNNING", SampleStage.name.in_(names)).all()
+    elif stage in ("quality_analysis", "quality_analysis_post_trim"):
+        names = []
+        for sample in payload.get("samples", []):
+            stem = str(sample).removesuffix(".gz").removesuffix(".fastq").removesuffix(".fq")
+            names.append(stem.removesuffix("_trimmed") + "_post_trim.html" if stage.endswith("post_trim")
+                         else stem + ".html")
+        rows = db.query(SampleStage).filter(SampleStage.user_id == job.user_id,
+            SampleStage.stage_id == (4 if stage.endswith("post_trim") else 2),
+            SampleStage.status == "RUNNING", SampleStage.name.in_(names)).all()
+    elif stage in ("clustering", "llm"):
+        rows = db.query(SampleStage).filter(SampleStage.user_id == job.user_id,
+            SampleStage.stage_id == (9 if stage == "clustering" else 10),
+            SampleStage.status == "RUNNING", SampleStage.name.in_(payload.get("sheets") or [])).all()
+    elif stage == "reference_import":
+        row = db.query(SampleStage).filter(SampleStage.id == payload.get("row_id"),
+            SampleStage.user_id == job.user_id, SampleStage.status == "RUNNING").first()
+        rows = [row] if row else []
+    for row in rows:
+        row.status = "FAILED"
+    if rows:
+        db.commit()
+
+
+@celery_app.task(name="jobs.reconcile_worker_failures")
+def reconcile_worker_failures():
+    """Persist failures that occur when a worker cannot run its own exception handler."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        jobs = db.query(PipelineJob).filter(PipelineJob.status == "RUNNING",
+            PipelineJob.started_at < cutoff, PipelineJob.stage != "preprocess").all()
+        for job in jobs:
+            try:
+                celery_result = celery_app.AsyncResult(job.id)
+                state = celery_result.state
+                if state not in ("FAILURE", "REVOKED", "SUCCESS"):
+                    continue
+                if state == "FAILURE":
+                    detail = str(celery_result.result or "Worker failed without a diagnostic")[:1500]
+                    reason = f"Worker Celery falhou: {detail}. Consulte docker compose logs do worker."
+                    final_status = PipelineStatus.FAILED
+                elif state == "REVOKED":
+                    reason = "Tarefa interrompida ou revogada no worker Celery."
+                    final_status = PipelineStatus.CANCELED
+                else:
+                    reason = "Worker terminou sem registrar o resultado no banco de dados."
+                    final_status = PipelineStatus.FAILED
+                _mark_worker_failed_rows(db, job)
+                set_job_finished(db, job.id, final_status,
+                                 result={"celery_state": state}, error_message=reason)
+            except Exception:
+                db.rollback()  # A temporary Redis failure must not stop other jobs.
     finally:
         db.close()

@@ -192,9 +192,7 @@ def _log_excerpt(path: Path, max_bytes: int = 4096) -> str:
 
 
 def _exit_reason(rc: int, stderr: str = "", stdout: str = "", log: str = "") -> str:
-    if rc == 124:
-        reason = "tempo limite excedido (código 124)"
-    elif rc in (137, -9):
+    if rc in (137, -9):
         reason = "processo encerrado com SIGKILL (código 137); verificar memória e logs do worker"
     elif rc in (143, -15):
         reason = "processo encerrado com SIGTERM (código 143)"
@@ -207,19 +205,9 @@ def _exit_reason(rc: int, stderr: str = "", stdout: str = "", log: str = "") -> 
     return f"{reason}: {' | '.join(detail)[-1200:]}" if detail else reason
 
 
-def _fastqc_worker_timeout_seconds() -> int:
-    """Give the subprocess guard more time than GNU timeout in the shell script."""
-    match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhd]?)", os.getenv("BILBO_FASTQC_TIMEOUT", "170m").strip())
-    if not match:
-        return 10800  # The script will report an invalid timeout value.
-    unit = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
-    return max(10800, int(float(match.group(1)) * unit) + 600)
-
-
 def _run(
     cmd: list[str],
     cwd: Optional[str] = None,
-    timeout: Optional[int] = None,
 ) -> Tuple[int, str, str]:
     """
     Executa um subprocesso e registra eventos para todas as etapas.
@@ -242,45 +230,13 @@ def _run(
     started = time.monotonic()
     heartbeat_interval = 30
     last_heartbeat = started
-    deadline = (
-        started + timeout
-        if timeout is not None
-        else None
-    )
-
     stdout = ""
     stderr = ""
 
     while True:
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-
-            if remaining <= 0:
-                process.kill()
-                stdout, stderr = process.communicate()
-
-                if phase_name:
-                    _progress_event(
-                        f"DEG — {phase_name} excedeu o tempo limite."
-                    )
-
-                _progress_event(f"{process_name}: tempo limite de {timeout}s excedido; processo interrompido.")
-
-                raise TimeoutError(
-                    f"Timed out after {timeout}s running: "
-                    f"{' '.join(cmd)}"
-                )
-
-            wait_time = min(
-                heartbeat_interval,
-                max(0.1, remaining),
-            )
-        else:
-            wait_time = heartbeat_interval
-
         try:
             stdout, stderr = process.communicate(
-                timeout=wait_time
+                timeout=heartbeat_interval
             )
             break
 
@@ -531,6 +487,10 @@ def _execute_pipeline_job_locked(self, job_id: str):
 
         try:
             if user_id >= 0:
+                from .orchestrator import _mark_worker_failed_rows
+                failed_job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                if failed_job is not None:
+                    _mark_worker_failed_rows(db, failed_job)
                 _finalize_job(
                     db,
                     job_id=job_id,
@@ -604,7 +564,7 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
 
     try:
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000
+            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)]
         )
     except Exception as exc:
         db.rollback()
@@ -704,7 +664,6 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
             db.commit()
         rc, stdout, stderr = _run(
             ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)],
-            timeout=_fastqc_worker_timeout_seconds(),
         )
         sample_base = re.sub(r"_R?[12]$", "", sample_stem)
         log_path = _abs_users(str(user_id), "QC", sample_base, f"{safe_sample}_quality_analysis.log")
@@ -751,7 +710,6 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
             db.commit()
         rc, stdout, stderr = _run(
             ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)],
-            timeout=_fastqc_worker_timeout_seconds(),
         )
         sample_stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", safe_sample)
         sample_base = re.sub(r"_R?[12]_trimmed$", "", sample_stem)
@@ -782,6 +740,9 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
 
 def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sample = ensure_safe_component(str(payload["sample"]), "sample")
+    for row in db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, sra_code=sample, status="PENDING").all():
+        row.status = "RUNNING"
+    db.commit()
     params = payload.get("params") or {}
     adapter = dict(params.get("illumina_clip") or {})
     adapter_path = None
@@ -811,14 +772,15 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
             str(params.get("minlen", 36)), str(params.get("avgqual") or ""),
             str(_abs_users(str(user_id), "samples")),
             str(_abs_users(str(user_id), "trimmed")),
-        ], timeout=172800)
+        ])
     finally:
         if adapter_path:
             adapter_path.unlink(missing_ok=True)
+    output_stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
     outputs = [p for p in (
         _abs_users(str(user_id), "trimmed", f"{sample}_1_trimmed.fastq.gz"),
         _abs_users(str(user_id), "trimmed", f"{sample}_2_trimmed.fastq.gz"),
-        _abs_users(str(user_id), "trimmed", f"{sample}_trimmed.fastq.gz"),
+        _abs_users(str(user_id), "trimmed", f"{output_stem}_trimmed.fastq.gz"),
     ) if p.is_file() and p.stat().st_size > 0]
     if rc == 0 and not outputs:
         rc = 4
@@ -830,6 +792,9 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
             db.add(row)
         row.status = "COMPLETED" if rc == 0 else "FAILED"
         row.size = f"{path.stat().st_size / 1024**2:.2f} MB"
+    if rc != 0:
+        for row in db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, sra_code=sample, status="RUNNING").all():
+            row.status = "FAILED"
     db.commit()
     _finalize_job(db, job_id=job_id, stage="trimming", user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
@@ -874,7 +839,6 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
             str(threads),
             *[str(x) for x in additional],
         ],
-        timeout=172800,
     )
 
     bam_file = alignment_path / sample / f"{sample}.bam"
@@ -937,7 +901,7 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
 
         stdout = ""
         try:
-            rc, stdout, stderr = _run(cmd, timeout=10800)
+            rc, stdout, stderr = _run(cmd)
         except Exception as exc:
             rc = 1
             stderr = str(exc)
@@ -1056,7 +1020,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     # --------------------------------------------------------
     rc, stdout, stderr = _run(
         ["Rscript", deg_script, str(preprocess_dir), str(deg_dir)],
-        timeout=172800,
     )
 
     deg_xlsx = deg_dir / "DEG.xlsx"
@@ -1112,7 +1075,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                             str(deg_xlsx),
                             str(gff_path),
                         ],
-                        timeout=7200,
                     )
 
                     annotation_result["gff"] = "COMPLETED" if gff_rc == 0 else "FAILED"
@@ -1129,7 +1091,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         # --------------------------------------------
                         # uni_rc, uni_stdout, uni_stderr = _run(
                         #     ["python", uniprot_annotation_script, str(deg_xlsx)],
-                        #     timeout=86400,
                         # )
 
                         total_genes, annotated_genes = _go_coverage(deg_xlsx)
@@ -1157,7 +1118,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     extract_rc, _, extract_stderr = _run([
                                         gffread, "-S", "-y", str(generated_proteins), "-g",
                                         str(genomic_fasta), str(gff_path),
-                                    ], timeout=14400)
+                                    ])
                                     if (extract_rc == 0 and generated_proteins.is_file()
                                             and generated_proteins.stat().st_size):
                                         protein_path = generated_proteins
@@ -1173,7 +1134,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                 prepare_rc, prepare_stdout, prepare_stderr = _run([
                                     "python", "/app/backend/scripts/prepare_go_database.py",
                                     str(reference_data), str(diamond_binary),
-                                ], timeout=7200)
+                                ])
                                 if prepare_rc:
                                     annotation_error = "Falha ao preparar a base UniProt: " + (
                                         prepare_stderr[-1500:] or f"rc={prepare_rc}")
@@ -1190,7 +1151,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     str(deg_dir / "homology"), "--diamond", str(diamond_binary),
                                     "--gff", str(gff_path),
                                     "--threads", str(payload.get("diamond_threads", 8)),
-                                ], timeout=7200)
+                                ])
                                 annotation_result["homology_stdout"] = homology_stdout[-3000:]
                                 annotation_result["homology_stderr"] = homology_stderr[-3000:]
                                 if homology_rc == 0 and homology_output.is_file():
@@ -1229,7 +1190,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                 str(deg_xlsx),
                 str(deg_dir),
             ],
-            timeout=7200,
         )
 
         annotation_result["graphs"] = "COMPLETED" if graph_rc == 0 else "FAILED"
@@ -1648,7 +1608,7 @@ def _handle_results_barplot(db: Session, job_id: str, user_id: int, payload: dic
     deg_dir = _abs_users(str(user_id), "DEG")
     deg_xlsx = deg_dir / "DEG.xlsx"
     script = "/app/backend/scripts/barplot_multiplo.R"
-    rc, stdout, stderr = _run(["Rscript", script, str(deg_xlsx), str(deg_dir), title, *contrasts], timeout=3600)
+    rc, stdout, stderr = _run(["Rscript", script, str(deg_xlsx), str(deg_dir), title, *contrasts])
 
     output_file = deg_dir / f"BARPLOT.MULTIPLO - {title}.png"
     missing_output = rc == 0 and (not output_file.is_file() or output_file.stat().st_size == 0)
@@ -1686,7 +1646,7 @@ def _handle_results_venn(db: Session, job_id: str, user_id: int, payload: dict[s
         temp_path = temp.name
 
     try:
-        rc, stdout, stderr = _run(["python", script, temp_path, str(deg_xlsx), str(png_path), title], timeout=3600)
+        rc, stdout, stderr = _run(["python", script, temp_path, str(deg_xlsx), str(png_path), title])
     finally:
         try:
             os.unlink(temp_path)
@@ -1728,7 +1688,7 @@ def _handle_results_heatmap(db: Session, job_id: str, user_id: int, payload: dic
         temp_path = temp.name
 
     try:
-        rc, stdout, stderr = _run(["Rscript", script, temp_path, str(deg_xlsx), str(png_path), title], timeout=10800)
+        rc, stdout, stderr = _run(["Rscript", script, temp_path, str(deg_xlsx), str(png_path), title])
     finally:
         try:
             os.unlink(temp_path)

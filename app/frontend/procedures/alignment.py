@@ -637,7 +637,7 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
     """Download a genome and trigger indexing."""
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with httpx.AsyncClient(timeout=3600) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             await log_message(page, f"Iniciando download do genoma {accession}...")
             response = await client.post(f"http://bioinfo-container:8890/genomes/download", params={"accession": accession}, headers=headers)
             if response.status_code == 200:
@@ -652,7 +652,7 @@ async def index_genome(page, token, accession, organism_name, sjdb_overhang, thr
     """Index a genome."""
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with httpx.AsyncClient(timeout=3600) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             await log_message(page, f"Iniciando indexação do genoma {organism_name} ({accession})...")
             response = await client.post(
                 f"http://bioinfo-container:8890/genomes/index",

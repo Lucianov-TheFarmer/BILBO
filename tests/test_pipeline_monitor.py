@@ -108,11 +108,21 @@ class _FinishedQualityClient(_Client):
         return await super().get(url)
 
 
+class _StaleQualityClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/jobs/job-1"):
+            return _Response({"job_id": "job-1", "result": {
+                "progress_percent": 85,
+                "monitor_warning": {"code": "no_recent_events", "silent_seconds": 660},
+            }})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
-    async def _one_poll(self, client, tracked_run_id=None):
+    async def _one_poll(self, client, tracked_run_id=None, lang="pt"):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
         page = SimpleNamespace(container_terminal=terminal,
-                               session={"lang": "pt"}, update=lambda: None,
+                               session={"lang": lang}, update=lambda: None,
                                pipeline_monitor_run_id=tracked_run_id)
         refreshes = []
 
@@ -163,7 +173,7 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
         self.assertEqual(2, len(terminal.content.controls))
 
-    async def test_failed_quality_explains_timeout_in_terminal(self):
+    async def test_failed_quality_explains_failure_in_terminal(self):
         terminal, _ = await self._one_poll(_FinishedQualityClient("FAILED"), tracked_run_id="run-qc")
         self.assertIn("exit code 124", terminal.content.controls[0].value)
         self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
@@ -171,6 +181,15 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def test_completed_quality_reports_success_in_terminal(self):
         terminal, _ = await self._one_poll(_FinishedQualityClient("COMPLETED"), tracked_run_id="run-qc")
         self.assertIn("completed successfully", terminal.content.controls[0].value)
+
+    async def test_stalled_job_warning_is_translated(self):
+        for lang, expected in (("pt", "Sem atualização"), ("en", "No update"),
+                               ("es", "Sin actualizaciones")):
+            with self.subTest(lang=lang):
+                terminal, _ = await self._one_poll(_StaleQualityClient(), lang=lang)
+                card = terminal.content.controls[0]
+                detail = card.content.controls[3].controls[0].value
+                self.assertIn(expected, detail)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))

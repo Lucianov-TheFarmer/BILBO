@@ -1,4 +1,4 @@
-"""Exercise FastQC success, failure, and timeout without running FastQC itself."""
+"""Exercise FastQC success, failure, and long-running completion without FastQC."""
 
 import os
 import shutil
@@ -36,7 +36,11 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
             "  case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) input=\"$1\"; shift ;; esac\n"
             "done\n"
             "case \"$FASTQC_TEST_MODE\" in\n"
-            "  timeout) echo 'Approx 85% complete for test'; sleep 3 ;;\n"
+            "  slow) echo 'Approx 85% complete for test'; sleep 2; "
+            "stem=\"$(basename \"$input\")\"; stem=\"${stem%.gz}\"; "
+            "stem=\"${stem%.fastq}\"; "
+            "printf 'report' > \"$out/${stem}_fastqc.html\"; "
+            "printf 'report' > \"$out/${stem}_fastqc.zip\" ;;\n"
             "  error) echo 'Malformed FASTQ record' >&2; exit 7 ;;\n"
             "  success) stem=\"$(basename \"$input\")\"; stem=\"${stem%.gz}\"; "
             "stem=\"${stem%.fastq}\"; "
@@ -56,7 +60,6 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         env.update({
             "BILBO_TEST_BIN": shell_path(self.bin),
             "BILBO_USERS_ROOT": shell_path(self.root / "users"),
-            "BILBO_FASTQC_TIMEOUT": "1s",
             "FASTQC_TEST_MODE": mode,
         })
         script = ROOT / "app" / "backend" / "scripts" / (
@@ -68,11 +71,11 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         log_name = "S1_1_trimmed_quality_analysis_post_trim.log" if post_trim else f"{sample}_quality_analysis.log"
         return run, (log_dir / log_name).read_text(encoding="utf-8")
 
-    def test_initial_quality_reports_timeout_instead_of_silent_85_percent(self):
-        run, log = self.run_quality("timeout")
-        self.assertEqual(124, run.returncode)
+    def test_initial_quality_can_continue_after_silent_85_percent(self):
+        run, log = self.run_quality("slow")
+        self.assertEqual(0, run.returncode)
         self.assertIn("Approx 85%", log)
-        self.assertIn("time limit (exit code 124)", log)
+        self.assertIn("completed successfully", log)
 
     def test_initial_quality_keeps_fastqc_error(self):
         run, log = self.run_quality("error")
@@ -85,10 +88,11 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         self.assertEqual(0, run.returncode)
         self.assertIn("completed successfully", log)
 
-    def test_post_trim_reports_timeout(self):
-        run, log = self.run_quality("timeout", post_trim=True)
-        self.assertEqual(124, run.returncode)
-        self.assertIn("time limit (exit code 124)", log)
+    def test_post_trim_can_continue_after_silent_85_percent(self):
+        run, log = self.run_quality("slow", post_trim=True)
+        self.assertEqual(0, run.returncode)
+        self.assertIn("Approx 85%", log)
+        self.assertIn("completed successfully", log)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from .utils import log_message
+from .jobs import wait_with_progress
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -497,9 +498,9 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         max_retries = 1
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=86400.0) as client:  # Increased timeout to 120 seconds
+                async with httpx.AsyncClient(timeout=60) as client:
                     response = await client.post(
-                        "http://bioinfo-container:8890/trimmagem/",
+                        "http://bioinfo-container:8890/trimmagem/jobs",
                         data={
                             "selected_samples": json.dumps(selected_samples),
                             "threads": params["threads"],
@@ -517,8 +518,12 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                         headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                     )
 
-                    if response.status_code == 200:
-                        logger.info("Trimmagem concluída com sucesso!")
+                    if response.status_code == 202:
+                        job_ids = response.json().get("job_ids") or []
+                        await log_message(page, f"Trimmagem: {len(job_ids)} job(s) na fila.")
+                        await asyncio.gather(*(wait_with_progress(
+                            page, token, job_id, t("trim_start", page.session.get("lang") or "pt"))
+                            for job_id in job_ids))
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         await update_trimmagem_table(page, token)
                         page.update()
@@ -640,16 +645,18 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 async def processar_trimmagem(page, token, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
-        async with httpx.AsyncClient(timeout=86400.0) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             logger.info("Preparando os dados para a requisição de trimmagem.")
             form_data = {"selected_samples": json.dumps(selected_samples)}
             response = await client.post(
-                "http://bioinfo-container:8890/trimmagem/",
+                "http://bioinfo-container:8890/trimmagem/jobs",
                 data=form_data,
                 headers=headers,
             )
-            if response.status_code == 200:
-                logger.info("Trimmagem concluída com sucesso!")
+            if response.status_code == 202:
+                await asyncio.gather(*(wait_with_progress(
+                    page, token, job_id, t("trim_start", page.session.get("lang") or "pt"))
+                    for job_id in response.json().get("job_ids") or []))
                 await update_trimmagem_table(page, token)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                 page.update()

@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..core.settings import settings
 from ..db.models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
-from ..services.job_service import normalize_status
+from ..services.job_service import normalize_status, create_job
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager
 import subprocess
 import os
@@ -28,6 +30,77 @@ _FASTQ_PAIR_RE = re.compile(
     r"(?P<ext>\.(?:fastq|fq)(?:\.gz)?)$",
     re.IGNORECASE,
 )
+
+
+@router.post("/trimmagem/jobs", status_code=202)
+def enqueue_trimmagem_jobs(
+    selected_samples: str = Form(...),
+    threads: int = Form(1),
+    phred: str = Form("autodetect"),
+    illumina_clip: str = Form(...),
+    sliding_window: str = Form(...),
+    max_info: str = Form(...),
+    leading: int = Form(3),
+    trailing: int = Form(3),
+    crop: str = Form(None),
+    headcrop: str = Form(None),
+    minlen: int = Form(36),
+    avgqual: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run manual trimming through the same monitored worker as pipeline trimming."""
+    try:
+        names = json.loads(selected_samples)
+        adapter = json.loads(illumina_clip)
+        window = json.loads(sliding_window)
+        max_info_params = json.loads(max_info)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid trimming parameters") from exc
+    if not isinstance(names, list) or not names or threads < 1 or threads > 256:
+        raise HTTPException(status_code=400, detail="Select FASTQ files and a valid thread count")
+    if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:fastq|fq)(?:\.gz)?", x, re.I) for x in names):
+        raise HTTPException(status_code=400, detail="Invalid FASTQ filename")
+    grouped = {}
+    singles = []
+    for name in dict.fromkeys(names):
+        base, mate, _ = _parse_fastq_name(name)
+        if mate in (1, 2):
+            grouped.setdefault(base, {})[mate] = name
+        else:
+            singles.append(name)
+    samples = []
+    for base, mates in grouped.items():
+        if len(mates) == 2:
+            samples.append(base)
+        else:
+            singles.extend(mates.values())
+    samples.extend(singles)
+    root = os.path.join(settings.users_root, str(current_user.id), "samples")
+    for name in names:
+        base, _, _ = _parse_fastq_name(name)
+        if not os.path.isfile(os.path.join(root, base, name)) and not os.path.isfile(os.path.join(root, name)):
+            raise HTTPException(status_code=400, detail=f"FASTQ not found: {name}")
+    params = {"threads": threads, "phred": phred, "illumina_clip": adapter,
+              "sliding_window": window, "max_info": max_info_params,
+              "leading": leading, "trailing": trailing, "crop": crop,
+              "headcrop": headcrop, "minlen": minlen, "avgqual": avgqual}
+    jobs = []
+    for sample in samples:
+        job = create_job(db, "trimming", current_user.id, {"sample": sample, "params": params})
+        jobs.append(job.id)
+        stem = _strip_fastq_extension(sample)
+        output_names = ([f"{stem}_trimmed.fastq.gz"] if sample in singles else
+                        [f"{sample}_{mate}_trimmed.fastq.gz" for mate in (1, 2)])
+        for output in output_names:
+            row = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=3, name=output).first()
+            if row is None:
+                row = SampleStage(user_id=current_user.id, stage_id=3, name=output, sra_code=sample)
+                db.add(row)
+            row.status = "PENDING"
+        db.commit()
+        enqueue_pipeline_job(job.id)
+    return {"job_ids": jobs}
 
 
 def _strip_fastq_extension(name: str) -> str:

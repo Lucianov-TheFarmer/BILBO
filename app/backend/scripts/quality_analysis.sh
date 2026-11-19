@@ -24,12 +24,7 @@ fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "FastQC started at ${started_at}; input=${sra_code}" > "$log_file"
 set +e
-if command -v timeout >/dev/null 2>&1; then
-  timeout --signal=TERM --kill-after=30s "${BILBO_FASTQC_TIMEOUT:-170m}" \
-    fastqc -o "$output_dir" "$input_file" >> "$log_file" 2>&1
-else
-  fastqc -o "$output_dir" "$input_file" >> "$log_file" 2>&1
-fi
+fastqc -o "$output_dir" "$input_file" >> "$log_file" 2>&1
 exit_code=$?
 set -e
 
@@ -41,7 +36,6 @@ if [ "$exit_code" -eq 0 ] && { [ ! -s "$expected_zip" ] || [ ! -s "$expected_htm
 fi
 case "$exit_code" in
   0) echo "FastQC completed successfully at $(date -u +%Y-%m-%dT%H:%M:%SZ)." >> "$log_file" ;;
-  124) echo "FastQC exceeded the ${BILBO_FASTQC_TIMEOUT:-170m} time limit (exit code 124)." >> "$log_file" ;;
   137) echo "FastQC was killed (exit code 137); check container memory and worker logs." >> "$log_file" ;;
   *) echo "FastQC failed with exit code ${exit_code} at $(date -u +%Y-%m-%dT%H:%M:%SZ)." >> "$log_file" ;;
 esac

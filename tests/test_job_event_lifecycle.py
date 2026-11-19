@@ -34,13 +34,13 @@ class JobEventLifecycleTest(unittest.TestCase):
                 job = job_service.create_job(session, "quality_analysis", 7, {"samples": ["S1_1.fastq.gz"]})
                 job_service.set_job_running(session, job.id)
                 job_service.set_job_finished(session, job.id, PipelineStatus.FAILED,
-                                             error_message="FastQC exceeded 170m (exit code 124)")
+                                             error_message="FastQC exited with code 7: malformed FASTQ")
                 events = (Path(users_root) / "7" / "logs" / "jobs" /
                           f"{job.id}.progress.log").read_text(encoding="utf-8")
         self.assertIn("na fila", events)
         self.assertIn("iniciado", events)
         self.assertIn("FAILED após", events)
-        self.assertIn("exit code 124", events)
+        self.assertIn("malformed FASTQ", events)
 
 
 if __name__ == "__main__":

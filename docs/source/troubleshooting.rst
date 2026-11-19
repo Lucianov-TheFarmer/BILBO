@@ -17,9 +17,11 @@ Check the download log under ``app/backend/logs/<accession>_download.log``.
 FastQC Stops Before Finishing
 ----------------------------
 
-FastQC ``FAILED`` means the program did not finish; it does not mean the reads failed a quality metric. The per-file logs are under ``users/<user_id>/QC/<sample>/`` for initial quality and ``users/<user_id>/QC_PostTrim/<sample>/`` after trimming. The final log line records the exit code. Code 124 means the configured time limit expired; code 137 means the process received SIGKILL, which can indicate a memory limit or external termination. Other errors may identify malformed FASTQ records or missing files.
+FastQC ``FAILED`` means the program did not finish; it does not mean the reads failed a quality metric. The per-file logs are under ``users/<user_id>/QC/<sample>/`` for initial quality and ``users/<user_id>/QC_PostTrim/<sample>/`` after trimming. The final log line records the exit code. Code 137 means the process received SIGKILL, which can indicate a memory limit or external termination. Other errors may identify malformed FASTQ records or missing files.
 
-The default per-file limit is ``BILBO_FASTQC_TIMEOUT=170m`` in ``.env``. A user can increase it for slow disks or large libraries and restart the quality worker with ``docker compose up -d --no-deps quality-worker``. This setting does not allocate more CPUs or memory. The worker log is available with ``docker compose logs --tail=200 quality-worker``. Per-job event histories are stored at ``users/<user_id>/logs/jobs/<job_id>.progress.log`` and appear in the pipeline terminal.
+Analysis subprocesses have no wall-clock limit. The worker log is available with ``docker compose logs --tail=200 quality-worker``. Per-job event histories are stored at ``users/<user_id>/logs/jobs/<job_id>.progress.log`` and appear in the terminal for pipeline and direct jobs.
+
+If a running FastQC process produces no new log output for five minutes, the terminal warns that the tool and worker need inspection. For other stages, the warning tracks job events. This warning alone does not mark the job as failed. The scheduler checks Celery's recorded task state once a minute and marks the job as failed or canceled only when Celery confirms that outcome. Check ``docker compose logs --tail=200 quality-worker`` for worker termination or memory errors.
 
 Trimming Produces Too Few Reads
 -------------------------------

@@ -46,7 +46,6 @@ Edit `BILBO/.env` before startup, or edit it later and run `python3 init.py --no
 | `BILBO_HOST_PORT` | Port used to open BILBO in the browser | `8890` |
 | `BILBO_BIND_ADDRESS` | Host network interface | `127.0.0.1` |
 | `BILBO_PUBLIC_BASE_URL` | Public origin when using a domain or HTTPS proxy | Empty; uses `http://localhost:BILBO_HOST_PORT` |
-| `BILBO_FASTQC_TIMEOUT` | Maximum time for each initial or post-trim FastQC file | `170m` |
 | `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `QDRANT_HOST_PORT`, `QDRANT_GRPC_HOST_PORT`, `OLLAMA_HOST_PORT` | External ports for supporting services | See `.env.example` |
 | `SECRET_KEY`, `POSTGRES_PASSWORD` | Application secrets | Generated locally |
 | `GOOGLE_DRIVE_*` | Credentials for the BILBO OAuth project | Empty; Drive import disabled |

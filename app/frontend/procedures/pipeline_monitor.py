@@ -137,6 +137,11 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                         label += f" · {percent:.0f}%"
                     if phase:
                         label += f" · {phase[:100]}"
+                    warning = result.get("monitor_warning") or {}
+                    if warning.get("code") in ("no_recent_events", "no_recent_tool_output"):
+                        key = "pipeline_monitor_tool_stale" if warning["code"] == "no_recent_tool_output" else "pipeline_monitor_stale"
+                        label += " · " + t(key, lang).format(
+                            minutes=max(1, int(warning.get("silent_seconds", 0)) // 60))
                     if step.get("error_message"):
                         label += f" · {step['error_message'][:150]}"
                     details.controls.append(ft.Text(label, size=11))
