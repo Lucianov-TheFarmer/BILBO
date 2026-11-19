@@ -154,6 +154,7 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     return {
         "progress_percent": percent,
         "progress_phase": phase,
+        "progress_message": progress_message,
         "progress_source": "samples_download_log",
     }
 

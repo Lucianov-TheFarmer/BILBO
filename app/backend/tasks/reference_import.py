@@ -12,7 +12,7 @@ from ..core.settings import settings
 from ..db.database import SessionLocal
 from ..db.models import PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
-from ..services.job_service import set_job_finished, set_job_running
+from ..services.job_service import append_job_event, set_job_finished, set_job_running
 from ..services.reference_import import (
     download_public_file, gff3_to_star_gtf, materialize,
     validate_annotation, validate_fasta, validate_protein_fasta,
@@ -42,6 +42,7 @@ def import_reference(job_id: str) -> None:
         db.commit()
         source = payload["source"]
         if source["type"] == "url":
+            append_job_event(job.user_id, job_id, "Referência: iniciando download dos arquivos.")
             incoming.mkdir(parents=True, exist_ok=False)
             local = {}
             for kind in ("fasta", "annotation", "protein"):
@@ -54,6 +55,7 @@ def import_reference(job_id: str) -> None:
                     _progress(db, job, "download_" + kind, written, total)
                 download_public_file(url, local[kind], kind, progress)
         elif source["type"] == "upload":
+            append_job_event(job.user_id, job_id, "Referência: usando arquivos enviados.")
             incoming = Path(source["directory"])
             if incoming.resolve().parent != (root / "_incoming").resolve():
                 raise ValueError("Invalid upload staging path")
@@ -65,6 +67,7 @@ def import_reference(job_id: str) -> None:
             raise ValueError("Unknown reference source")
 
         _progress(db, job, "validating", 0, 0)
+        append_job_event(job.user_id, job_id, "Referência: validando FASTA e anotação.")
         final.mkdir(parents=True, exist_ok=False)
         materialize(local["fasta"], final / "genomic.fa", "fasta")
         unpacked_annotation = final / "annotation.unpacked"
@@ -81,6 +84,7 @@ def import_reference(job_id: str) -> None:
         if annotation_ext != ".gtf":
             gff3_to_star_gtf(annotation_path, final / "genomic.gtf")
         _progress(db, job, "indexing", 0, 0)
+        append_job_event(job.user_id, job_id, "Referência: construindo índice STAR.")
         command = ["bash", "/app/backend/scripts/index_genome_star.sh", str(final),
                    str(payload["sjdb_overhang"]), str(payload["threads"])]
         run = subprocess.run(command, capture_output=True, text=True, timeout=172800)
@@ -109,6 +113,9 @@ def import_reference(job_id: str) -> None:
 
 
 def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> None:
+    previous_phase = (job.result or {}).get("phase")
+    if phase != previous_phase and phase.startswith("download_"):
+        append_job_event(job.user_id, job.id, f"Referência: baixando {phase.removeprefix('download_')}.")
     if total and phase == "download_fasta":
         percent = round(35 * written / total, 1)
     elif total and phase == "download_annotation":

@@ -52,6 +52,19 @@ def _sample_sra_code(name: str) -> str:
     return basename
 
 
+def _trim_failure_detail(sample: str, stderr: str, exit_code: int, user_id: int) -> str:
+    path = f"/users/{user_id}/logs/trimming/{os.path.basename(sample)}.log"
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 2500))
+            log_tail = stream.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        log_tail = ""
+    detail = (log_tail or stderr.strip() or "Sem mensagem adicional no log.")[-1200:]
+    return f"Trimmomatic falhou para {sample} (código {exit_code}): {detail}"
+
+
 @router.post("/trimmagem/")
 def start_trimmagem(
     selected_samples: str = Form(...),  # Recebe os samples selecionados como string JSON
@@ -222,10 +235,7 @@ def start_trimmagem(
 
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        f"Error in trimmagem for {base_name}. "
-                        f"Consulte /tmp/{base_name}_trimmagem.log"
-                    ),
+                    detail=_trim_failure_detail(base_name, stderr, process.returncode, user_id),
                 )
 
             # Obter o sample_id original
@@ -325,10 +335,7 @@ def start_trimmagem(
 
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        f"Error in trimmagem for {sample}. "
-                        f"Consulte o log em /tmp."
-                    ),
+                    detail=_trim_failure_detail(sample, stderr, process.returncode, user_id),
                 )
 
             # Obter o sample_id original

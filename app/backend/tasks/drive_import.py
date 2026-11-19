@@ -15,7 +15,7 @@ from ..db.database import SessionLocal
 from ..db.models import PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
 from ..services.drive_service import DRIVE_API, access_token, file_metadata, redis_client
-from ..services.job_service import set_job_finished, set_job_running
+from ..services.job_service import append_job_event, set_job_finished, set_job_running
 from ..utils_paths import safe_resolve_user_path
 from .celery_app import celery_app
 
@@ -96,7 +96,9 @@ def import_drive_pair(job_id: str, session_id: str):
         outputs = []
         for file in files:
             target = user_dir / f"{base}_{file['mate']}.fastq.gz"
+            append_job_event(job.user_id, job_id, f"Drive: iniciando {target.name} ({file['size']} bytes).")
             _download(session_id, file, target, job_id)
+            append_job_event(job.user_id, job_id, f"Drive: {target.name} baixado e verificado.")
             outputs.append((file, target))
         for file, target in outputs:
             db.add(SampleStage(

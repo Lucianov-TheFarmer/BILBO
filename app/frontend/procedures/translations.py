@@ -1052,16 +1052,22 @@ for _language, _entries in _ADDITIONAL_UI.items():
 _PIPELINE_MONITOR = {
     "pt": {
         "pipeline_progress_title": "Pipeline",
+        "quality_log_missing": "O log desta análise não foi encontrado.",
+        "analysis_view_log": "Visualizar log",
         "pipeline_progress_summary": "{status} · {done}/{total} etapas concluídas · {running} em execução · {queued} na fila · {waiting} aguardando · {failed} falharam",
         "pipeline_progress_unavailable": "Não foi possível atualizar o progresso: {error}",
     },
     "en": {
         "pipeline_progress_title": "Pipeline",
+        "quality_log_missing": "The log for this analysis was not found.",
+        "analysis_view_log": "View log",
         "pipeline_progress_summary": "{status} · {done}/{total} steps done · {running} running · {queued} queued · {waiting} waiting · {failed} failed",
         "pipeline_progress_unavailable": "Could not update progress: {error}",
     },
     "es": {
         "pipeline_progress_title": "Pipeline",
+        "quality_log_missing": "No se encontró el registro de este análisis.",
+        "analysis_view_log": "Ver registro",
         "pipeline_progress_summary": "{status} · {done}/{total} etapas completadas · {running} en ejecución · {queued} en cola · {waiting} esperando · {failed} fallidas",
         "pipeline_progress_unavailable": "No se pudo actualizar el progreso: {error}",
     },

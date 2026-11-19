@@ -250,6 +250,12 @@ def _dependencies(run: PipelineRun, step: PipelineStep) -> list[str]:
     return []
 
 
+def _set_waiting_reason(db, step: PipelineStep, reason: str) -> None:
+    if step.error_message != reason:
+        step.error_message = reason
+        db.commit()
+
+
 def _advance_run(db, run: PipelineRun) -> None:
     samples = {item["name"]: item for item in run.config["samples"]}
     steps = {(step.sample, step.stage): step for step in run.steps}
@@ -283,6 +289,7 @@ def _advance_run(db, run: PipelineRun) -> None:
             continue
         if step.stage != "deg" and _ready(db, run.user_id, step.sample, step.stage, paired):
             step.status = "SKIPPED"
+            step.error_message = None
             step.finished_at = datetime.now(timezone.utc)
             db.commit()
             continue
@@ -290,10 +297,13 @@ def _advance_run(db, run: PipelineRun) -> None:
         dependency_steps = ([steps.get((name, deps[0])) for name in samples] if step.stage == "deg" and deps
                             else [steps.get((step.sample, name)) for name in deps])
         if any(dep and dep.status in ("FAILED", "BLOCKED", "CANCELED") for dep in dependency_steps):
-            step.status, step.error_message = "BLOCKED", "Required previous step failed"
+            failed = [dep.stage for dep in dependency_steps if dep and dep.status in ("FAILED", "BLOCKED", "CANCELED")]
+            step.status, step.error_message = "BLOCKED", f"Etapa anterior falhou: {', '.join(failed)}"
             db.commit()
             continue
         if any(dep and dep.status not in ("COMPLETED", "SKIPPED") for dep in dependency_steps):
+            waiting = [dep.stage for dep in dependency_steps if dep and dep.status not in ("COMPLETED", "SKIPPED")]
+            _set_waiting_reason(db, step, f"Aguardando etapa anterior: {', '.join(waiting[:4])}")
             continue
         required_stage = {"qc_raw": "input", "trimming": "input", "qc_trim": "trimming",
                           "alignment": "trimming", "quantification": "alignment",
@@ -302,17 +312,24 @@ def _advance_run(db, run: PipelineRun) -> None:
             targets = samples if step.stage == "deg" else {step.sample: samples[step.sample]}
             if any(not _ready(db, run.user_id, name, required_stage, spec["paired"])
                    for name, spec in targets.items()):
+                _set_waiting_reason(db, step, f"Aguardando saída verificada de {required_stage}.")
                 continue
         if step.stage in ("alignment", "quantification", "deg") and not _reference_ready(
             db, run.user_id, run.config["genome"], step.stage):
+            _set_waiting_reason(db, step, f"Aguardando genoma de referência {run.config['genome']}.")
             continue
         if step.stage == "input" and samples[step.sample]["source"] != "sra":
+            _set_waiting_reason(db, step, "Aguardando importação pelo Drive ou upload.")
             continue  # Drive and uploads are initiated in their existing dialogs.
         if step.stage in ("alignment", "trimming", "deg"):
             requested = int((run.config.get("deg", {}).get("diamond_threads", 8)
                              if step.stage == "deg" else
                              run.config[step.stage].get("threads", 1)))
-            if not _cpu_available(db, requested) or shutil.disk_usage(settings.users_root).free < 20 * 1024**3:
+            if not _cpu_available(db, requested):
+                _set_waiting_reason(db, step, f"Aguardando {requested} CPUs disponíveis.")
+                continue
+            if shutil.disk_usage(settings.users_root).free < 20 * 1024**3:
+                _set_waiting_reason(db, step, "Espaço livre abaixo de 20 GiB.")
                 continue
         job_stage = {"input": "samples_download", "qc_raw": "quality_analysis",
                      "qc_trim": "quality_analysis_post_trim"}.get(step.stage, step.stage)
@@ -325,6 +342,7 @@ def _advance_run(db, run: PipelineRun) -> None:
             continue
         step.job_id = job.id
         step.status = job.status
+        step.error_message = None
         step.started_at = datetime.now(timezone.utc)
         db.commit()
     statuses = {step.status for step in run.steps}

@@ -76,7 +76,7 @@ async def update_tabela_quantificacao(page, token, user_id):
                             # Fallback if no running loop: run in a new loop
                             asyncio.run(view_quantification_log_handler(page, token, s, user_id))
 
-                    log_button_disabled = sample["status"].lower() != "completed"
+                    log_button_disabled = sample["status"].lower() == "pending"
 
                     tabela_quantificacao.rows.append(
                         ft.DataRow(
@@ -87,7 +87,7 @@ async def update_tabela_quantificacao(page, token, user_id):
                                 ft.DataCell(
                                     ft.IconButton(
                                         icon="description",
-                                        tooltip="Visualizar log",
+                                        tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
                                         on_click=view_log_handler if not log_button_disabled else None,
                                         disabled=log_button_disabled,
                                     )

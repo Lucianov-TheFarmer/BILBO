@@ -4,6 +4,7 @@ set -euo pipefail
 
 sra_code="$1"
 user_id="$2"
+users_root="${BILBO_USERS_ROOT:-/users}"
 
 sample_file="$(basename "$sra_code")"
 
@@ -15,8 +16,8 @@ sample_stem="${sample_stem%.fq}"
 without_trimmed="${sample_stem%_trimmed}"
 sra_base="$(echo "$without_trimmed" | sed -E 's/(_R?[12])$//')"
 
-output_dir="/users/${user_id}/QC_PostTrim/${sra_base}"
-input_file="/users/${user_id}/trimmed/${sra_code}"
+output_dir="${users_root}/${user_id}/QC_PostTrim/${sra_base}"
+input_file="${users_root}/${user_id}/trimmed/${sra_code}"
 log_file="${output_dir}/${sample_stem}_quality_analysis_post_trim.log"
 
 mkdir -p "$output_dir"
@@ -26,8 +27,9 @@ if [ ! -f "$input_file" ]; then
     exit 2
 fi
 
+set +e
 if command -v timeout >/dev/null 2>&1; then
-    timeout 170m fastqc \
+    timeout --signal=TERM --kill-after=30s "${BILBO_FASTQC_TIMEOUT:-170m}" fastqc \
         -t 4 \
         -o "$output_dir" \
         "$input_file" \
@@ -41,6 +43,7 @@ else
 fi
 
 exit_code=$?
+set -e
 
 expected_zip="$output_dir/${sample_stem}_fastqc.zip"
 expected_html="$output_dir/${sample_stem}_fastqc.html"
@@ -53,8 +56,15 @@ if [ "$exit_code" -eq 0 ] \
     exit 0
 fi
 
-echo \
-    "Post-trim QC failed or expected outputs missing (exit_code=${exit_code})." \
-    >> "$log_file"
+if [ "$exit_code" -eq 0 ]; then
+    echo "Post-trim FastQC exited successfully but its HTML or ZIP report is missing." >> "$log_file"
+    exit_code=3
+elif [ "$exit_code" -eq 124 ]; then
+    echo "Post-trim FastQC exceeded the ${BILBO_FASTQC_TIMEOUT:-170m} time limit (exit code 124)." >> "$log_file"
+elif [ "$exit_code" -eq 137 ]; then
+    echo "Post-trim FastQC was killed (exit code 137); check container memory and worker logs." >> "$log_file"
+else
+    echo "Post-trim FastQC failed with exit code ${exit_code}." >> "$log_file"
+fi
 
-exit "${exit_code:-1}"
+exit "$exit_code"

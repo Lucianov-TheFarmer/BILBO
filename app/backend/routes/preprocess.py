@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from ..db.database import get_db
+from ..db.database import SessionLocal, get_db
 from ..db.models import SampleStage, User
+from ..schemas.common import PipelineStatus
+from ..services.job_service import create_job, set_job_finished, set_job_running
 from ..utils import get_current_user, manager
 import os
 import asyncio
 import subprocess
+from pathlib import Path
 
 router = APIRouter()
 
@@ -131,14 +134,17 @@ async def start_preprocess(
         os.path.join(os.path.dirname(__file__), "../scripts/preprocess.R")
     )
 
+    job = create_job(db, "preprocess", user_id, {"contrast_ids": contrast_ids})
+    log_path = Path(base_dir) / f"preprocess_{job.id}.log"
     try:
-        process = await asyncio.create_subprocess_exec(
-            "Rscript",
-            script_path,
-            str(user_id),
-            cwd=base_dir,
-        )
+        with log_path.open("wb") as log_stream:
+            process = await asyncio.create_subprocess_exec(
+                "Rscript", script_path, str(user_id), cwd=base_dir,
+                stdout=log_stream, stderr=subprocess.STDOUT,
+            )
+        set_job_running(db, job.id)
     except Exception as e:
+        set_job_finished(db, job.id, PipelineStatus.FAILED, error_message=str(e))
         raise HTTPException(
             status_code=500,
             detail=f"Erro ao iniciar pré-processamento: {e}",
@@ -146,11 +152,23 @@ async def start_preprocess(
 
     async def wait_and_notify():
         rc = await process.wait()
+        try:
+            log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+        except OSError:
+            log_tail = ""
+        detail = log_tail.strip() or f"Rscript terminou com código {rc}."
+        with SessionLocal() as job_db:
+            set_job_finished(
+                job_db, job.id,
+                PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
+                result={"exit_code": rc, "log_tail": log_tail},
+                error_message=None if rc == 0 else f"Pré-processamento falhou (código {rc}): {detail[-1200:]}",
+            )
 
         if rc == 0:
             message = "Pré-processamento finalizado com sucesso!"
         else:
-            message = f"Pré-processamento falhou (código {rc})."
+            message = f"Pré-processamento falhou (código {rc}): {detail[-500:]}"
 
         try:
             await manager.broadcast(message, user_id=user_id)
@@ -163,4 +181,5 @@ async def start_preprocess(
         "status": "success",
         "message": "Pré-processamento iniciado com sucesso.",
         "pid": process.pid,
+        "job_id": job.id,
     }

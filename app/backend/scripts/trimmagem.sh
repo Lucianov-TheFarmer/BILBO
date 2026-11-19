@@ -17,10 +17,11 @@ avgqual="${12}"
 base_path="${13}"
 trimmed_path="${14}"
 
-log_file="/tmp/${sra_code}_trimmagem.log"
+log_dir="$(dirname "$trimmed_path")/logs/trimming"
+log_file="${log_dir}/${sra_code}.log"
 adapters_dir="/app/backend/scripts/adapters"
 
-mkdir -p "$trimmed_path"
+mkdir -p "$trimmed_path" "$log_dir"
 : > "$log_file"
 
 log() {

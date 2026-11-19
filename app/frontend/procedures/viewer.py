@@ -4,6 +4,7 @@ import httpx
 import logging
 import zipfile
 import os
+from pathlib import Path
 from io import BytesIO
 import base64  # New import
 import re  # Importar regex
@@ -113,6 +114,15 @@ async def display_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls = [ft.Container(expand=True, content=ft.Column([
+                ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+                ft.ListView(controls=[log_control], expand=True),
+            ], expand=True))]
+            page.update()
+            return
+
         # Prefer the explicit preview container if present
         for control in page.controls:
             if isinstance(control, ft.Row):
@@ -167,6 +177,15 @@ async def display_quantification_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls = [ft.Container(expand=True, content=ft.Column([
+                ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+                ft.ListView(controls=[log_control], expand=True),
+            ], expand=True))]
+            page.update()
+            return
+
 
         # Prefer explicit preview container
         for control in page.controls:
@@ -214,7 +233,10 @@ async def display_quantification_log(page, log_content):
 
 async def view_alignment_log(page, token, sample_name, user_id):
     """Displays the alignment log in the viewer."""
-    log_path = f"../users/{user_id}/alignment/{sample_name.replace('.bam', '')}/{sample_name.replace('.bam', 'Log.final.out')}"
+    base_name = sample_name.removesuffix(".bam")
+    log_dir = f"../users/{user_id}/alignment/{base_name}"
+    custom_log = f"{log_dir}/{base_name}_custom.log"
+    log_path = custom_log if os.path.isfile(custom_log) else f"{log_dir}/{base_name}Log.final.out"
     try:
         if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8") as log_file:
@@ -228,8 +250,33 @@ async def view_alignment_log(page, token, sample_name, user_id):
         logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
         await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
 
+
+async def view_quality_log(page, sample_name, user_id, *, post_trim=False):
+    stem = sample_name.removesuffix(".html")
+    if post_trim:
+        source_stem = stem.removesuffix("_post_trim") + "_trimmed"
+        base = re.sub(r"_R?[12]$", "", stem.removesuffix("_post_trim"))
+        directory = Path("..") / "users" / str(user_id) / "QC_PostTrim" / base
+        candidates = [directory / f"{source_stem}_quality_analysis_post_trim.log"]
+    else:
+        base = re.sub(r"_R?[12]$", "", stem)
+        directory = Path("..") / "users" / str(user_id) / "QC" / base
+        candidates = ([path for path in directory.iterdir() if path.is_file() and
+                       path.name.startswith(stem + ".") and path.name.endswith("_quality_analysis.log")]
+                      if directory.is_dir() else [])
+    log_path = next((path for path in candidates if path.is_file()), None)
+    if log_path is None:
+        await display_log(page, t("quality_log_missing", page.session.get("lang") or "pt"))
+        return
+    with log_path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - 65536))
+        content = stream.read().decode("utf-8", errors="replace")
+    await display_log(page, content)
+
 async def view_quantification_log(page, token, sample_name, user_id):
-    log_path = f"../users/{user_id}/quantification/{sample_name}"
+    base_name = sample_name.removesuffix(".txt")
+    log_path = f"../users/{user_id}/logs/quantification/{base_name}.bam.log"
     try:
         if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8") as log_file:

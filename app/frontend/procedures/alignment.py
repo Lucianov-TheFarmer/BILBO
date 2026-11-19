@@ -89,7 +89,7 @@ async def update_tabela_alinhamento(page, token, user_id):
                         asyncio.run(view_alignment_log(page, token, s, user_id))
 
                     sample_status = str(sample.get("status") or "").strip().lower()
-                    log_button_disabled = sample_status != "completed"
+                    log_button_disabled = sample_status == "pending"
 
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
@@ -100,7 +100,7 @@ async def update_tabela_alinhamento(page, token, user_id):
                                 ft.DataCell(
                                     ft.IconButton(
                                         icon="description",
-                                        tooltip="Visualizar log",
+                                        tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
                                         on_click=view_log_handler if not log_button_disabled else None,
                                         disabled=log_button_disabled,
                                     )

@@ -15,10 +15,11 @@ genome_param="${5:-}"
 
 alignment_dir="/users/${user_id}/alignment/${sample_name%.bam}"
 output_dir="/users/${user_id}/quantification"
-log_file="/tmp/${sample_name}_quantification.log"
+log_dir="/users/${user_id}/logs/quantification"
+log_file="${log_dir}/${sample_name}.log"
 ref_parent="/users/ref_genomes"
 
-mkdir -p "$output_dir"
+mkdir -p "$output_dir" "$log_dir"
 : > "$log_file"
 
 log() {

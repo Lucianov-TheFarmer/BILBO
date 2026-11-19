@@ -6,7 +6,7 @@ import logging
 from .jobs import wait_with_progress
 from .translations import t
 from .utils import log_message
-from .viewer import create_dropdown_menu, display_graph, close_figure_button
+from .viewer import create_dropdown_menu, display_graph, close_figure_button, view_quality_log
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +50,9 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                         launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
+                    async def view_log_handler(e, s=sample["name"]):
+                        await view_quality_log(page, s, user_id, post_trim=True)
+
                     # Only show view/download when status is Completed
                     actions = []
                     try:
@@ -59,6 +62,9 @@ async def update_tabela_amostras_pos_trimmagem(page, token, container_menu_direi
                     if status == "completed":
                         actions.append(ft.IconButton(icon="visibility", on_click=view_sample_details_handler))
                         actions.append(ft.IconButton(icon="download", on_click=download_handler))
+                    if status in ("running", "completed", "failed"):
+                        actions.append(ft.IconButton(icon="description", on_click=view_log_handler,
+                                                     tooltip=t("analysis_view_log", page.session.get("lang") or "pt")))
 
                     tabela_amostras_pos_trimmagem.rows.append(
                         ft.DataRow(

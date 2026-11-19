@@ -449,6 +449,7 @@ def index_genome(
     current_user: User = Depends(get_current_user),
 ):
     """Index a genome using STAR."""
+    initial_stage = None
     try:
         genome_dir = f"../users/ref_genomes/{accession}"
 
@@ -501,7 +502,10 @@ def index_genome(
 
         if process.returncode != 0:
             logger.error(f"Erro ao indexar genoma com STAR: {stderr.strip()}")
-            raise HTTPException(status_code=500, detail=f"Erro ao indexar genoma com STAR: {stderr.strip()}")
+            log_tail = tail_text_file("/app/backend/logs/index_genome_star.log")
+            detail = log_tail or stderr.strip() or stdout.strip() or "Nenhuma mensagem adicional disponível."
+            raise HTTPException(status_code=500, detail=(
+                f"Indexação STAR falhou para {accession} (código {process.returncode}): {detail[-2000:]}"))
 
         genome_size = calculate_directory_size(genome_dir)
         genome_stage = db.query(SampleStage).filter(
@@ -515,8 +519,16 @@ def index_genome(
             db.commit()
 
         return {"message": f"Genoma {genome_name} indexado com sucesso!"}
+    except HTTPException:
+        if initial_stage is not None:
+            initial_stage.status = "FAILED"
+            db.commit()
+        raise
     except Exception as e:
         logger.error(f"Erro ao indexar genoma: {e}")
+        if initial_stage is not None:
+            initial_stage.status = "FAILED"
+            db.commit()
         raise HTTPException(status_code=500, detail=f"Erro ao indexar genoma: {e}")
 
 @router.delete("/genomes/{accession}")

@@ -14,6 +14,13 @@ Possible causes:
 
 Check the download log under ``app/backend/logs/<accession>_download.log``.
 
+FastQC Stops Before Finishing
+----------------------------
+
+FastQC ``FAILED`` means the program did not finish; it does not mean the reads failed a quality metric. The per-file logs are under ``users/<user_id>/QC/<sample>/`` for initial quality and ``users/<user_id>/QC_PostTrim/<sample>/`` after trimming. The final log line records the exit code. Code 124 means the configured time limit expired; code 137 means the process received SIGKILL, which can indicate a memory limit or external termination. Other errors may identify malformed FASTQ records or missing files.
+
+The default per-file limit is ``BILBO_FASTQC_TIMEOUT=170m`` in ``.env``. A user can increase it for slow disks or large libraries and restart the quality worker with ``docker compose up -d --no-deps quality-worker``. This setting does not allocate more CPUs or memory. The worker log is available with ``docker compose logs --tail=200 quality-worker``. Per-job event histories are stored at ``users/<user_id>/logs/jobs/<job_id>.progress.log`` and appear in the pipeline terminal.
+
 Trimming Produces Too Few Reads
 -------------------------------
 
@@ -25,6 +32,7 @@ Possible causes:
 * Incorrect Phred encoding.
 
 Compare pre- and post-trim FastQC reports and examine read-length distributions.
+Trimmomatic's per-sample log is under ``users/<user_id>/logs/trimming/<sample>.log``.
 
 STAR Indexing Fails
 -------------------
@@ -63,7 +71,7 @@ Possible causes:
 * Requested ID attribute is absent and no fallback can be found.
 * Strandedness mismatch causes unexpectedly low assignment, even if the command completes.
 
-Open the quantification log and confirm the actual feature type and ID attribute used after fallback.
+Open ``users/<user_id>/logs/quantification/<sample>.bam.log`` (or the log icon in the quantification table) and confirm the actual feature type and ID attribute used after fallback. The icon is available for failed jobs too.
 
 DEG Analysis Produces No Significant Genes
 ------------------------------------------

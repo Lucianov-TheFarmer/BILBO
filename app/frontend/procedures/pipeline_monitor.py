@@ -54,6 +54,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
     previous_llm_state = None
     deg_cursors = {}
     deg_format_states = {}
+    job_event_cursors = {}
 
     while getattr(page, "container_terminal", None) is terminal_container:
         lang = page.session.get("lang") or "pt"
@@ -71,9 +72,11 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 if run:
                     steps = run["steps"]
                     active = [step for step in steps if step["status"] in ACTIVE]
+                    observed = [step for step in steps if step["status"] in ACTIVE or step["status"] == "FAILED"][:12]
+                    observed += [step for step in steps if step["status"] == "COMPLETED"][-4:]
                     jobs = await asyncio.gather(*[
                         client.get(f"{API}/jobs/{step['job_id']}", headers=headers)
-                        for step in active if step.get("job_id")
+                        for step in observed if step.get("job_id")
                     ], return_exceptions=True)
                     job_details = {job.json()["job_id"]: job.json()
                                    for job in jobs if getattr(job, "status_code", None) == 200}
@@ -107,6 +110,8 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 visible = [step for step in steps if step["status"] in ACTIVE]
                 if not visible:
                     visible = [step for step in steps if step["status"] == "FAILED"][:4]
+                if not visible and status == "COMPLETED":
+                    visible = [step for step in steps if step["status"] == "COMPLETED"][-4:]
                 if not visible and status == "RUNNING":
                     visible = [step for step in steps if step["status"] == "WAITING"][:4]
                 for step in visible[:8]:
@@ -119,9 +124,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     if result.get("progress_source") == "rag_checkpoint":
                         phase = t("pipeline_llm_rag_progress", lang).format(
                             done=result["progress_done"], total=result["progress_total"])
-                    if step["stage"] in ("clustering", "llm") and result.get("progress_log"):
-                        phase = str(result["progress_log"]).splitlines()[-1]
-                    if step["stage"] == "deg" and result.get("progress_log"):
+                    if result.get("progress_log"):
                         phase = str(result["progress_log"]).splitlines()[-1]
                         if "] " in phase:
                             phase = phase.split("] ", 1)[1]
@@ -137,6 +140,21 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     if step.get("error_message"):
                         label += f" · {step['error_message'][:150]}"
                     details.controls.append(ft.Text(label, size=11))
+                for job_id, job in job_details.items():
+                    if any(step.get("job_id") == job_id and step["stage"] == "deg" for step in steps):
+                        continue  # DEG already streams the same journal through its detailed formatter.
+                    lines = str((job.get("result") or {}).get("progress_log") or "").splitlines()
+                    if not lines:
+                        continue
+                    previous = job_event_cursors.get(job_id)
+                    if previous in lines:
+                        fresh = lines[lines.index(previous) + 1:]
+                    else:
+                        fresh = lines[-3:]
+                    for line in fresh[-5:]:
+                        message = line.split("] ", 1)[-1].removeprefix("PROGRESS: ")
+                        await log_message(page, message, container_terminal=terminal_container)
+                    job_event_cursors[job_id] = lines[-1]
                 for step in steps:
                     if step["stage"] != "deg" or not step.get("job_id"):
                         continue

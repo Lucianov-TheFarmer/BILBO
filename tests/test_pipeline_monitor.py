@@ -89,6 +89,25 @@ class _DegClient(_Client):
         return await super().get(url)
 
 
+class _FinishedQualityClient(_Client):
+    def __init__(self, status):
+        self.status = status
+
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "run-qc", "status": self.status,
+                               "config": {"name": "Quality test"},
+                               "steps": [{"id": "step-qc", "stage": "qc_raw", "sample": "S1",
+                                          "status": self.status, "job_id": "job-qc",
+                                          "error_message": "FastQC exceeded 170m" if self.status == "FAILED" else None}]}])
+        if url.endswith("/jobs/job-qc"):
+            event = ("FastQC exceeded the 170m time limit (exit code 124)." if self.status == "FAILED"
+                     else "FastQC completed successfully.")
+            return _Response({"job_id": "job-qc", "status": self.status,
+                              "result": {"progress_log": f"[now] PROGRESS: {event}"}})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def _one_poll(self, client, tracked_run_id=None):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
@@ -143,6 +162,15 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("DEG — anotação UniProt iniciada.", terminal.content.controls[0].value)
         self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
         self.assertEqual(2, len(terminal.content.controls))
+
+    async def test_failed_quality_explains_timeout_in_terminal(self):
+        terminal, _ = await self._one_poll(_FinishedQualityClient("FAILED"), tracked_run_id="run-qc")
+        self.assertIn("exit code 124", terminal.content.controls[0].value)
+        self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
+
+    async def test_completed_quality_reports_success_in_terminal(self):
+        terminal, _ = await self._one_poll(_FinishedQualityClient("COMPLETED"), tracked_run_id="run-qc")
+        self.assertIn("completed successfully", terminal.content.controls[0].value)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))
