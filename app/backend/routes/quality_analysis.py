@@ -3,7 +3,7 @@ import shutil
 
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core.settings import settings
 from ..db.database import get_db
@@ -20,6 +20,7 @@ router = APIRouter()
 
 class QualityAnalysisRequest(BaseModel):
     samples: list[str]
+    memory_mb: int = Field(default=512, ge=256, le=16384)
 
 @router.post("/quality_analysis/", status_code=status.HTTP_202_ACCEPTED)  # Iniciar análise de qualidade
 def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -68,7 +69,8 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
 
     job_ids = []
     for name in to_process:
-        job = create_job(db, stage="quality_analysis", user_id=user_id, payload={"samples": [name]})
+        job = create_job(db, stage="quality_analysis", user_id=user_id,
+                         payload={"samples": [name], "memory_mb": request.memory_mb})
         audit(db, action="quality_analysis_enqueued", user_id=user_id, stage="quality_analysis",
               job_id=job.id, metadata_json={"samples": [name]})
         enqueue_pipeline_job(job.id, queue="quality")

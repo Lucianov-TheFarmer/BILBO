@@ -220,10 +220,47 @@ def _active_tool_log(job: PipelineJob) -> Optional[Path]:
     if not path or not re.fullmatch(r'[A-Za-z0-9_.-]+', sample if job.stage != 'samples_download' else str(payload.get('sra_code') or '')):
         return None
     try:
-        started = job.started_at.timestamp()
+        started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+        started = started_at.timestamp()
         return path if path.is_file() and path.stat().st_mtime >= started - 2 else None
     except OSError:
         return None
+
+
+def _active_output_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Measure growing outputs without treating their size as a completion percentage."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    payload = job.payload or {}
+    root = Path('/users') / str(job.user_id)
+    sample = str(payload.get('sample') or payload.get('sra_code') or '')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,180}', sample) or '..' in sample:
+        return None
+    if job.stage == 'trimming':
+        stem = re.sub(r'\.(?:fastq|fq)(?:\.gz)?$', '', sample)
+        paths = [root / 'trimmed' / f'{sample}_{mate}_trimmed.fastq.gz' for mate in (1, 2)]
+        paths.append(root / 'trimmed' / f'{stem}_trimmed.fastq.gz')
+    elif job.stage == 'samples_download':
+        paths = list((root / 'samples' / sample).glob(f'{sample}*.fastq*'))
+    elif job.stage == 'alignment':
+        paths = list((root / 'alignment' / sample).glob(f'{sample}*.bam'))
+    else:
+        return None
+    started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+    started = started_at.timestamp()
+    current = []
+    for path in paths:
+        try:
+            info = path.stat()
+            if path.is_file() and info.st_mtime >= started - 2 and info.st_size > 0:
+                current.append(info)
+        except OSError:
+            continue
+    if not current:
+        return None
+    return {'output_bytes': sum(item.st_size for item in current),
+            'output_file_count': len(current),
+            'output_last_modified': max(item.st_mtime for item in current)}
 
 
 def _alignment_progress(job: PipelineJob) -> Optional[dict[str, object]]:
@@ -309,6 +346,10 @@ def get_job_status(
         if progress_data:
             result_payload.update(progress_data)
 
+    output_progress = _active_output_progress(job)
+    if output_progress:
+        result_payload.update(output_progress)
+
     if job.status == PipelineStatus.RUNNING.value and not result_payload.get('progress_message'):
         tool_log = _active_tool_log(job)
         if tool_log:
@@ -333,13 +374,17 @@ def get_job_status(
             if job.status == PipelineStatus.RUNNING.value:
                 tool_path = result_payload.get('tool_log_path')
                 activity_path = Path(tool_path) if tool_path else _active_tool_log(job) or progress_path
-                silent_seconds = int(datetime.now(timezone.utc).timestamp() - activity_path.stat().st_mtime)
+                activity_time = activity_path.stat().st_mtime
+                if output_progress:
+                    activity_time = max(activity_time, float(output_progress['output_last_modified']))
+                silent_seconds = int(datetime.now(timezone.utc).timestamp() - activity_time)
                 if silent_seconds > 300:
                     result_payload['monitor_warning'] = {
                         'code': 'no_recent_tool_output' if activity_path != progress_path else 'no_recent_events',
                         'silent_seconds': silent_seconds,
                     }
         result_payload.pop('tool_log_path', None)
+        result_payload.pop('output_last_modified', None)
     except OSError:
         pass
 

@@ -160,7 +160,8 @@ def _dispatch(db, run: PipelineRun, step: PipelineStep, paired: bool) -> Pipelin
             stem = path.name.removesuffix(".gz").removesuffix(".fastq").removesuffix(".fq")
             _ensure_row(db, user_id, 2, stem + ".html", sample)
         job_stage = "quality_analysis"
-        payload = {"samples": [path.name for path in files]}
+        payload = {"samples": [path.name for path in files],
+                   "memory_mb": config.get("quality", {}).get("raw_memory_mb", 512)}
     elif stage == "trimming":
         job_stage = "trimming"
         payload = {"sample": sample, "params": config["trimming"]}
@@ -170,7 +171,8 @@ def _dispatch(db, run: PipelineRun, step: PipelineStep, paired: bool) -> Pipelin
             stem = path.name.removesuffix(".gz").removesuffix(".fastq").removesuffix(".fq")
             _ensure_row(db, user_id, 4, stem.removesuffix("_trimmed") + "_post_trim.html", sample)
         job_stage = "quality_analysis_post_trim"
-        payload = {"samples": [path.name for path in files]}
+        payload = {"samples": [path.name for path in files],
+                   "memory_mb": config.get("quality", {}).get("post_memory_mb", 512)}
     elif stage == "alignment":
         _ensure_row(db, user_id, 5, sample + ".bam", sample)
         job_stage = "alignment"

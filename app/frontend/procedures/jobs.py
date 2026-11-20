@@ -10,6 +10,10 @@ from .utils import log_message
 logger = logging.getLogger(__name__)
 
 
+def format_output_size(size: int) -> str:
+    return f"{size / 1024**3:.2f} GiB" if size >= 1024**3 else f"{size / 1024**2:.1f} MiB"
+
+
 async def wait_for_job(
     token: str,
     job_id: str,
@@ -108,6 +112,10 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
             records = result.get("processed_records")
             if isinstance(records, int) and records > 0:
                 current += f" · {records:,} {t('alignment_records', lang)}"
+        if isinstance(result.get("output_bytes"), int):
+            growth = t("analysis_output_growth", lang).format(
+                size=format_output_size(result["output_bytes"]))
+            current = f"{current} · {growth}" if current else growth
         count = f"{completed}/{total} · " if completed is not None and total else ""
         detail.value = f"{count}{current} · {status_label}"
         warning = result.get("monitor_warning") or {}

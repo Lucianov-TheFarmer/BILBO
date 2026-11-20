@@ -76,6 +76,8 @@ Each analysis job keeps a timestamped event history under `users/<user_id>/logs/
 
 BILBO supports sample acquisition through SRA, local upload, or Google Drive; reference genomes from NCBI, a URL, or local files; FastQC, Trimmomatic, STAR, read quantification, edgeR, scientific figures, GO-based semantic clustering, and RAG interpretation. The **Configure pipeline** dialog lets users select stages and parameters before starting an automatic run.
 
+The quality dialogs and pipeline settings accept FastQC memory **per file** (MiB); trimming accepts a Trimmomatic Java heap limit (MiB). FastQC's `--threads` option controls how many files it processes concurrently, so BILBO manages that parallelism through its quality workers instead of presenting a per-file thread setting. During trimming, growing FASTQ output sizes are shown as activity indicators, not estimated completion percentages.
+
 A public SEQC test subset (GSE47774) is described in [examples/test_data/README.md](examples/test_data/README.md). FASTQ files are retrieved from SRA rather than stored in this repository.
 
 ## Technical Architecture

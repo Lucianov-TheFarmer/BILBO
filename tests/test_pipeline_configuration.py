@@ -76,6 +76,8 @@ class PipelineConfigurationTest(unittest.TestCase):
                             stages={"trimming": True, "alignment": True,
                                     "quantification": True, "deg": True},
                             genome="reference-1", design=design,
+                            quality={"raw_memory_mb": 2048, "post_memory_mb": 1024},
+                            trimming={"threads": 2, "memory_mb": 4096},
                             deg={"diamond_threads": 12})
         draft = create_run(plan, self.db, self.db.get(User, 7))
         self.assertEqual("DRAFT", draft["status"])
@@ -84,6 +86,9 @@ class PipelineConfigurationTest(unittest.TestCase):
         self.assertEqual("RUNNING", started["status"])
         self.assertEqual("~0+group+bloco", started["config"]["design_snapshot"]["formula"])
         self.assertEqual(12, started["config"]["deg"]["diamond_threads"])
+        self.assertEqual(2048, started["config"]["quality"]["raw_memory_mb"])
+        self.assertEqual(1024, started["config"]["quality"]["post_memory_mb"])
+        self.assertEqual(4096, started["config"]["trimming"]["memory_mb"])
 
     def test_alignment_waits_for_trimmed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

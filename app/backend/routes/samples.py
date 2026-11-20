@@ -446,6 +446,15 @@ def get_samples_by_stage(stage_id: int, db: Session = Depends(get_db), current_u
             "name": sample_stage.name,
         })
     if stage_id == 3:
+        for sample in samples:
+            if sample["status"] in ("PENDING", "RUNNING"):
+                try:
+                    path = safe_resolve_user_path(settings.users_root, current_user.id,
+                                                  "trimmed", sample["name"])
+                    if path.is_file():
+                        sample["size"] = f"{path.stat().st_size / 1024**2:.2f} MB"
+                except (OSError, ValueError):
+                    pass
         # Automatic pipelines do not create SampleStage rows until a trimmed
         # FASTQ exists. Show scheduled outputs while the worker is processing.
         existing = {sample["name"] for sample in samples}

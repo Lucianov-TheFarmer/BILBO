@@ -646,6 +646,9 @@ def _record_sample_progress(db: Session, job_id: str, completed: int, total: int
 
 def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
+    memory_mb = int(payload.get("memory_mb", 512))
+    if not 256 <= memory_mb <= 16384:
+        raise ValueError("FastQC memory must be between 256 and 16384 MiB")
     outputs: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
@@ -663,7 +666,7 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
             row.status = "RUNNING"
             db.commit()
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)],
+            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id), str(memory_mb)],
         )
         sample_base = re.sub(r"_R?[12]$", "", sample_stem)
         log_path = _abs_users(str(user_id), "QC", sample_base, f"{safe_sample}_quality_analysis.log")
@@ -692,6 +695,9 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
 
 def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
+    memory_mb = int(payload.get("memory_mb", 512))
+    if not 256 <= memory_mb <= 16384:
+        raise ValueError("FastQC memory must be between 256 and 16384 MiB")
     outputs: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
@@ -709,7 +715,7 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
             row.status = "RUNNING"
             db.commit()
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)],
+            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id), str(memory_mb)],
         )
         sample_stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", safe_sample)
         sample_base = re.sub(r"_R?[12]_trimmed$", "", sample_stem)
@@ -744,6 +750,9 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
         row.status = "RUNNING"
     db.commit()
     params = payload.get("params") or {}
+    memory_mb = int(params.get("memory_mb", 1024))
+    if not 512 <= memory_mb <= 32768:
+        raise ValueError("Trimmomatic Java memory must be between 512 and 32768 MiB")
     adapter = dict(params.get("illumina_clip") or {})
     adapter_path = None
     if adapter.get("Arquivo adaptadores") == "Personalizado":
@@ -772,6 +781,7 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
             str(params.get("minlen", 36)), str(params.get("avgqual") or ""),
             str(_abs_users(str(user_id), "samples")),
             str(_abs_users(str(user_id), "trimmed")),
+            str(memory_mb),
         ])
     finally:
         if adapter_path:

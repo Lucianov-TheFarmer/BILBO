@@ -23,6 +23,8 @@ Analysis subprocesses have no wall-clock limit. The worker log is available with
 
 If a running FastQC process produces no new log output for five minutes, the terminal warns that the tool and worker need inspection. For other stages, the warning tracks job events. This warning alone does not mark the job as failed. The scheduler checks Celery's recorded task state once a minute and marks the job as failed or canceled only when Celery confirms that outcome. Check ``docker compose logs --tail=200 quality-worker`` for worker termination or memory errors.
 
+FastQC memory can be set per FASTQ in the quality dialogs or Configure pipeline (256-16384 MiB, default 512 MiB). The value is passed to FastQC's ``--memory`` option. Its ``--threads`` option counts concurrent files; each BILBO quality job processes one file, while quality workers handle parallel jobs. Trimmomatic's Java heap can be set to 512-32768 MiB (default 1024 MiB) alongside its existing thread count. Higher memory limits do not inherently make either tool faster. When trimmed FASTQ files grow, their current combined size appears in the job progress; no completion percentage is inferred from output size.
+
 Trimming Produces Too Few Reads
 -------------------------------
 

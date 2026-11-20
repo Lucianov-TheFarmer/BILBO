@@ -7,6 +7,7 @@ import flet as ft
 import httpx
 
 from .deg import _format_deg_progress
+from .jobs import format_output_size
 from .translations import t
 from .utils import log_message
 
@@ -135,6 +136,10 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     label = f"{step['sample']} · {stage}: {t(status_key, lang)}"
                     if isinstance(percent, (int, float)):
                         label += f" · {percent:.0f}%"
+                    if isinstance(result.get("output_bytes"), int):
+                        growth = t("analysis_output_growth", lang).format(
+                            size=format_output_size(result["output_bytes"]))
+                        phase = f"{phase} · {growth}" if phase else growth
                     if phase:
                         label += f" · {phase[:100]}"
                     warning = result.get("monitor_warning") or {}

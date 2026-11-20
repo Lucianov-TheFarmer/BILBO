@@ -99,9 +99,9 @@ class _FinishedQualityClient(_Client):
                                "config": {"name": "Quality test"},
                                "steps": [{"id": "step-qc", "stage": "qc_raw", "sample": "S1",
                                           "status": self.status, "job_id": "job-qc",
-                                          "error_message": "FastQC exceeded 170m" if self.status == "FAILED" else None}]}])
+                                          "error_message": "FastQC exited after running out of memory" if self.status == "FAILED" else None}]}])
         if url.endswith("/jobs/job-qc"):
-            event = ("FastQC exceeded the 170m time limit (exit code 124)." if self.status == "FAILED"
+            event = ("FastQC ran out of memory (exit code 137)." if self.status == "FAILED"
                      else "FastQC completed successfully.")
             return _Response({"job_id": "job-qc", "status": self.status,
                               "result": {"progress_log": f"[now] PROGRESS: {event}"}})
@@ -115,6 +115,19 @@ class _StaleQualityClient(_Client):
                 "progress_percent": 85,
                 "monitor_warning": {"code": "no_recent_events", "silent_seconds": 660},
             }})
+        return await super().get(url)
+
+
+class _TrimmingGrowthClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "run-trim", "status": "RUNNING", "config": {"name": "Trim"},
+                              "steps": [{"id": "step-trim", "stage": "trimming", "sample": "A1",
+                                         "status": "RUNNING", "job_id": "job-trim"}]}])
+        if url.endswith("/jobs/job-trim"):
+            return _Response({"job_id": "job-trim", "status": "RUNNING",
+                              "result": {"output_bytes": 2 * 1024**3,
+                                         "progress_message": "Executando Trimmomatic."}})
         return await super().get(url)
 
 
@@ -175,7 +188,7 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_quality_explains_failure_in_terminal(self):
         terminal, _ = await self._one_poll(_FinishedQualityClient("FAILED"), tracked_run_id="run-qc")
-        self.assertIn("exit code 124", terminal.content.controls[0].value)
+        self.assertIn("exit code 137", terminal.content.controls[0].value)
         self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
 
     async def test_completed_quality_reports_success_in_terminal(self):
@@ -190,6 +203,12 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
                 card = terminal.content.controls[0]
                 detail = card.content.controls[3].controls[0].value
                 self.assertIn(expected, detail)
+
+    async def test_trimming_output_growth_is_visible(self):
+        terminal, _ = await self._one_poll(_TrimmingGrowthClient())
+        detail = terminal.content.controls[0].content.controls[3].controls[0].value
+        self.assertIn("2.00 GiB", detail)
+        self.assertIn("Saída em crescimento", detail)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))

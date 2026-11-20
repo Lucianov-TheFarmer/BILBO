@@ -5,6 +5,7 @@ import logging
 import asyncio
 import json
 import re
+import time
 from .utils import log_message
 from .jobs import wait_with_progress
 
@@ -279,6 +280,10 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         on_change=numeric_input_validator,
         width=280,
     )
+    memory_field = ft.TextField(
+        label=t("trimming_memory_mb", page.session.get("lang") or "pt"),
+        value="1024", keyboard_type=ft.KeyboardType.NUMBER, width=280,
+    )
     phred_dropdown = ft.Dropdown(
         label=t("trim_phred", page.session.get("lang") or "pt"),
         options=[
@@ -447,6 +452,13 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         if not selected_samples:
             logger.info("Nenhuma amostra selecionada.")
             return
+        try:
+            memory_mb = int(memory_field.value)
+            if not 512 <= memory_mb <= 32768:
+                raise ValueError()
+        except (TypeError, ValueError):
+            await log_message(page, t("trimming_memory_invalid", page.session.get("lang") or "pt"))
+            return
 
         # Validate custom adapter content if "Personalizado" is selected
         if illumina_clip_fields[0].value == "Personalizado" and not is_valid_fasta(custom_adapter_content):
@@ -465,6 +477,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
             params = {
                 "threads": threads_field.value,
+                "memory_mb": memory_mb,
                 "phred": phred_dropdown.value,
                 "illumina_clip": json.dumps({
                     "Arquivo adaptadores": illumina_clip_value,
@@ -504,6 +517,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                         data={
                             "selected_samples": json.dumps(selected_samples),
                             "threads": params["threads"],
+                            "memory_mb": params["memory_mb"],
                             "phred": params["phred"],
                             "illumina_clip": params["illumina_clip"],
                             "sliding_window": params["sliding_window"],
@@ -521,8 +535,14 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                     if response.status_code == 202:
                         job_ids = response.json().get("job_ids") or []
                         await log_message(page, f"Trimmagem: {len(job_ids)} job(s) na fila.")
+                        last_refresh = [0.0]
+                        async def refresh_during_trimming(_payload):
+                            if time.monotonic() - last_refresh[0] >= 5:
+                                last_refresh[0] = time.monotonic()
+                                await update_trimmagem_table(page, token)
                         await asyncio.gather(*(wait_with_progress(
-                            page, token, job_id, t("trim_start", page.session.get("lang") or "pt"))
+                            page, token, job_id, t("trim_start", page.session.get("lang") or "pt"),
+                            on_update=refresh_during_trimming)
                             for job_id in job_ids))
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         await update_trimmagem_table(page, token)
@@ -549,6 +569,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
             ft.Row(
                 controls=[
                     threads_field,
+                    memory_field,
                     phred_dropdown,
                 ],
                 spacing=27
@@ -654,8 +675,14 @@ async def processar_trimmagem(page, token, selected_samples, container_menu_dire
                 headers=headers,
             )
             if response.status_code == 202:
+                last_refresh = [0.0]
+                async def refresh_during_trimming(_payload):
+                    if time.monotonic() - last_refresh[0] >= 5:
+                        last_refresh[0] = time.monotonic()
+                        await update_trimmagem_table(page, token)
                 await asyncio.gather(*(wait_with_progress(
-                    page, token, job_id, t("trim_start", page.session.get("lang") or "pt"))
+                    page, token, job_id, t("trim_start", page.session.get("lang") or "pt"),
+                    on_update=refresh_during_trimming)
                     for job_id in response.json().get("job_ids") or []))
                 await update_trimmagem_table(page, token)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)

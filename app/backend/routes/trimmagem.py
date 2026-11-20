@@ -36,6 +36,7 @@ _FASTQ_PAIR_RE = re.compile(
 def enqueue_trimmagem_jobs(
     selected_samples: str = Form(...),
     threads: int = Form(1),
+    memory_mb: int = Form(1024),
     phred: str = Form("autodetect"),
     illumina_clip: str = Form(...),
     sliding_window: str = Form(...),
@@ -59,6 +60,8 @@ def enqueue_trimmagem_jobs(
         raise HTTPException(status_code=400, detail="Invalid trimming parameters") from exc
     if not isinstance(names, list) or not names or threads < 1 or threads > 256:
         raise HTTPException(status_code=400, detail="Select FASTQ files and a valid thread count")
+    if not 512 <= memory_mb <= 32768:
+        raise HTTPException(status_code=400, detail="Trimmomatic memory must be between 512 and 32768 MiB")
     if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:fastq|fq)(?:\.gz)?", x, re.I) for x in names):
         raise HTTPException(status_code=400, detail="Invalid FASTQ filename")
     grouped = {}
@@ -81,7 +84,7 @@ def enqueue_trimmagem_jobs(
         base, _, _ = _parse_fastq_name(name)
         if not os.path.isfile(os.path.join(root, base, name)) and not os.path.isfile(os.path.join(root, name)):
             raise HTTPException(status_code=400, detail=f"FASTQ not found: {name}")
-    params = {"threads": threads, "phred": phred, "illumina_clip": adapter,
+    params = {"threads": threads, "memory_mb": memory_mb, "phred": phred, "illumina_clip": adapter,
               "sliding_window": window, "max_info": max_info_params,
               "leading": leading, "trailing": trailing, "crop": crop,
               "headcrop": headcrop, "minlen": minlen, "avgqual": avgqual}

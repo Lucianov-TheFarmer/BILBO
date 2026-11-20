@@ -33,8 +33,10 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "set -e\n"
             "while [ \"$#\" -gt 0 ]; do\n"
-            "  case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) input=\"$1\"; shift ;; esac\n"
+            "  case \"$1\" in -o) out=\"$2\"; shift 2 ;; "
+            "--memory) memory=\"$2\"; shift 2 ;; *) input=\"$1\"; shift ;; esac\n"
             "done\n"
+            "echo \"FastQC memory option: $memory MiB\"\n"
             "case \"$FASTQC_TEST_MODE\" in\n"
             "  slow) echo 'Approx 85% complete for test'; sleep 2; "
             "stem=\"$(basename \"$input\")\"; stem=\"${stem%.gz}\"; "
@@ -51,7 +53,7 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         )
         fastqc.chmod(0o755)
 
-    def run_quality(self, mode: str, post_trim: bool = False):
+    def run_quality(self, mode: str, post_trim: bool = False, memory_mb: int = 512):
         sample = "S1_1_trimmed.fastq.gz" if post_trim else "S1_1.fastq.gz"
         source = self.root / "users" / "1" / ("trimmed" if post_trim else "samples/S1")
         source.mkdir(parents=True, exist_ok=True)
@@ -64,8 +66,8 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         })
         script = ROOT / "app" / "backend" / "scripts" / (
             "quality_analysis_post_trim.sh" if post_trim else "quality_analysis.sh")
-        run = subprocess.run([BASH, "-c", 'PATH="$BILBO_TEST_BIN:$PATH" exec bash "$1" "$2" 1',
-                              "_", shell_path(script), sample],
+        run = subprocess.run([BASH, "-c", 'PATH="$BILBO_TEST_BIN:$PATH" exec bash "$1" "$2" 1 "$3"',
+                              "_", shell_path(script), sample, str(memory_mb)],
                              env=env, capture_output=True, text=True, timeout=15)
         log_dir = self.root / "users" / "1" / ("QC_PostTrim" if post_trim else "QC") / "S1"
         log_name = "S1_1_trimmed_quality_analysis_post_trim.log" if post_trim else f"{sample}_quality_analysis.log"
@@ -84,15 +86,34 @@ class QualityScriptDiagnosticsTest(unittest.TestCase):
         self.assertIn("exit code 7", log)
 
     def test_success_requires_both_reports(self):
-        run, log = self.run_quality("success")
+        run, log = self.run_quality("success", memory_mb=2048)
         self.assertEqual(0, run.returncode)
+        self.assertIn("FastQC memory option: 2048 MiB", log)
         self.assertIn("completed successfully", log)
 
     def test_post_trim_can_continue_after_silent_85_percent(self):
-        run, log = self.run_quality("slow", post_trim=True)
+        run, log = self.run_quality("slow", post_trim=True, memory_mb=1024)
         self.assertEqual(0, run.returncode)
+        self.assertIn("FastQC memory option: 1024 MiB", log)
         self.assertIn("Approx 85%", log)
         self.assertIn("completed successfully", log)
+
+    def test_invalid_memory_is_reported(self):
+        run, log = self.run_quality("success", memory_mb=32)
+        self.assertEqual(2, run.returncode)
+        self.assertIn("Invalid FastQC memory", log)
+
+    def test_invalid_trimmomatic_heap_is_reported(self):
+        script = ROOT / "app" / "backend" / "scripts" / "trimmagem.sh"
+        base = self.root / "users" / "1" / "samples"
+        output = self.root / "users" / "1" / "trimmed"
+        args = ["A", "1", "phred33", "{}", "{}", "{}", "3", "3", "", "", "36", "",
+                shell_path(base), shell_path(output), "32"]
+        run = subprocess.run([BASH, "-c", 'exec bash "$@"', "_", shell_path(script), *args],
+                             capture_output=True, text=True, timeout=15)
+        log = self.root / "users" / "1" / "logs" / "trimming" / "A.log"
+        self.assertEqual(2, run.returncode)
+        self.assertIn("Invalid Trimmomatic Java memory", log.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

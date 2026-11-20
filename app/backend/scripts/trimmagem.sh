@@ -16,6 +16,7 @@ minlen="${11}"
 avgqual="${12}"
 base_path="${13}"
 trimmed_path="${14}"
+memory_mb="${15:-1024}"
 
 log_dir="$(dirname "$trimmed_path")/logs/trimming"
 log_file="${log_dir}/${sra_code}.log"
@@ -23,6 +24,12 @@ adapters_dir="/app/backend/scripts/adapters"
 
 mkdir -p "$trimmed_path" "$log_dir"
 : > "$log_file"
+
+if ! [[ "$memory_mb" =~ ^[0-9]+$ ]] || (( memory_mb < 512 || memory_mb > 32768 )); then
+    echo "Invalid Trimmomatic Java memory: ${memory_mb} MiB (expected 512-32768)." >> "$log_file"
+    exit 2
+fi
+export _JAVA_OPTIONS="-Xmx${memory_mb}m"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$log_file"
@@ -307,6 +314,7 @@ else
 fi
 
 log "Executando Trimmomatic."
+log "Java heap maximum: ${memory_mb} MiB; threads: ${threads}."
 
 
 RUN_CMD=("${command[@]}")

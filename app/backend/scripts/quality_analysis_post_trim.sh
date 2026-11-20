@@ -4,6 +4,7 @@ set -euo pipefail
 
 sra_code="$1"
 user_id="$2"
+memory_mb="${3:-512}"
 users_root="${BILBO_USERS_ROOT:-/users}"
 
 sample_file="$(basename "$sra_code")"
@@ -22,13 +23,19 @@ log_file="${output_dir}/${sample_stem}_quality_analysis_post_trim.log"
 
 mkdir -p "$output_dir"
 
+if ! [[ "$memory_mb" =~ ^[0-9]+$ ]] || (( memory_mb < 256 || memory_mb > 16384 )); then
+    echo "Invalid FastQC memory: ${memory_mb} MiB (expected 256-16384)." > "$log_file"
+    exit 2
+fi
+
 if [ ! -f "$input_file" ]; then
     echo "Input file not found: $input_file" > "$log_file"
     exit 2
 fi
 
 set +e
-fastqc -t 4 -o "$output_dir" "$input_file" > "$log_file" 2>&1
+echo "FastQC post-trim started; input=${sra_code}; memory=${memory_mb} MiB" > "$log_file"
+fastqc --memory "$memory_mb" -o "$output_dir" "$input_file" >> "$log_file" 2>&1
 
 exit_code=$?
 set -e

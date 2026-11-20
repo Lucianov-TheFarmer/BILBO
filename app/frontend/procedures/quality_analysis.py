@@ -211,17 +211,28 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
             row.cells[3].content.value = e.control.value
         page.update()
 
+    memory_field = ft.TextField(label=t("quality_memory_mb", page.session.get("lang") or "pt"),
+                                value="512", width=240, keyboard_type=ft.KeyboardType.NUMBER)
+
     async def start_quality_analysis(e):
         selected_samples = [row.cells[0].content.value for row in tabela_analise_qualidade.rows if row.cells[3].content.value]
         if not selected_samples:
             logger.error("Nenhuma amostra selecionada.")
+            return
+        try:
+            memory_mb = int(memory_field.value)
+            if not 256 <= memory_mb <= 16384:
+                raise ValueError()
+        except (TypeError, ValueError):
+            await log_message(page, t("quality_memory_invalid", page.session.get("lang") or "pt"))
             return
         await log_message(page, f"Iniciando análise de qualidade para {selected_samples}")
         dlg_modal_analise_qualidade.open = False
         page.update()
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post("http://bioinfo-container:8890/quality_analysis/", json={"samples": selected_samples}, headers=headers)
+                response = await client.post("http://bioinfo-container:8890/quality_analysis/",
+                                             json={"samples": selected_samples, "memory_mb": memory_mb}, headers=headers)
                 if response.status_code in (200, 202):
                     body = response.json()
                     async def monitor_qc(name, job_id):
@@ -284,6 +295,8 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 spacing=10,
                 controls=[
                     empty_message if empty_message else tabela_analise_qualidade,
+                    memory_field,
+                    ft.Text(t("quality_memory_hint", page.session.get("lang") or "pt"), size=11),
                 ]
             ),
             width=520,
