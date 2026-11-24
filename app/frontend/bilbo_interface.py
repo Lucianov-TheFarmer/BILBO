@@ -12,6 +12,7 @@ from .procedures.quantification import show_quantification_modal, update_tabela_
 from .procedures.contrasts import show_contrasts_modal
 from .procedures.pipeline_config import show_pipeline_config_modal
 from .procedures.pipeline_monitor import monitor_pipeline
+from .procedures.jobs import recover_active_jobs
 from .procedures.utils import log_message
 from .components.general_components import create_table, create_button
 from .procedures.deg import run_deg_analysis, show_deg_results
@@ -734,3 +735,4 @@ async def show_bilbo_interface(page, logout, username, token, user_id):
 
     page.run_task(connect_websocket)
     page.run_task(monitor_pipeline, page, token, container_terminal, refresh_pipeline_tables)
+    page.run_task(recover_active_jobs, page, token, refresh_pipeline_tables)

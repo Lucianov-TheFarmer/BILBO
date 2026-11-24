@@ -1161,6 +1161,35 @@ _ALIGNMENT_METRICS = {
 for _language, _entries in _ALIGNMENT_METRICS.items():
     TRADUCOES[_language].update(_entries)
 
+_QUANTIFICATION_VIEWER = {
+    "pt": {
+        "quant_counts_title": "Contagens HTSeq",
+        "quant_counts_view": "Visualizar contagens",
+        "quant_counts_download": "Baixar contagens",
+        "quant_counts_unavailable": "Não foi possível carregar o arquivo de contagens desta amostra.",
+        "quant_log_historical_missing": "O log detalhado não foi salvo nesta execução anterior. O arquivo de contagens continua disponível para visualização e download.",
+        "quant_log_unavailable": "Não foi possível abrir o log da quantificação.",
+    },
+    "en": {
+        "quant_counts_title": "HTSeq counts",
+        "quant_counts_view": "View counts",
+        "quant_counts_download": "Download counts",
+        "quant_counts_unavailable": "Could not load this sample's count file.",
+        "quant_log_historical_missing": "The detailed log was not saved for this earlier run. The counts file is still available to view and download.",
+        "quant_log_unavailable": "Could not open the quantification log.",
+    },
+    "es": {
+        "quant_counts_title": "Conteos HTSeq",
+        "quant_counts_view": "Ver conteos",
+        "quant_counts_download": "Descargar conteos",
+        "quant_counts_unavailable": "No se pudo cargar el archivo de conteos de esta muestra.",
+        "quant_log_historical_missing": "El registro detallado no se guardó en esta ejecución anterior. El archivo de conteos sigue disponible para ver y descargar.",
+        "quant_log_unavailable": "No se pudo abrir el registro de cuantificación.",
+    },
+}
+for _language, _entries in _QUANTIFICATION_VIEWER.items():
+    TRADUCOES[_language].update(_entries)
+
 
 def t(key, lang="pt"):
     if lang not in TRADUCOES:

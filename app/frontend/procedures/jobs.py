@@ -68,14 +68,25 @@ async def wait_for_job(
 
 async def wait_with_progress(page, token: str, job_id: str, title: str, on_update=None):
     """Show per-sample job progress in the existing terminal panel."""
+    monitored = getattr(page, "_bilbo_monitored_jobs", None)
+    if monitored is None:
+        monitored = set()
+        page._bilbo_monitored_jobs = monitored
+    if job_id in monitored:
+        return await wait_for_job(token, job_id, on_update=on_update)
+    monitored.add(job_id)
     container = getattr(page, "container_terminal", None)
     terminal = container if isinstance(container, ft.ListView) else getattr(container, "content", None)
     if not isinstance(terminal, ft.ListView):
-        return await wait_for_job(token, job_id, on_update=on_update)
+        try:
+            return await wait_for_job(token, job_id, on_update=on_update)
+        finally:
+            monitored.discard(job_id)
     label = ft.Text(title)
     detail = ft.Text("0%", size=11)
     bar = ft.ProgressBar(value=0, width=260)
     progress_card = ft.Container(
+        data=f"terminal_progress_job_{job_id}",
         border=ft.border.all(1, "black12"), border_radius=8,
         padding=ft.padding.symmetric(horizontal=10, vertical=8),
         content=ft.Column(spacing=4, controls=[label, bar, detail]))
@@ -146,3 +157,50 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
         await log_message(page, f"{title}: {exc}")
         page.update()
         raise
+    finally:
+        monitored.discard(job_id)
+
+
+async def recover_active_jobs(page, token: str, refresh_tables):
+    """Restore direct-job progress cards after login or a lost browser session."""
+    headers = {"Authorization": f"Bearer {token}"}
+    stages = {"alignment": "menu_alignment", "quantification": "menu_quant",
+              "trimming": "pipeline_stage_trimming", "quality_analysis": "pipeline_stage_qc_raw",
+              "quality_analysis_post_trim": "pipeline_stage_qc_trim",
+              "samples_download": "pipeline_samples"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            runs_response, pending_response, running_response = await asyncio.gather(
+                client.get("http://bioinfo-container:8890/pipeline/runs", headers=headers),
+                client.get("http://bioinfo-container:8890/jobs?status=PENDING", headers=headers),
+                client.get("http://bioinfo-container:8890/jobs?status=RUNNING", headers=headers))
+            for response in (runs_response, pending_response, running_response):
+                response.raise_for_status()
+            pipeline_jobs = {step.get("job_id") for run in runs_response.json()
+                             if run.get("status") == "RUNNING" for step in run.get("steps", [])}
+            active = pending_response.json() + running_response.json()
+            for item in active:
+                job_id = item.get("job_id")
+                stage = item.get("stage")
+                if not job_id or job_id in pipeline_jobs or stage not in stages:
+                    continue
+                detail_response = await client.get(f"http://bioinfo-container:8890/jobs/{job_id}", headers=headers)
+                if detail_response.status_code != 200:
+                    continue
+                payload = detail_response.json().get("payload") or {}
+                sample = (payload.get("sample") or payload.get("sra_code") or
+                          next(iter(payload.get("samples") or []), ""))
+                title = f"{t(stages[stage], page.session.get('lang') or 'pt')} — {sample or job_id[:8]}"
+
+                async def monitor_recovered(recovered_id, recovered_title):
+                    try:
+                        await wait_with_progress(page, token, recovered_id, recovered_title)
+                    finally:
+                        try:
+                            await refresh_tables()
+                        except Exception:
+                            logger.exception("Could not refresh tables after job %s", recovered_id)
+
+                page.run_task(monitor_recovered, job_id, title)
+    except (httpx.HTTPError, ValueError, KeyError):
+        logger.exception("Could not recover active jobs")

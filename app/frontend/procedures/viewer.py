@@ -344,15 +344,86 @@ async def view_quantification_log(page, token, sample_name, user_id):
     log_path = f"../users/{user_id}/logs/quantification/{base_name}.bam.log"
     try:
         if os.path.exists(log_path):
-            with open(log_path, "r", encoding="utf-8") as log_file:
-                log_content = log_file.read()
+            with open(log_path, "rb") as log_file:
+                log_file.seek(0, os.SEEK_END)
+                log_file.seek(max(0, log_file.tell() - 65536))
+                log_content = log_file.read().decode("utf-8", errors="replace")
         else:
-            log_content = f"Erro: Arquivo de log não encontrado em {log_path}"
+            log_content = t("quant_log_historical_missing", page.session.get("lang") or "pt")
 
         await display_quantification_log(page, log_content)
     except Exception as e:
         logger.error(f"Erro ao exibir o log de quantificação: {e}", exc_info=True)
-        await display_quantification_log(page, f"Erro ao exibir o log de quantificação: {e}")
+        await display_quantification_log(page, t("quant_log_unavailable", page.session.get("lang") or "pt"))
+
+
+async def view_quantification_counts(page, token, sample_name):
+    """Load HTSeq counts a small byte range at a time as the user scrolls."""
+    preview = getattr(page, "container_preview", None)
+    if not isinstance(preview, ft.Container):
+        return
+    lang = page.session.get("lang") or "pt"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}\.txt", sample_name):
+        await display_quantification_log(page, t("quant_counts_unavailable", lang))
+        return
+
+    progress = ft.Text(size=12)
+    more_button = ft.TextButton(t("viewer_load_more", lang))
+    rows = ft.ListView(expand=True, spacing=8, build_controls_on_demand=True,
+                       cache_extent=400, on_scroll_interval=250)
+    rows.controls.append(more_button)
+    offset = 0
+    loading = False
+
+    async def load_more():
+        nonlocal offset, loading
+        if loading or not more_button.visible and offset > 0:
+            return
+        loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    f"http://bioinfo-container:8890/quantification/counts/{sample_name}/chunk",
+                    params={"offset": offset, "lines": 100},
+                    headers={"Authorization": f"Bearer {token}"})
+            if response.status_code != 200:
+                raise ValueError(response.text[:300])
+            payload = response.json()
+            lines = payload.get("lines") or []
+            if lines:
+                rows.controls.insert(len(rows.controls) - 1,
+                                     ft.Text("\n".join(lines), selectable=True,
+                                             style=ft.TextStyle(size=12, font_family="Consolas")))
+            offset = int(payload["next_offset"])
+            size = int(payload["size"])
+            value = f"{100 * offset / size:.1f}" if size else "100.0"
+            progress.value = f"{value}%"
+            more_button.visible = bool(payload.get("has_more"))
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            logger.warning("Could not load HTSeq counts for %s: %s", sample_name, exc)
+            rows.controls.insert(len(rows.controls) - 1,
+                                 ft.Text(t("quant_counts_unavailable", lang), color="red"))
+            more_button.visible = False
+        finally:
+            loading = False
+            page.update()
+
+    async def on_scroll(event):
+        if more_button.visible and event.pixels >= event.max_scroll_extent - 500:
+            await load_more()
+
+    async def on_click(_event):
+        await load_more()
+
+    rows.on_scroll = on_scroll
+    more_button.on_click = on_click
+    preview.content.controls = [ft.Container(expand=True, padding=12, content=ft.Column([
+        ft.Row([ft.Text(f"{t('quant_counts_title', lang)} — {sample_name}", expand=True,
+                        weight="bold"), progress, close_figure_button(page, preview)]),
+        rows,
+    ], expand=True))]
+    page.update()
+    await load_more()
 
 def create_dropdown_menu(page, token, sample_name, user_id, analysis_type, image_placeholder):
     async def on_change(e):
