@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import PipelineJob, SampleStage, User
-from ..services.job_service import audit, create_job, normalize_status
+from ..services.job_service import append_job_event, audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager  # Atualizado para incluir manager
 from ..utils_paths import ensure_safe_component
@@ -112,7 +112,11 @@ def get_alignment_results(db: Session = Depends(get_db), current_user: User = De
     """Fetch alignment results for the current user."""
     user_id = current_user.id
     results = db.query(SampleStage).filter(SampleStage.stage_id == 5, SampleStage.user_id == user_id).all()
-    return [{"name": result.name, "size": result.size, "status": result.status} for result in results]
+    active_jobs = db.query(PipelineJob).filter(PipelineJob.stage == "alignment",
+        PipelineJob.user_id == user_id, PipelineJob.status.in_(["PENDING", "RUNNING"])).all()
+    active_samples = {(job.payload or {}).get("sample") for job in active_jobs}
+    return [{"name": result.name, "size": result.size, "status": result.status,
+             "has_active_job": result.sra_code in active_samples} for result in results]
 
 @router.post("/alignment/add_samples")
 def add_samples(
@@ -164,6 +168,8 @@ def add_samples(
             SampleStage.sra_code == basename,
         ).first()
         if existing:
+            if normalize_status(existing.status) == "PENDING":
+                continue
             raise HTTPException(status_code=409, detail=f"Alignment already registered for {basename}")
 
         # Adicionar basename ao banco de dados com status 'Pending'
@@ -218,14 +224,18 @@ async def start_alignment(
     trimmed_names = [os.path.basename(sample_path_1)]
     if sample_path_2:
         trimmed_names.append(os.path.basename(sample_path_2))
+    waiting_for_qc = False
     for name in trimmed_names:
         row = db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, name=name).first()
         if row is None or row.status != "COMPLETED":
             raise HTTPException(status_code=409, detail=f"Wait for trimming to finish: {name}")
         qc_name = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "_post_trim.html", name)
         qc = db.query(SampleStage).filter_by(user_id=user_id, stage_id=4, name=qc_name).first()
-        if qc is not None and qc.status != "COMPLETED":
-            raise HTTPException(status_code=409, detail=f"Wait for post-trim quality to finish: {name}")
+        if qc is not None:
+            if qc.status in ("FAILED", "CANCELED"):
+                raise HTTPException(status_code=409, detail=f"Post-trim quality failed: {name}")
+            if qc.status != "COMPLETED":
+                waiting_for_qc = True
 
     # Keep the sample queued until a worker actually starts it.
     sample_stage = db.query(SampleStage).filter(
@@ -262,6 +272,8 @@ async def start_alignment(
             "genome_dir": genome_dir,
             "threads": threads,
             "additional": extra_params,
+            "trimmed_names": trimmed_names,
+            "wait_for_post_trim": waiting_for_qc,
         },
     )
     audit(
@@ -272,9 +284,17 @@ async def start_alignment(
         job_id=job.id,
         metadata_json={"sample": basename, "genome": accession},
     )
-    enqueue_pipeline_job(job.id, queue="alignment")
+    if waiting_for_qc:
+        job.result = {"waiting_for": "quality_analysis_post_trim"}
+        db.commit()
+        append_job_event(user_id, job.id,
+                         f"alignment: aguardando qualidade pós-trimmagem de {basename}.")
+    else:
+        enqueue_pipeline_job(job.id, queue="alignment")
 
-    return {"job_id": job.id, "status": "PENDING", "message": f"Alignment job enqueued for {basename}"}
+    message = (f"Alignment waiting for post-trim quality: {basename}" if waiting_for_qc
+               else f"Alignment job enqueued for {basename}")
+    return {"job_id": job.id, "status": "PENDING", "message": message}
 
 @router.post("/alignment/update_status")
 async def update_alignment_status(

@@ -11,7 +11,7 @@ from ..core.settings import settings
 from ..db.database import SessionLocal
 from ..db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage
 from ..schemas.common import PipelineStatus
-from ..services.job_service import create_job, set_job_finished
+from ..services.job_service import append_job_event, create_job, set_job_finished
 from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 from .celery_app import celery_app
 from .pipeline_tasks import enqueue_pipeline_job
@@ -366,11 +366,52 @@ def _advance_run(db, run: PipelineRun) -> None:
 def reconcile_all():
     db = SessionLocal()
     try:
+        _dispatch_manual_alignments(db)
         runs = db.query(PipelineRun).filter(PipelineRun.status == "RUNNING").all()
         for run in runs:
             _advance_run(db, run)
     finally:
         db.close()
+
+
+def _dispatch_manual_alignments(db) -> None:
+    """Release manual alignment jobs only after their post-trim QC has completed."""
+    pending_ids = [job.id for job in db.query(PipelineJob).filter(
+        PipelineJob.stage == "alignment", PipelineJob.status == "PENDING").all()
+        if (job.payload or {}).get("wait_for_post_trim") and
+        (job.result or {}).get("waiting_for") == "quality_analysis_post_trim"]
+    for job_id in pending_ids:
+        job = db.query(PipelineJob).filter(PipelineJob.id == job_id).with_for_update().first()
+        if job is None or job.status != "PENDING" or (job.result or {}).get("waiting_for") != "quality_analysis_post_trim":
+            db.rollback()
+            continue
+        names = (job.payload or {}).get("trimmed_names") or []
+        qc_statuses = []
+        for name in names:
+            report_name = name.removesuffix(".gz").removesuffix(".fastq").removesuffix(".fq")
+            report_name = report_name.removesuffix("_trimmed") + "_post_trim.html"
+            qc = _row(db, job.user_id, 4, report_name)
+            qc_statuses.append(qc.status if qc else "MISSING")
+        if not names or any(status in ("FAILED", "CANCELED", "MISSING") for status in qc_statuses):
+            reason = "Post-trim quality failed, was canceled, or its result was removed" if names else "Missing trimmed input names"
+            set_job_finished(db, job.id, PipelineStatus.FAILED, error_message=reason)
+            stage = _row(db, job.user_id, 5, (job.payload or {}).get("sample", "") + ".bam")
+            if stage is not None:
+                stage.status = "FAILED"
+                db.commit()
+            continue
+        if not all(status == "COMPLETED" for status in qc_statuses):
+            db.rollback()
+            continue
+        job.result = {"dispatched": True}
+        db.commit()
+        try:
+            enqueue_pipeline_job(job.id, queue="alignment")
+            append_job_event(job.user_id, job.id, "alignment: controle de qualidade pós-trimmagem concluído; alinhamento enfileirado.")
+        except Exception:
+            job.result = {"waiting_for": "quality_analysis_post_trim"}
+            db.commit()
+            raise
 
 
 def _mark_worker_failed_rows(db, job: PipelineJob) -> None:

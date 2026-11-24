@@ -289,27 +289,15 @@ async def view_quantification_log(page, token, sample_name, user_id):
         logger.error(f"Erro ao exibir o log de quantificação: {e}", exc_info=True)
         await display_quantification_log(page, f"Erro ao exibir o log de quantificação: {e}")
 
-def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
+def create_dropdown_menu(page, token, sample_name, user_id, analysis_type, image_placeholder):
     async def on_change(e):
         selected_graph = e.control.value
         graph_control = await display_graph(page, token, selected_graph, sample_name, user_id, analysis_type)
-
-        preview = getattr(page, "container_preview", None)
-        if isinstance(preview, ft.Container):
-            preview.content.controls[0].content.controls[1] = graph_control
-            page.update()
+        if e.control.value != selected_graph:
             return
 
-        # Find the container_pre_visualizacao and update its content
-        for control in page.controls:
-            if isinstance(control, ft.Row):
-                for column in control.controls:
-                    if isinstance(column, ft.Column):
-                        for container in column.controls:
-                            if isinstance(container, ft.Container) and container.key == "container_preview":
-                                container.content.controls[0].content.controls[1] = graph_control
-                                page.update()
-                                return
+        image_placeholder.content = graph_control
+        page.update()
 
     async def on_change_handler(e):
         await on_change(e)

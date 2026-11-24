@@ -285,7 +285,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
                     _trimmed_base(s["name"])
                     for s in response_alinhadas.json()
                     if str(s.get("status") or "").upper()
-                    in {"PENDING", "RUNNING", "COMPLETED"}
+                    in {"RUNNING", "COMPLETED"}
+                    or (str(s.get("status") or "").upper() == "PENDING" and
+                        s.get("has_active_job", True))
                 } if response_alinhadas.status_code == 200 else set()
 
                 available_samples = [

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from backend.db.database import Base  # noqa: E402
 from backend.db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, Stage, User  # noqa: E402
 from backend.services.analysis_design import validate_design  # noqa: E402
-from backend.tasks.orchestrator import _advance_run  # noqa: E402
+from backend.tasks.orchestrator import _advance_run, _dispatch_manual_alignments  # noqa: E402
 from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run, cancel_run,
                                           update_draft, delete_draft)  # noqa: E402
 from backend.services import job_cancellation  # noqa: E402
@@ -90,6 +90,45 @@ class PipelineConfigurationTest(unittest.TestCase):
         self.assertEqual(2048, started["config"]["quality"]["raw_memory_mb"])
         self.assertEqual(1024, started["config"]["quality"]["post_memory_mb"])
         self.assertEqual(4096, started["config"]["trimming"]["memory_mb"])
+
+    def test_manual_alignment_starts_after_both_post_trim_reports_finish(self):
+        names = [f"D2_{mate}_trimmed.fastq.gz" for mate in (1, 2)]
+        job = PipelineJob(id="manual-alignment", user_id=7, stage="alignment",
+                          status="PENDING", payload={"sample": "D2", "trimmed_names": names,
+                                                     "wait_for_post_trim": True},
+                          result={"waiting_for": "quality_analysis_post_trim"})
+        self.db.add(job)
+        for mate, status in ((1, "COMPLETED"), (2, "RUNNING")):
+            self.db.add(SampleStage(user_id=7, stage_id=4, name=f"D2_{mate}_post_trim.html",
+                                    status=status))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator.enqueue_pipeline_job") as enqueue:
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_not_called()
+            self.db.query(SampleStage).filter_by(user_id=7, stage_id=4,
+                                                 name="D2_2_post_trim.html").one().status = "COMPLETED"
+            self.db.commit()
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_called_once_with("manual-alignment", queue="alignment")
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_called_once()
+
+    def test_manual_alignment_fails_when_post_trim_quality_fails(self):
+        self.db.add(PipelineJob(id="manual-failed-qc", user_id=7, stage="alignment",
+                                status="PENDING", payload={"sample": "D2", "trimmed_names":
+                                    ["D2_1_trimmed.fastq.gz"], "wait_for_post_trim": True},
+                                result={"waiting_for": "quality_analysis_post_trim"}))
+        self.db.add(SampleStage(user_id=7, stage_id=4, name="D2_1_post_trim.html",
+                                status="FAILED"))
+        self.db.add(SampleStage(user_id=7, stage_id=5, name="D2.bam", sra_code="D2",
+                                status="PENDING"))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator.enqueue_pipeline_job") as enqueue:
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_not_called()
+        self.assertEqual("FAILED", self.db.get(PipelineJob, "manual-failed-qc").status)
+        self.assertEqual("FAILED", self.db.query(SampleStage).filter_by(
+            user_id=7, stage_id=5, name="D2.bam").one().status)
 
     def test_alignment_waits_for_trimmed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -86,13 +86,14 @@ async def update_quality_analysis_table(page, token, user_id):
         logger.error(f"An error occurred while updating the quality analysis table: {e}", exc_info=True)
 
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
-    dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
+    image_placeholder = ft.Container(content=initial_graph, expand=True)
+    dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type, image_placeholder)
     preview = getattr(page, "container_preview", None)
     if isinstance(preview, ft.Container):
         preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[
             ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
-            dropdown_menu, initial_graph]))]
+            dropdown_menu, image_placeholder]))]
         page.update()
         return
     # Compatibility with older page layouts.
@@ -108,7 +109,7 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
                                     content=ft.Column(
                                         controls=[ft.Row([close_figure_button(page, container)],
                                                          alignment=ft.MainAxisAlignment.END),
-                                                  dropdown_menu, initial_graph]
+                                                  dropdown_menu, image_placeholder]
                                     )
                                 )
                             ]

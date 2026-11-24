@@ -101,6 +101,8 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
         else:
             bar.value = None
         current = result.get("progress_message") or ""
+        if status == "PENDING" and result.get("waiting_for") == "quality_analysis_post_trim":
+            current = t("pipeline_waiting", lang)
         completed = result.get("completed_samples")
         total = result.get("total_samples")
         if status == "COMPLETED" and not total:
