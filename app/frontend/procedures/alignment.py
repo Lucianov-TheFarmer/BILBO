@@ -6,7 +6,7 @@ import json
 import re
 from .jobs import wait_with_progress
 from .utils import log_message
-from .viewer import view_alignment_log
+from .viewer import view_alignment_log, view_alignment_metrics
 from .translations import t
 
 # Configure logging
@@ -67,7 +67,7 @@ def create_tabela_alinhamento(page, token):
             ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
-            ft.DataColumn(ft.Text("Log", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),
         ],
         rows=[],
@@ -85,11 +85,15 @@ async def update_tabela_alinhamento(page, token, user_id):
                 samples = response.json()
                 tabela_alinhamento.rows.clear()
                 for sample in samples:
-                    def view_log_handler(e, s=sample["name"]):
-                        asyncio.run(view_alignment_log(page, token, s, user_id))
+                    async def view_log_handler(e, s=sample["name"]):
+                        await view_alignment_log(page, token, s, user_id)
+
+                    async def view_metrics_handler(e, s=sample["name"]):
+                        await view_alignment_metrics(page, s, user_id)
 
                     sample_status = str(sample.get("status") or "").strip().lower()
                     log_button_disabled = sample_status == "pending"
+                    metrics_button_disabled = sample_status != "completed"
 
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
@@ -98,12 +102,20 @@ async def update_tabela_alinhamento(page, token, user_id):
                                 ft.DataCell(ft.Text(sample["size"], size=12)),
                                 ft.DataCell(ft.Text(sample["status"], size=12)),
                                 ft.DataCell(
-                                    ft.IconButton(
-                                        icon="description",
-                                        tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
-                                        on_click=view_log_handler if not log_button_disabled else None,
-                                        disabled=log_button_disabled,
-                                    )
+                                    ft.Row(spacing=0, controls=[
+                                        ft.IconButton(
+                                            icon="description",
+                                            tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
+                                            on_click=view_log_handler,
+                                            disabled=log_button_disabled,
+                                        ),
+                                        ft.IconButton(
+                                            icon="analytics",
+                                            tooltip=t("alignment_metrics_open", page.session.get("lang") or "pt"),
+                                            on_click=view_metrics_handler,
+                                            disabled=metrics_button_disabled,
+                                        ),
+                                    ])
                                 ),
                                 ft.DataCell(ft.Checkbox()),
                             ]

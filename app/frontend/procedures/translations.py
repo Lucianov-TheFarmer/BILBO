@@ -1105,6 +1105,62 @@ _PIPELINE_MONITOR = {
 for _language, _entries in _PIPELINE_MONITOR.items():
     TRADUCOES[_language].update(_entries)
 
+_ALIGNMENT_METRICS = {
+    "pt": {
+        "alignment_metrics_open": "Ver resultados do alinhamento",
+        "alignment_metrics_title": "Resultados do alinhamento",
+        "alignment_metrics_missing": "O resumo do STAR não está disponível para esta amostra.",
+        "alignment_metrics_note": "Métricas do STAR antes da remoção de duplicatas pelo Picard. Em dados pareados, cada entrada corresponde a um par de leituras.",
+        "alignment_metrics_input": "Entradas analisadas",
+        "alignment_metrics_mapped": "Mapeadas",
+        "alignment_metrics_unique": "Mapeamento único",
+        "alignment_metrics_multiple": "Múltiplos loci",
+        "alignment_metrics_too_many": "Loci demais para atribuição",
+        "alignment_metrics_unmapped": "Não mapeadas",
+        "alignment_metrics_mismatch": "Mismatches em excesso",
+        "alignment_metrics_short": "Alinhamento curto demais",
+        "alignment_metrics_other": "Outras causas",
+        "alignment_metrics_splices": "Junções de splicing",
+        "alignment_metrics_mismatch_rate": "Taxa de mismatch por base",
+    },
+    "en": {
+        "alignment_metrics_open": "View alignment results",
+        "alignment_metrics_title": "Alignment results",
+        "alignment_metrics_missing": "The STAR summary is unavailable for this sample.",
+        "alignment_metrics_note": "STAR metrics before Picard duplicate removal. For paired-end data, each input represents a read pair.",
+        "alignment_metrics_input": "Input reads or pairs",
+        "alignment_metrics_mapped": "Mapped",
+        "alignment_metrics_unique": "Uniquely mapped",
+        "alignment_metrics_multiple": "Multiple loci",
+        "alignment_metrics_too_many": "Too many loci to assign",
+        "alignment_metrics_unmapped": "Unmapped",
+        "alignment_metrics_mismatch": "Too many mismatches",
+        "alignment_metrics_short": "Alignment too short",
+        "alignment_metrics_other": "Other reasons",
+        "alignment_metrics_splices": "Splice junctions",
+        "alignment_metrics_mismatch_rate": "Mismatch rate per base",
+    },
+    "es": {
+        "alignment_metrics_open": "Ver resultados del alineamiento",
+        "alignment_metrics_title": "Resultados del alineamiento",
+        "alignment_metrics_missing": "El resumen de STAR no está disponible para esta muestra.",
+        "alignment_metrics_note": "Métricas de STAR antes de eliminar duplicados con Picard. En datos pareados, cada entrada representa un par de lecturas.",
+        "alignment_metrics_input": "Lecturas o pares de entrada",
+        "alignment_metrics_mapped": "Mapeadas",
+        "alignment_metrics_unique": "Mapeo único",
+        "alignment_metrics_multiple": "Múltiples loci",
+        "alignment_metrics_too_many": "Demasiados loci para asignar",
+        "alignment_metrics_unmapped": "No mapeadas",
+        "alignment_metrics_mismatch": "Demasiados desajustes",
+        "alignment_metrics_short": "Alineamiento demasiado corto",
+        "alignment_metrics_other": "Otras causas",
+        "alignment_metrics_splices": "Uniones de empalme",
+        "alignment_metrics_mismatch_rate": "Tasa de desajustes por base",
+    },
+}
+for _language, _entries in _ALIGNMENT_METRICS.items():
+    TRADUCOES[_language].update(_entries)
+
 
 def t(key, lang="pt"):
     if lang not in TRADUCOES:

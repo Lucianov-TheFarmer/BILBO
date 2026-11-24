@@ -9,6 +9,7 @@ from io import BytesIO
 import base64  # New import
 import re  # Importar regex
 from .translations import t
+from .alignment_metrics import parse_star_final_log
 
 
 def close_figure_button(page, preview):
@@ -249,6 +250,70 @@ async def view_alignment_log(page, token, sample_name, user_id):
     except Exception as e:
         logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
         await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
+
+
+async def view_alignment_metrics(page, sample_name, user_id):
+    """Show STAR mapping counts for a completed alignment in the shared preview."""
+    lang = page.session.get("lang") or "pt"
+    preview = getattr(page, "container_preview", None)
+    if not isinstance(preview, ft.Container):
+        return
+
+    def count(value):
+        separator = "." if lang in ("pt", "es") else ","
+        return f"{int(value):,}".replace(",", separator)
+
+    def percent(value, total):
+        number = f"{100 * value / total:.2f}" if total else "0.00"
+        return number.replace(".", "," if lang in ("pt", "es") else ".") + "%"
+
+    def metric_row(label, value, total, color):
+        return ft.Container(padding=ft.padding.symmetric(vertical=5), content=ft.Column([
+            ft.Row([ft.Text(label, expand=True),
+                    ft.Text(f"{count(value)} · {percent(value, total)}", weight="bold")]),
+            ft.ProgressBar(value=min(1, value / total) if total else 0, color=color),
+        ], spacing=3))
+
+    content = []
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}\.bam", sample_name):
+        content.append(ft.Text(t("alignment_metrics_missing", lang)))
+    else:
+        base_name = sample_name.removesuffix(".bam")
+        path = Path("..") / "users" / str(user_id) / "alignment" / base_name / f"{base_name}Log.final.out"
+        try:
+            metrics = parse_star_final_log(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            content.append(ft.Text(t("alignment_metrics_missing", lang)))
+        else:
+            total = metrics["input_reads"]
+            content.extend([
+                ft.Text(t("alignment_metrics_note", lang), size=12, italic=True),
+                ft.Text(f"{t('alignment_metrics_input', lang)}: {count(total)}", weight="bold"),
+                ft.Text(f"{t('alignment_metrics_mapped', lang)}: "
+                        f"{count(metrics['mapped_reads'])} · {percent(metrics['mapped_reads'], total)}",
+                        weight="bold"),
+                metric_row(t("alignment_metrics_unique", lang), metrics["unique_reads"], total, "green"),
+                metric_row(t("alignment_metrics_multiple", lang), metrics["multiple_loci"], total, "blue"),
+                metric_row(t("alignment_metrics_too_many", lang), metrics["too_many_loci"], total, "orange"),
+                ft.Text(f"{t('alignment_metrics_unmapped', lang)}: "
+                        f"{count(metrics['unmapped_reads'])} · {percent(metrics['unmapped_reads'], total)}",
+                        weight="bold"),
+                metric_row(t("alignment_metrics_mismatch", lang), metrics["unmapped_mismatches"], total, "red"),
+                metric_row(t("alignment_metrics_short", lang), metrics["unmapped_short"], total, "red"),
+                metric_row(t("alignment_metrics_other", lang), metrics["unmapped_other"], total, "red"),
+            ])
+            if "splices" in metrics:
+                content.append(ft.Text(f"{t('alignment_metrics_splices', lang)}: {count(metrics['splices'])}"))
+            if "mismatch_rate" in metrics:
+                rate = f"{metrics['mismatch_rate']:.2f}".replace(".", "," if lang in ("pt", "es") else ".")
+                content.append(ft.Text(f"{t('alignment_metrics_mismatch_rate', lang)}: {rate}%"))
+
+    preview.content.controls = [ft.Container(expand=True, padding=12, content=ft.Column([
+        ft.Row([ft.Text(f"{t('alignment_metrics_title', lang)} — {sample_name}",
+                        weight="bold", expand=True), close_figure_button(page, preview)]),
+        ft.ListView(controls=content, expand=True, spacing=8),
+    ], expand=True))]
+    page.update()
 
 
 async def view_quality_log(page, sample_name, user_id, *, post_trim=False):
