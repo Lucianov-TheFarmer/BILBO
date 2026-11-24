@@ -201,6 +201,8 @@ def download_llm_file(
 @router.delete("/llm/{sheet}")
 def delete_llm_sheet(sheet: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     safe_sheet = ensure_safe_component(sheet, "sheet")
+    from ..services.job_cancellation import cancel_jobs_for_output
+    cancel_jobs_for_output(db, current_user.id, "llm", safe_sheet)
     out_dir = safe_resolve_user_path(settings.users_root, current_user.id, "llm", safe_sheet)
     try:
         if out_dir.exists():
@@ -249,6 +251,14 @@ async def run_llm_route(request: Request, db: Session = Depends(get_db), current
         )
         for sheet in sheets
     ]
+    for sheet in sheets:
+        clustered = db.query(SampleStage).filter_by(user_id=user_id, stage_id=9,
+                                                     name=sheet).first()
+        cluster_file = safe_resolve_user_path(settings.users_root, user_id,
+                                              "clustering", sheet, "clusters.json")
+        if clustered is None or clustered.status != "COMPLETED" or not cluster_file.is_file():
+            raise HTTPException(status_code=409,
+                                detail=f"Wait for semantic clustering to finish: {sheet}")
 
     # BILBO_LLM_REJECT_ACTIVE_DUPLICATES
     active_stages = (
@@ -287,6 +297,8 @@ async def run_llm_route(request: Request, db: Session = Depends(get_db), current
         existing = db.query(SampleStage).filter(SampleStage.user_id == int(user_id), SampleStage.stage_id == 10, SampleStage.name == sheet).first()
         if not existing:
             db.add(SampleStage(stage_id=10, name=sheet, sra_code=None, size="", status="PENDING", user_id=int(user_id)))
+        else:
+            existing.status = "PENDING"
     db.commit()
 
     job = create_job(db, stage="llm", user_id=user_id, payload={"sheets": sheets})

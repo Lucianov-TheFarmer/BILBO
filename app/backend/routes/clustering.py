@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..core.settings import settings
 from ..db.database import get_db
-from ..db.models import SampleStage, User
+from ..db.models import PipelineJob, SampleStage, User
 from ..services.job_service import audit, create_job
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..scripts.generate_rag_html import generate_clustering_html
@@ -73,6 +73,10 @@ async def run_clustering(
     deg_xlsx = deg_dir / "DEG.xlsx"
     if not deg_xlsx.exists():
         raise HTTPException(status_code=404, detail="Arquivo DEG.xlsx não encontrado.")
+    latest_deg = (db.query(PipelineJob).filter_by(user_id=user_id, stage="deg")
+                  .order_by(PipelineJob.created_at.desc()).first())
+    if latest_deg and latest_deg.status != "COMPLETED":
+        raise HTTPException(status_code=409, detail="Wait for differential analysis to finish")
 
     for sheet in sheets:
         out_dir = safe_resolve_user_path(settings.users_root, user_id, "clustering", sheet)
@@ -84,6 +88,8 @@ async def run_clustering(
         )
         if not existing:
             db.add(SampleStage(stage_id=9, name=sheet, sra_code=None, size="", status="PENDING", user_id=int(user_id)))
+        else:
+            existing.status = "PENDING"
     db.commit()
 
     job = create_job(db, stage="clustering", user_id=user_id, payload={"sheets": sheets})
@@ -211,6 +217,9 @@ def view_clustering_report(
 def delete_clustering_sheet(sheet: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Delete clustering files and the corresponding SampleStage entry."""
     safe_sheet = ensure_safe_component(sheet, "sheet")
+    from ..services.job_cancellation import cancel_jobs_for_output
+    cancel_jobs_for_output(db, current_user.id, "llm", safe_sheet)
+    cancel_jobs_for_output(db, current_user.id, "clustering", safe_sheet)
     out_dir = safe_resolve_user_path(settings.users_root, current_user.id, "clustering", safe_sheet)
     llm_out_dir = safe_resolve_user_path(settings.users_root, current_user.id, "llm", safe_sheet)
     # remove files and directory

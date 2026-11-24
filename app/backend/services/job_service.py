@@ -107,6 +107,11 @@ def set_job_finished(
     if job is None:
         raise ValueError(f"Job {job_id} not found")
 
+    # A worker may return after cancellation was requested. Its late result
+    # must never turn a canceled job back into COMPLETED or FAILED.
+    if job.status == PipelineStatus.CANCELED.value:
+        return job
+
     job.status = status.value
     job.result = result or {}
     job.error_message = error_message

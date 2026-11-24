@@ -212,7 +212,8 @@ async def show_quality_analysis_post_trim_modal(page, token, container_menu_dire
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_4.status_code} - {response_stage_4.text}")
                 analyzed_samples = set()
 
-            samples = [sample for sample in trimmed_samples if sample["name"] not in analyzed_samples]
+            samples = [sample for sample in trimmed_samples
+                       if sample["status"] == "COMPLETED" and sample["name"] not in analyzed_samples]
             logger.info(f"Samples available for post-trimmagem quality analysis: {samples}")
 
     except Exception as e:

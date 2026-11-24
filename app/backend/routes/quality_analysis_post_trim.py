@@ -9,6 +9,7 @@ from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import SampleStage, User
 from ..services.job_service import audit, create_job, normalize_status
+from ..services.job_cancellation import cancel_jobs_for_output
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
 from ..utils_paths import safe_resolve_user_path
@@ -48,6 +49,9 @@ def start_quality_analysis_post_trim(request: QualityAnalysisPostTrimRequest, db
 
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
+        source = safe_resolve_user_path(settings.users_root, user_id, "trimmed", name)
+        if db_sample_stage.status != "COMPLETED" or not source.is_file() or source.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail=f"Wait for trimming to finish: {name}")
 
         basename = _strip_trimmed_fastq_suffix(db_sample_stage.name)
 
@@ -119,6 +123,8 @@ def update_quality_analysis_post_trim_status(
 
 @router.delete("/quality_analysis_post_trim/{name}")
 def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if cancel_jobs_for_output(db, current_user.id, "quality_analysis_post_trim", name):
+        return {"message": f"Post-trim quality analysis {name} canceled; partial files removed"}
     # Encontrar o registro pelo campo 'name' e 'stage_id=4'
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.name == name,

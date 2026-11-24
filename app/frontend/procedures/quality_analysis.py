@@ -195,7 +195,8 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_2.status_code} - {response_stage_2.text}")
                 analyzed_samples = set()
 
-            samples = [sample for sample in downloaded_samples if sample["name"] not in analyzed_samples]
+            samples = [sample for sample in downloaded_samples
+                       if sample["status"] == "COMPLETED" and sample["name"] not in analyzed_samples]
             logger.info(f"Amostras disponíveis para análise de qualidade: {samples}")
 
     except Exception as e:

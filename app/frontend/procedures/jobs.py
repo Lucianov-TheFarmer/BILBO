@@ -75,10 +75,11 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
     label = ft.Text(title)
     detail = ft.Text("0%", size=11)
     bar = ft.ProgressBar(value=0, width=260)
-    terminal.controls.append(ft.Container(
+    progress_card = ft.Container(
         border=ft.border.all(1, "black12"), border_radius=8,
         padding=ft.padding.symmetric(horizontal=10, vertical=8),
-        content=ft.Column(spacing=4, controls=[label, bar, detail])))
+        content=ft.Column(spacing=4, controls=[label, bar, detail]))
+    terminal.controls.append(progress_card)
     page.update()
 
     async def update(payload):
@@ -90,7 +91,8 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
         status = payload.get("status") or "PENDING"
         lang = page.session.get("lang") or "pt"
         status_label = t({"PENDING": "drive_queued", "RUNNING": "status_running",
-                          "COMPLETED": "drive_job_complete", "FAILED": "drive_job_failed"}.get(status, status), lang)
+                          "COMPLETED": "drive_job_complete", "FAILED": "drive_job_failed",
+                          "CANCELED": "pipeline_canceled"}.get(status, status), lang)
         percent = result.get("progress_percent")
         if status == "COMPLETED":
             percent = 100
@@ -126,9 +128,19 @@ async def wait_with_progress(page, token: str, job_id: str, title: str, on_updat
                 minutes=max(1, int(warning.get("silent_seconds", 0)) // 60))
         if status in ("FAILED", "CANCELED"):
             bar.color = "red"
+            bar.visible = False
             detail.value = str(payload.get("error_message") or detail.value)
+            await log_message(page, f"{title}: {detail.value}")
         elif status == "COMPLETED":
             bar.color = "green"
+            bar.visible = False
         page.update()
 
-    return await wait_for_job(token, job_id, on_update=update, page=page)
+    try:
+        return await wait_for_job(token, job_id, on_update=update, page=page)
+    except Exception as exc:
+        bar.visible = False
+        detail.value = str(exc)
+        await log_message(page, f"{title}: {exc}")
+        page.update()
+        raise

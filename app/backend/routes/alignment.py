@@ -150,6 +150,14 @@ def add_samples(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
             )
+        for path in (sample_path_1, sample_path_2):
+            if path is None:
+                continue
+            trimmed = db.query(SampleStage).filter_by(user_id=user_id, stage_id=3,
+                                                       name=os.path.basename(path)).first()
+            if trimmed is None or trimmed.status != "COMPLETED":
+                raise HTTPException(status_code=409,
+                                    detail=f"Wait for trimming to finish: {os.path.basename(path)}")
 
         existing = db.query(SampleStage).filter(
             SampleStage.stage_id == 5, SampleStage.user_id == user_id,
@@ -207,6 +215,17 @@ async def start_alignment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Sample files not found: [{sample_path_1}, {sample_path_2}]",
         )
+    trimmed_names = [os.path.basename(sample_path_1)]
+    if sample_path_2:
+        trimmed_names.append(os.path.basename(sample_path_2))
+    for name in trimmed_names:
+        row = db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, name=name).first()
+        if row is None or row.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for trimming to finish: {name}")
+        qc_name = re.sub(r"_trimmed\.fastq(?:\.gz)?$", "_post_trim.html", name)
+        qc = db.query(SampleStage).filter_by(user_id=user_id, stage_id=4, name=qc_name).first()
+        if qc is not None and qc.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for post-trim quality to finish: {name}")
 
     # Keep the sample queued until a worker actually starts it.
     sample_stage = db.query(SampleStage).filter(
@@ -298,6 +317,9 @@ async def update_alignment_status(
 @router.delete("/alignment/{sample_name}")
 def delete_alignment_result(sample_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Delete alignment results for a specific sample."""
+    from ..services.job_cancellation import cancel_jobs_for_output
+    if cancel_jobs_for_output(db, current_user.id, "alignment", sample_name):
+        return {"message": f"Alignment {sample_name} canceled; partial files removed"}
     user_id = current_user.id
     alignment_dir = f"../users/{user_id}/alignment/{sample_name}".replace(".bam", "")
 

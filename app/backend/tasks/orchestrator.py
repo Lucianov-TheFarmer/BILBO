@@ -271,7 +271,9 @@ def _advance_run(db, run: PipelineRun) -> None:
             if job is None:
                 step.status, step.error_message = "FAILED", "Job record disappeared"
             elif job.status in ("FAILED", "CANCELED"):
-                step.status, step.error_message = "FAILED", job.error_message or "Job failed"
+                step.status = job.status
+                step.error_message = job.error_message or ("Job canceled" if job.status == "CANCELED" else "Job failed")
+                step.finished_at = datetime.now(timezone.utc)
             elif job.status == "COMPLETED":
                 if step.stage == "deg":
                     output_ok = (_root(run.user_id, "pipelines", run.id, "DEG", "DEG.xlsx")).is_file()
@@ -290,15 +292,11 @@ def _advance_run(db, run: PipelineRun) -> None:
                 step.status = job.status
             db.commit()
             continue
-        if step.stage != "deg" and _ready(db, run.user_id, step.sample, step.stage, paired):
-            step.status = "SKIPPED"
-            step.error_message = None
-            step.finished_at = datetime.now(timezone.utc)
-            db.commit()
-            continue
         deps = _dependencies(run, step)
-        dependency_steps = ([steps.get((name, deps[0])) for name in samples] if step.stage == "deg" and deps
-                            else [steps.get((step.sample, name)) for name in deps])
+        # A stage is a barrier for the entire run: no sample enters the next
+        # stage while another sample is still processing the preceding stage.
+        dependency_steps = [steps.get((name, dependency)) for dependency in deps
+                            for name in samples]
         if any(dep and dep.status in ("FAILED", "BLOCKED", "CANCELED") for dep in dependency_steps):
             failed = [dep.stage for dep in dependency_steps if dep and dep.status in ("FAILED", "BLOCKED", "CANCELED")]
             step.status, step.error_message = "BLOCKED", f"Etapa anterior falhou: {', '.join(failed)}"
@@ -307,6 +305,12 @@ def _advance_run(db, run: PipelineRun) -> None:
         if any(dep and dep.status not in ("COMPLETED", "SKIPPED") for dep in dependency_steps):
             waiting = [dep.stage for dep in dependency_steps if dep and dep.status not in ("COMPLETED", "SKIPPED")]
             _set_waiting_reason(db, step, f"Aguardando etapa anterior: {', '.join(waiting[:4])}")
+            continue
+        if step.stage != "deg" and _ready(db, run.user_id, step.sample, step.stage, paired):
+            step.status = "SKIPPED"
+            step.error_message = None
+            step.finished_at = datetime.now(timezone.utc)
+            db.commit()
             continue
         required_stage = {"qc_raw": "input", "trimming": "input", "qc_trim": "trimming",
                           "alignment": "trimming", "quantification": "alignment",
@@ -350,7 +354,8 @@ def _advance_run(db, run: PipelineRun) -> None:
         db.commit()
     statuses = {step.status for step in run.steps}
     if statuses <= TERMINAL:
-        run.status = "FAILED" if statuses & {"FAILED", "BLOCKED"} else "COMPLETED"
+        run.status = ("CANCELED" if "CANCELED" in statuses else
+                      "FAILED" if statuses & {"FAILED", "BLOCKED"} else "COMPLETED")
         run.finished_at = datetime.now(timezone.utc)
         if run.status == "FAILED":
             run.error_message = "One or more pipeline steps failed"

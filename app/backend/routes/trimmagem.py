@@ -84,6 +84,13 @@ def enqueue_trimmagem_jobs(
         base, _, _ = _parse_fastq_name(name)
         if not os.path.isfile(os.path.join(root, base, name)) and not os.path.isfile(os.path.join(root, name)):
             raise HTTPException(status_code=400, detail=f"FASTQ not found: {name}")
+        source = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=1, name=name).first()
+        if source is None or source.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for sample download to finish: {name}")
+        qc_name = _strip_fastq_extension(name) + ".html"
+        qc = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=2, name=qc_name).first()
+        if qc is not None and qc.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for quality analysis to finish: {name}")
     params = {"threads": threads, "memory_mb": memory_mb, "phred": phred, "illumina_clip": adapter,
               "sliding_window": window, "max_info": max_info_params,
               "leading": leading, "trailing": trailing, "crop": crop,
@@ -516,6 +523,9 @@ async def delete_trimmed_sample(
     current_user: User = Depends(get_current_user),
 ):
     user_id = current_user.id
+    from ..services.job_cancellation import cancel_jobs_for_output
+    if cancel_jobs_for_output(db, user_id, "trimming", sample_name):
+        return {"message": f"Trimming {sample_name} canceled; partial files removed"}
 
     if os.path.basename(sample_name) != sample_name:
         raise HTTPException(

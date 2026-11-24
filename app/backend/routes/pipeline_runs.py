@@ -315,11 +315,19 @@ def cancel_run(run_id: str, db: Session = Depends(get_db), user: User = Depends(
         raise HTTPException(404, "Pipeline run not found")
     if run.status not in ("DRAFT", "RUNNING"):
         raise HTTPException(409, "Pipeline is already finished")
+    from ..services.job_cancellation import cancel_active_job
+    for step in run.steps:
+        if step.job_id and step.status in ("PENDING", "RUNNING"):
+            job = db.query(PipelineJob).filter(PipelineJob.id == step.job_id,
+                PipelineJob.user_id == user.id).first()
+            if job:
+                cancel_active_job(db, job)
     run.status = "CANCELED"
     run.finished_at = datetime.now(timezone.utc)
     for step in run.steps:
-        if step.status == "WAITING":
+        if step.status in ("WAITING", "PENDING", "RUNNING"):
             step.status = "CANCELED"
+            step.finished_at = datetime.now(timezone.utc)
     db.commit()
     return _detail(run)
 

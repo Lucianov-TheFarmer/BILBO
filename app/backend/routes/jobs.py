@@ -22,6 +22,7 @@ from ..schemas.jobs import (
     JobStatusResponse,
 )
 from ..services.job_service import audit, create_job
+from ..services.job_cancellation import cancel_active_job
 from ..tasks.celery_app import celery_app
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
@@ -441,14 +442,7 @@ def cancel_job(
     if job.status in {PipelineStatus.COMPLETED.value, PipelineStatus.FAILED.value, PipelineStatus.CANCELED.value}:
         return {"job_id": job.id, "status": job.status, "message": "Job already finished"}
 
-    try:
-        celery_app.control.revoke(job.id, terminate=True, signal="SIGTERM")
-    except Exception:
-        pass
-
-    job.status = PipelineStatus.CANCELED.value
-    job.finished_at = datetime.now(timezone.utc)
-    db.commit()
+    cancel_active_job(db, job)
     audit(db, action="job_canceled", user_id=current_user.id, stage=job.stage, job_id=job.id)
 
     return {"job_id": job.id, "status": job.status, "message": "Cancellation requested"}

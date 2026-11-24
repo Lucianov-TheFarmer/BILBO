@@ -131,6 +131,20 @@ class _TrimmingGrowthClient(_Client):
         return await super().get(url)
 
 
+class _CanceledClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "cancel-run", "status": "CANCELED",
+                               "config": {"name": "Canceled"},
+                               "steps": [{"id": "cancel-step", "stage": "trimming",
+                                          "sample": "A", "status": "CANCELED",
+                                          "job_id": "cancel-job"}]}])
+        if url.endswith("/jobs/cancel-job"):
+            return _Response({"job_id": "cancel-job", "status": "CANCELED",
+                              "result": {"progress_log": "[now] PROGRESS: Trimmomatic cancelado pelo usuário."}})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
     async def _one_poll(self, client, tracked_run_id=None, lang="pt"):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
@@ -209,6 +223,32 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
         detail = terminal.content.controls[0].content.controls[3].controls[0].value
         self.assertIn("2.00 GiB", detail)
         self.assertIn("Saída em crescimento", detail)
+
+    async def test_failed_direct_job_hides_progress_bar(self):
+        from frontend.procedures import jobs as job_ui
+        terminal = ft.Container(content=ft.ListView(controls=[]))
+        page = SimpleNamespace(container_terminal=terminal,
+                               session={"lang": "pt"}, update=lambda: None)
+
+        async def failed_job(_token, _job_id, on_update=None, page=None):
+            payload = {"status": "FAILED", "result": {},
+                       "error_message": "FastQC: arquivo inválido"}
+            await on_update(payload)
+            return payload
+
+        with patch.object(job_ui, "wait_for_job", failed_job):
+            await job_ui.wait_with_progress(page, "token", "job", "Qualidade")
+        card = next(control for control in terminal.content.controls
+                    if isinstance(control, ft.Container))
+        self.assertFalse(card.content.controls[1].visible)
+        self.assertIn("arquivo inválido", card.content.controls[2].value)
+
+    async def test_canceled_pipeline_hides_bar_and_logs_cancellation(self):
+        terminal, _ = await self._one_poll(_CanceledClient(), tracked_run_id="cancel-run")
+        self.assertIn("cancelado pelo usuário", terminal.content.controls[0].value)
+        card = terminal.content.controls[1]
+        self.assertFalse(card.content.controls[2].visible)
+        self.assertIn("Cancelado", card.content.controls[3].controls[0].value)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))

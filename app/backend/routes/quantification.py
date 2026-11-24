@@ -62,6 +62,8 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
 
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sample_name} not found")
+        if db_sample_stage.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for alignment to finish: {sample_name}")
 
         # Criar ou reutilizar o estágio de quantificação.
         # Evita duplicatas caso a requisição seja repetida.
@@ -130,6 +132,9 @@ async def start_processing(
             selected_genome = None
 
     for sample_name in request.samples:
+        alignment = db.query(SampleStage).filter_by(user_id=user_id, stage_id=5, name=sample_name).first()
+        if alignment is None or alignment.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for alignment to finish: {sample_name}")
         sample_stage = db.query(SampleStage).filter(
             SampleStage.name == f"{sample_name.replace('.bam', '.txt')}",
             SampleStage.stage_id == 6,
@@ -212,6 +217,9 @@ def delete_quantification_samples(
         # Garantir que o nome do arquivo não tenha duplicação de extensão
         if not sample_name.endswith(".txt"):
             sample_name += ".txt"
+        from ..services.job_cancellation import cancel_jobs_for_output
+        if cancel_jobs_for_output(db, user_id, "quantification", sample_name):
+            continue
 
         quantification_path = f"../users/{user_id}/quantification/{sample_name}"
 

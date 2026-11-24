@@ -162,7 +162,13 @@ def delete_sample(
 
     active_job = _latest_samples_download_job(db, current_user.id, sra_code_basename)
     if active_job and active_job.status in ("PENDING", "RUNNING"):
-        raise HTTPException(status_code=409, detail="Wait for the active SRA download before deleting this sample")
+        from ..services.job_cancellation import cancel_active_job
+        cancel_active_job(db, active_job)
+        all_samples = db.query(SampleStage).filter(
+            SampleStage.sra_code == sra_code_basename,
+            SampleStage.stage_id == 1,
+            SampleStage.user_id == current_user.id,
+        ).all()
 
     deleted_names = [sample.name for sample in all_samples]
 

@@ -285,7 +285,7 @@ async def show_pipeline_config_modal(page, token, user_id):
 
     async def action(run_id, endpoint):
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=120 if endpoint == "cancel" else 30) as client:
                 response = await client.post(f"{API}/pipeline/runs/{run_id}/{endpoint}", headers=headers)
             if response.status_code == 200:
                 page.pipeline_monitor_run_id = run_id
@@ -466,7 +466,7 @@ async def show_pipeline_config_modal(page, token, user_id):
             ft.Row([ft.Text(t("pipeline_samples", lang), weight=ft.FontWeight.BOLD),
                     sample_count], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             select_all,
-            sample_choices,
+            ft.Container(content=sample_choices, padding=ft.padding.only(right=28)),
             ft.Text(t("pipeline_import_hint", lang), size=12),
             ft.TextButton(t("pipeline_refresh", lang), icon="refresh",
                           on_click=lambda _: page.run_task(refresh_options)),
@@ -510,7 +510,8 @@ async def show_pipeline_config_modal(page, token, user_id):
             section("clustering", [ft.Text(t("pipeline_clustering_hint", lang), size=11)]),
             section("llm", [ft.Text(t("pipeline_llm_hint", lang), size=11)]),
             ft.Divider(),
-            ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,
+            ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD),
+            ft.Container(content=recent, padding=ft.padding.only(right=28)),
         ], spacing=12)),
         actions=[ft.TextButton(t("menu_close", lang), on_click=close),
                  ft.TextButton(t("pipeline_save_draft", lang), on_click=lambda _: page.run_task(save)),

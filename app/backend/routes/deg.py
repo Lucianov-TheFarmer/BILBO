@@ -53,6 +53,19 @@ async def run_deg(
     if not os.path.exists(preprocess_dir):
         logger.error(f"Diretório preprocess não encontrado: {preprocess_dir}")
         raise HTTPException(status_code=500, detail=f"Diretório preprocess não encontrado: {preprocess_dir}")
+    targets = Path(preprocess_dir) / "Targets.txt"
+    if not targets.is_file():
+        raise HTTPException(status_code=409, detail="Wait for quantification to finish: Targets.txt is missing")
+    import csv
+    with targets.open(encoding="utf-8") as handle:
+        selected_counts = [Path(row["files"]).name for row in csv.DictReader(handle, delimiter="\t")]
+    if not selected_counts:
+        raise HTTPException(status_code=409, detail="Select quantified samples before differential analysis")
+    for filename in selected_counts:
+        count = db.query(SampleStage).filter_by(user_id=user_id, stage_id=6, name=filename).first()
+        count_path = safe_resolve_user_path(settings.users_root, user_id, "quantification", filename)
+        if count is None or count.status != "COMPLETED" or not count_path.is_file() or count_path.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail=f"Wait for quantification to finish: {filename}")
 
     # Buscar todos os contrastes do usuário e salvar contrasts_db.txt
     contrasts = db.query(SampleStage).filter(

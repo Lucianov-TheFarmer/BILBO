@@ -73,7 +73,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                 if run:
                     steps = run["steps"]
                     active = [step for step in steps if step["status"] in ACTIVE]
-                    observed = [step for step in steps if step["status"] in ACTIVE or step["status"] == "FAILED"][:12]
+                    observed = [step for step in steps if step["status"] in ACTIVE or step["status"] in ("FAILED", "CANCELED")][:12]
                     observed += [step for step in steps if step["status"] == "COMPLETED"][-4:]
                     jobs = await asyncio.gather(*[
                         client.get(f"{API}/jobs/{step['job_id']}", headers=headers)
@@ -106,11 +106,12 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                     running=counts["RUNNING"], queued=counts["PENDING"],
                     waiting=counts["WAITING"], failed=counts["FAILED"])
                 bar.value = completed / len(steps) if steps else 0
+                bar.visible = status == "RUNNING"
                 bar.color = "red" if status == "FAILED" else "green" if status == "COMPLETED" else None
                 details.controls.clear()
                 visible = [step for step in steps if step["status"] in ACTIVE]
                 if not visible:
-                    visible = [step for step in steps if step["status"] == "FAILED"][:4]
+                    visible = [step for step in steps if step["status"] in ("FAILED", "CANCELED")][:4]
                 if not visible and status == "COMPLETED":
                     visible = [step for step in steps if step["status"] == "COMPLETED"][-4:]
                 if not visible and status == "RUNNING":
@@ -232,6 +233,7 @@ async def monitor_pipeline(page, token, terminal_container, refresh_tables):
                                  1 if llm_job["status"] == "COMPLETED" else
                                  0 if llm_job["status"] == "PENDING" else None)
                 llm_bar.color = "red" if llm_job["status"] == "FAILED" else "blue"
+                llm_bar.visible = llm_job["status"] in ACTIVE
                 page.update()
             elif llm_card in terminal.controls:
                 hide_card(llm_card)

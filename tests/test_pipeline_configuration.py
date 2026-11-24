@@ -19,8 +19,9 @@ from backend.db.database import Base  # noqa: E402
 from backend.db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, Stage, User  # noqa: E402
 from backend.services.analysis_design import validate_design  # noqa: E402
 from backend.tasks.orchestrator import _advance_run  # noqa: E402
-from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run,
+from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run, cancel_run,
                                           update_draft, delete_draft)  # noqa: E402
+from backend.services import job_cancellation  # noqa: E402
 from backend.routes.pipeline_runs import options as pipeline_options  # noqa: E402
 from backend.routes.contrast_design import (ContrastConfiguration, preview_configuration,
                                             save_configuration)  # noqa: E402
@@ -140,6 +141,58 @@ class PipelineConfigurationTest(unittest.TestCase):
                 self.db.commit()
                 _advance_run(self.db, run)
                 self.assertEqual(["trimming", "alignment"], dispatched)
+
+    def test_next_stage_waits_for_every_sample_in_previous_stage(self):
+        run = PipelineRun(id="barrier-run", user_id=7, status="RUNNING", config={
+            "samples": [{"name": name, "source": "existing", "paired": True}
+                        for name in ("A", "B")],
+            "stages": {"qc_raw": True, "trimming": True},
+            "trimming": {"threads": 2},
+        })
+        self.db.add(run)
+        self.db.add(PipelineJob(id="qc-B-job", user_id=7, stage="quality_analysis",
+                                status="RUNNING", payload={"samples": ["B_1.fastq.gz"]}))
+        for sample in ("A", "B"):
+            self.db.add(PipelineStep(id=f"input-{sample}", run_id=run.id, sample=sample,
+                                     stage="input", status="COMPLETED"))
+            self.db.add(PipelineStep(id=f"qc-{sample}", run_id=run.id, sample=sample,
+                                     stage="qc_raw", status="COMPLETED" if sample == "A" else "RUNNING",
+                                     job_id="qc-B-job" if sample == "B" else None))
+            self.db.add(PipelineStep(id=f"trim-{sample}", run_id=run.id, sample=sample,
+                                     stage="trimming", status="WAITING"))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator._ready", return_value=False), \
+             patch("backend.tasks.orchestrator._dispatch") as dispatch:
+            _advance_run(self.db, run)
+        dispatch.assert_not_called()
+        self.assertTrue(all(step.status == "WAITING" for step in run.steps if step.stage == "trimming"))
+
+    def test_cancel_pipeline_stops_active_step_and_removes_partial_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / "7" / "trimmed"
+            folder.mkdir(parents=True)
+            output = folder / "D2_1_trimmed.fastq.gz"
+            output.write_bytes(b"partial")
+            run = PipelineRun(id="cancel-run", user_id=7, status="RUNNING", config={
+                "name": "Cancel test", "samples": [{"name": "D2", "paired": True}],
+                "stages": {"trimming": True}})
+            self.db.add(run)
+            self.db.add(PipelineJob(id="cancel-job", user_id=7, stage="trimming",
+                                    status="PENDING", payload={"sample": "D2"}))
+            self.db.add(PipelineStep(id="cancel-step", run_id=run.id, sample="D2",
+                                     stage="trimming", status="PENDING", job_id="cancel-job"))
+            self.db.add(SampleStage(user_id=7, stage_id=3, sra_code="D2",
+                                    name=output.name, status="PENDING"))
+            self.db.commit()
+            with patch.object(job_cancellation, "settings", SimpleNamespace(users_root=str(root))), \
+                 patch("backend.services.job_service.settings", SimpleNamespace(users_root=str(root))), \
+                 patch.object(job_cancellation.celery_app.control, "revoke"):
+                result = cancel_run(run.id, self.db, self.db.get(User, 7))
+            self.assertEqual("CANCELED", result["status"])
+            self.assertEqual("CANCELED", self.db.get(PipelineJob, "cancel-job").status)
+            self.assertEqual("CANCELED", self.db.get(PipelineStep, "cancel-step").status)
+            self.assertFalse(output.exists())
 
     def test_pending_drive_sample_can_be_selected_for_inline_model(self):
         for name in ("D3", "C2", "C3"):

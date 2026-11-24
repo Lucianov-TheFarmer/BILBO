@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,10 @@ from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 RETRYABLE_EXCEPTIONS = (TimeoutError, OSError, ConnectionError)
+
+
+class JobCanceled(Exception):
+    """The user canceled an active subprocess job."""
 
 
 
@@ -225,31 +230,65 @@ def _run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=(os.name == "posix"),
     )
+    job_id = _PROGRESS_CONTEXT.get("job_id")
+    user_id = _PROGRESS_CONTEXT.get("user_id")
+    pid_path = (_job_progress_path(str(job_id), int(user_id)).with_suffix(".pid")
+                if os.name == "posix" and job_id and user_id is not None else None)
+    if pid_path is not None:
+        try:
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            proc_stat = Path(f"/proc/{process.pid}/stat")
+            start_ticks = proc_stat.read_text(encoding="ascii").rsplit(")", 1)[1].split()[19]
+            pid_path.write_text(f"{process.pid} {start_ticks}", encoding="ascii")
+        except (OSError, IndexError):
+            logger.warning("Could not register process group for job %s", job_id, exc_info=True)
+            pid_path = None
 
     started = time.monotonic()
-    heartbeat_interval = 30
+    heartbeat_interval = 2
     last_heartbeat = started
     stdout = ""
     stderr = ""
 
-    while True:
-        try:
-            stdout, stderr = process.communicate(
-                timeout=heartbeat_interval
-            )
-            break
-
-        except subprocess.TimeoutExpired:
-            if time.monotonic() - last_heartbeat >= 60:
-                _progress_event(f"{process_name} em execução há {int(time.monotonic() - started)} s.")
-                last_heartbeat = time.monotonic()
-            if phase_name:
-                elapsed = int(time.monotonic() - started)
-                _progress_event(
-                    f"DEG — {phase_name} em andamento "
-                    f"({elapsed} s decorridos)."
-                )
+    try:
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=heartbeat_interval)
+                if job_id:
+                    with SessionLocal() as check_db:
+                        current = check_db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                        if current is not None and current.status == PipelineStatus.CANCELED.value:
+                            raise JobCanceled()
+                break
+            except subprocess.TimeoutExpired:
+                if job_id:
+                    with SessionLocal() as check_db:
+                        current = check_db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                        if current is not None and current.status == PipelineStatus.CANCELED.value:
+                            if os.name == "posix":
+                                os.killpg(process.pid, signal.SIGTERM)
+                            else:
+                                process.terminate()
+                            try:
+                                process.communicate(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                if os.name == "posix":
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                else:
+                                    process.kill()
+                                process.communicate()
+                            raise JobCanceled()
+                if time.monotonic() - last_heartbeat >= 60:
+                    _progress_event(f"{process_name} em execução há {int(time.monotonic() - started)} s.")
+                    last_heartbeat = time.monotonic()
+                if phase_name:
+                    elapsed = int(time.monotonic() - started)
+                    _progress_event(f"DEG — {phase_name} em andamento ({elapsed} s decorridos).")
+    finally:
+        if pid_path is not None:
+            pid_path.unlink(missing_ok=True)
 
     elapsed = int(time.monotonic() - started)
     if process.returncode == 0:
@@ -461,6 +500,16 @@ def _execute_pipeline_job_locked(self, job_id: str):
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
+    except JobCanceled:
+        db.rollback()
+        job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+        if job is not None:
+            from ..services.job_cancellation import remove_partial_outputs
+            remove_partial_outputs(db, job)
+            _progress_event(f"{stage}: cancelamento concluído; saídas incompletas removidas.")
+            _job_progress_path(job_id, job.user_id).with_suffix(".canceled").write_text(
+                "done", encoding="ascii")
+        return
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, RETRYABLE_EXCEPTIONS) and self.request.retries < 2:
             retry_delay = min(300, (2**self.request.retries) * 30)
