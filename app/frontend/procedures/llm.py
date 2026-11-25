@@ -520,7 +520,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                     page,
                     f"Inicialização RAG enfileirada (job {job_id}).",
                 )
-                result = await wait_for_job(token, job_id)
+                result = await wait_for_job(token, job_id, page=page)
                 if result.get("status") == "COMPLETED":
                     await log_message(
                         page,
@@ -701,7 +701,7 @@ async def show_llm(page, token, user_id, container_amostras, container_pre_visua
                             result = await wait_for_job(
                                 token,
                                 job_id,
-                                timeout=None,
+                                page=page,
                             )
                             if getattr(page, "container_terminal", None) is not active_terminal:
                                 return

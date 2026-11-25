@@ -3,12 +3,13 @@ import shutil
 
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core.settings import settings
 from ..db.database import get_db
 from ..db.models import SampleStage, User
 from ..services.job_service import audit, create_job, normalize_status
+from ..services.job_cancellation import cancel_jobs_for_output
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager
 from ..utils_paths import safe_resolve_user_path
@@ -20,6 +21,7 @@ router = APIRouter()
 
 class QualityAnalysisRequest(BaseModel):
     samples: list[str]
+    memory_mb: int = Field(default=512, ge=256, le=16384)
 
 @router.post("/quality_analysis/", status_code=status.HTTP_202_ACCEPTED)  # Iniciar análise de qualidade
 def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -35,6 +37,10 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
 
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {name} not found")
+        source = safe_resolve_user_path(settings.users_root, user_id, "samples",
+                                        db_sample_stage.sra_code, name)
+        if db_sample_stage.status != "COMPLETED" or not source.is_file() or source.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail=f"Wait for sample download to finish: {name}")
 
         sample_stem = name
         for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
@@ -68,7 +74,8 @@ def start_quality_analysis(request: QualityAnalysisRequest, db: Session = Depend
 
     job_ids = []
     for name in to_process:
-        job = create_job(db, stage="quality_analysis", user_id=user_id, payload={"samples": [name]})
+        job = create_job(db, stage="quality_analysis", user_id=user_id,
+                         payload={"samples": [name], "memory_mb": request.memory_mb})
         audit(db, action="quality_analysis_enqueued", user_id=user_id, stage="quality_analysis",
               job_id=job.id, metadata_json={"samples": [name]})
         enqueue_pipeline_job(job.id, queue="quality")
@@ -129,6 +136,8 @@ def get_completed_quality_analysis(db: Session = Depends(get_db), current_user: 
 
 @router.delete("/quality_analysis/{name}")
 def delete_quality_analysis_result(name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if cancel_jobs_for_output(db, current_user.id, "quality_analysis", name):
+        return {"message": f"Quality analysis {name} canceled; partial files removed"}
     # Encontrar o registro pelo campo 'name' e 'stage_id=2'
     db_sample_stage = db.query(SampleStage).filter(
         SampleStage.name == name,

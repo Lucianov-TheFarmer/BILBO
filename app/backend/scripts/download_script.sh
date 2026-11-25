@@ -46,11 +46,7 @@ FASTERQ_BIN="$(resolve_bin fasterq-dump "/usr/local/sratoolkit/bin/fasterq-dump"
 }
 
 run_fasterq_once() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 6h "$FASTERQ_BIN" --progress --split-files --skip-technical -t "$temp_dir" -O "$output_dir" "$sra_code"
-  else
-    "$FASTERQ_BIN" --progress --split-files --skip-technical -t "$temp_dir" -O "$output_dir" "$sra_code"
-  fi
+  "$FASTERQ_BIN" --progress --split-files --skip-technical -t "$temp_dir" -O "$output_dir" "$sra_code"
 }
 
 echo "[download] Starting download for ${sra_code} (user ${user_id})" > "$log_file"

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Form, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from ..db.database import get_db
@@ -6,15 +7,69 @@ from ..db.models import SampleStage, User
 from ..services.job_service import audit, create_job, normalize_status
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
+from ..utils import get_current_user_compat
+from ..core.settings import settings
+from ..utils_paths import ensure_safe_component, safe_resolve_user_path
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _counts_path(db: Session, user_id: int, filename: str) -> Path:
+    filename = ensure_safe_component(filename, "filename")
+    if not filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Expected an HTSeq .txt file")
+    row = db.query(SampleStage).filter_by(user_id=user_id, stage_id=6, name=filename).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Quantification result not found")
+    if normalize_status(row.status) != "COMPLETED":
+        raise HTTPException(status_code=409, detail="Quantification has not completed")
+    path = safe_resolve_user_path(settings.users_root, user_id, "quantification", filename)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="HTSeq counts file not found")
+    return path
+
+
+@router.get("/quantification/counts/{filename}/chunk")
+def read_counts_chunk(
+    filename: str,
+    offset: int = Query(0, ge=0),
+    lines: int = Query(100, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read only the next part of a potentially large HTSeq count table."""
+    path = _counts_path(db, current_user.id, filename)
+    size = path.stat().st_size
+    if offset > size:
+        raise HTTPException(status_code=416, detail="Offset exceeds file size")
+    chunk = []
+    with path.open("rb") as stream:
+        stream.seek(offset)
+        while len(chunk) < lines and stream.tell() < size:
+            chunk.append(stream.readline().decode("utf-8", errors="replace").rstrip("\r\n"))
+            if stream.tell() - offset >= 65536:
+                break
+        next_offset = stream.tell()
+    return {"lines": chunk, "next_offset": next_offset, "size": size,
+            "has_more": next_offset < size}
+
+
+@router.get("/quantification/counts/{filename}/download")
+def download_counts(
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_compat),
+):
+    path = _counts_path(db, current_user.id, filename)
+    return FileResponse(path, filename=path.name, media_type="text/plain; charset=utf-8")
 
 
 def _normalize_selected_genome(raw_value: Optional[str]) -> Optional[str]:
@@ -62,6 +117,8 @@ def add_to_queue(request: QuantificationRequest, db: Session = Depends(get_db), 
 
         if not db_sample_stage:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sample {sample_name} not found")
+        if db_sample_stage.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for alignment to finish: {sample_name}")
 
         # Criar ou reutilizar o estágio de quantificação.
         # Evita duplicatas caso a requisição seja repetida.
@@ -130,6 +187,9 @@ async def start_processing(
             selected_genome = None
 
     for sample_name in request.samples:
+        alignment = db.query(SampleStage).filter_by(user_id=user_id, stage_id=5, name=sample_name).first()
+        if alignment is None or alignment.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for alignment to finish: {sample_name}")
         sample_stage = db.query(SampleStage).filter(
             SampleStage.name == f"{sample_name.replace('.bam', '.txt')}",
             SampleStage.stage_id == 6,
@@ -212,6 +272,9 @@ def delete_quantification_samples(
         # Garantir que o nome do arquivo não tenha duplicação de extensão
         if not sample_name.endswith(".txt"):
             sample_name += ".txt"
+        from ..services.job_cancellation import cancel_jobs_for_output
+        if cancel_jobs_for_output(db, user_id, "quantification", sample_name):
+            continue
 
         quantification_path = f"../users/{user_id}/quantification/{sample_name}"
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,7 +14,7 @@ from ..core.settings import settings
 from ..db.database import SessionLocal
 from ..db.models import PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
-from ..services.job_service import set_job_finished, set_job_running
+from ..services.job_service import append_job_event, set_job_finished, set_job_running
 from ..services.reference_import import (
     download_public_file, gff3_to_star_gtf, materialize,
     validate_annotation, validate_fasta, validate_protein_fasta,
@@ -42,6 +44,7 @@ def import_reference(job_id: str) -> None:
         db.commit()
         source = payload["source"]
         if source["type"] == "url":
+            append_job_event(job.user_id, job_id, "Referência: iniciando download dos arquivos.")
             incoming.mkdir(parents=True, exist_ok=False)
             local = {}
             for kind in ("fasta", "annotation", "protein"):
@@ -54,6 +57,7 @@ def import_reference(job_id: str) -> None:
                     _progress(db, job, "download_" + kind, written, total)
                 download_public_file(url, local[kind], kind, progress)
         elif source["type"] == "upload":
+            append_job_event(job.user_id, job_id, "Referência: usando arquivos enviados.")
             incoming = Path(source["directory"])
             if incoming.resolve().parent != (root / "_incoming").resolve():
                 raise ValueError("Invalid upload staging path")
@@ -65,6 +69,7 @@ def import_reference(job_id: str) -> None:
             raise ValueError("Unknown reference source")
 
         _progress(db, job, "validating", 0, 0)
+        append_job_event(job.user_id, job_id, "Referência: validando FASTA e anotação.")
         final.mkdir(parents=True, exist_ok=False)
         materialize(local["fasta"], final / "genomic.fa", "fasta")
         unpacked_annotation = final / "annotation.unpacked"
@@ -81,9 +86,22 @@ def import_reference(job_id: str) -> None:
         if annotation_ext != ".gtf":
             gff3_to_star_gtf(annotation_path, final / "genomic.gtf")
         _progress(db, job, "indexing", 0, 0)
+        append_job_event(job.user_id, job_id, "Referência: construindo índice STAR.")
         command = ["bash", "/app/backend/scripts/index_genome_star.sh", str(final),
                    str(payload["sjdb_overhang"]), str(payload["threads"])]
-        run = subprocess.run(command, capture_output=True, text=True, timeout=172800)
+        heartbeat_stop = threading.Event()
+        index_started = time.monotonic()
+        def index_heartbeat():
+            while not heartbeat_stop.wait(60):
+                append_job_event(job.user_id, job_id,
+                                 f"Referência: índice STAR em construção há {int(time.monotonic() - index_started)} s.")
+        heartbeat = threading.Thread(target=index_heartbeat, daemon=True)
+        heartbeat.start()
+        try:
+            run = subprocess.run(command, capture_output=True, text=True)
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=1)
         if run.returncode or not (final / "STAR_index" / "Genome").is_file():
             log = Path("/app/backend/logs/index_genome_star.log")
             tail = log.read_text(errors="replace")[-3000:] if log.exists() else run.stderr[-3000:]
@@ -109,6 +127,11 @@ def import_reference(job_id: str) -> None:
 
 
 def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> None:
+    previous_phase = (job.result or {}).get("phase")
+    logged_percent = float((job.result or {}).get("logged_percent") or 0) if previous_phase == phase else 0.0
+    logged_bytes = int((job.result or {}).get("logged_bytes") or 0) if previous_phase == phase else 0
+    if phase != previous_phase and phase.startswith("download_"):
+        append_job_event(job.user_id, job.id, f"Referência: baixando {phase.removeprefix('download_')}.")
     if total and phase == "download_fasta":
         percent = round(35 * written / total, 1)
     elif total and phase == "download_annotation":
@@ -117,7 +140,14 @@ def _progress(db, job: PipelineJob, phase: str, written: int, total: int) -> Non
         percent = 75
     else:
         percent = None
+    if percent is not None and total and phase.startswith("download_") and percent - logged_percent >= 5:
+        append_job_event(job.user_id, job.id, f"Referência: {phase.removeprefix('download_')} {written}/{total} bytes.")
+        logged_percent = percent
+    if percent is None and phase.startswith("download_") and written - logged_bytes >= 64 * 1024**2:
+        append_job_event(job.user_id, job.id, f"Referência: {phase.removeprefix('download_')} {written}/{total} bytes.")
+        logged_bytes = written
     job.result = {"phase": phase, "bytes": written, "total_bytes": total,
-                  "progress_percent": percent, "progress_message": phase}
+                  "progress_percent": percent, "progress_message": phase,
+                  "logged_bytes": logged_bytes, "logged_percent": logged_percent}
     db.add(job)
     db.commit()

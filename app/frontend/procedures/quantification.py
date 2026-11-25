@@ -2,10 +2,12 @@ import flet as ft
 import asyncio
 import httpx
 import logging
+from urllib.parse import quote
 from .jobs import wait_with_progress
 from .translations import t
 from .utils import log_message
-from .viewer import view_quantification_log
+from .viewer import view_quantification_counts, view_quantification_log
+from .urls import launch_public_url
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,7 +54,7 @@ def create_tabela_quantificacao(page, token):
             ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
-            ft.DataColumn(ft.Text("Log", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_quantification)),
         ],
         rows=[],
@@ -69,14 +71,20 @@ async def update_tabela_quantificacao(page, token, user_id):
                 samples = response.json()
                 tabela_quantificacao.rows.clear()
                 for sample in samples:
-                    def view_log_handler(e, s=sample["name"]):
-                        try:
-                            asyncio.get_event_loop().create_task(view_quantification_log_handler(page, token, s, user_id))
-                        except RuntimeError:
-                            # Fallback if no running loop: run in a new loop
-                            asyncio.run(view_quantification_log_handler(page, token, s, user_id))
+                    async def view_log_handler(e, s=sample["name"]):
+                        await view_quantification_log(page, token, s, user_id)
 
-                    log_button_disabled = sample["status"].lower() != "completed"
+                    async def view_counts_handler(e, s=sample["name"]):
+                        await view_quantification_counts(page, token, s)
+
+                    async def download_counts_handler(e, s=sample["name"]):
+                        url = (f"http://localhost:8890/quantification/counts/{quote(s, safe='')}/download"
+                               f"?token={quote(token, safe='')}")
+                        launch_public_url(page, url)
+
+                    sample_status = str(sample.get("status") or "").lower()
+                    log_button_disabled = sample_status == "pending"
+                    counts_button_disabled = sample_status != "completed"
 
                     tabela_quantificacao.rows.append(
                         ft.DataRow(
@@ -85,12 +93,20 @@ async def update_tabela_quantificacao(page, token, user_id):
                                 ft.DataCell(ft.Text(sample["size"], size=12)),
                                 ft.DataCell(ft.Text(sample["status"], size=12)),
                                 ft.DataCell(
-                                    ft.IconButton(
-                                        icon="description",
-                                        tooltip="Visualizar log",
-                                        on_click=view_log_handler if not log_button_disabled else None,
-                                        disabled=log_button_disabled,
-                                    )
+                                    ft.Row(spacing=0, controls=[
+                                        ft.IconButton(icon="description",
+                                                      tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
+                                                      on_click=view_log_handler,
+                                                      disabled=log_button_disabled),
+                                        ft.IconButton(icon="visibility",
+                                                      tooltip=t("quant_counts_view", page.session.get("lang") or "pt"),
+                                                      on_click=view_counts_handler,
+                                                      disabled=counts_button_disabled),
+                                        ft.IconButton(icon="download",
+                                                      tooltip=t("quant_counts_download", page.session.get("lang") or "pt"),
+                                                      on_click=download_counts_handler,
+                                                      disabled=counts_button_disabled),
+                                    ])
                                 ),
                                 ft.DataCell(ft.Checkbox())
                             ]

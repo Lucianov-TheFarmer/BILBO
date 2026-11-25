@@ -6,7 +6,7 @@ import json
 import re
 from .jobs import wait_with_progress
 from .utils import log_message
-from .viewer import view_alignment_log
+from .viewer import view_alignment_log, view_alignment_metrics
 from .translations import t
 
 # Configure logging
@@ -67,7 +67,7 @@ def create_tabela_alinhamento(page, token):
             ft.DataColumn(ft.Text(t("table_identification", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_size", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Text(t("table_status", page.session.get("lang") or "pt"), weight="bold")),
-            ft.DataColumn(ft.Text("Log", weight="bold")),
+            ft.DataColumn(ft.Text(t("table_actions", page.session.get("lang") or "pt"), weight="bold")),
             ft.DataColumn(ft.Checkbox(on_change=toggle_select_all_alignment)),
         ],
         rows=[],
@@ -85,11 +85,15 @@ async def update_tabela_alinhamento(page, token, user_id):
                 samples = response.json()
                 tabela_alinhamento.rows.clear()
                 for sample in samples:
-                    def view_log_handler(e, s=sample["name"]):
-                        asyncio.run(view_alignment_log(page, token, s, user_id))
+                    async def view_log_handler(e, s=sample["name"]):
+                        await view_alignment_log(page, token, s, user_id)
+
+                    async def view_metrics_handler(e, s=sample["name"]):
+                        await view_alignment_metrics(page, s, user_id)
 
                     sample_status = str(sample.get("status") or "").strip().lower()
-                    log_button_disabled = sample_status != "completed"
+                    log_button_disabled = sample_status == "pending"
+                    metrics_button_disabled = sample_status != "completed"
 
                     tabela_alinhamento.rows.append(
                         ft.DataRow(
@@ -98,12 +102,20 @@ async def update_tabela_alinhamento(page, token, user_id):
                                 ft.DataCell(ft.Text(sample["size"], size=12)),
                                 ft.DataCell(ft.Text(sample["status"], size=12)),
                                 ft.DataCell(
-                                    ft.IconButton(
-                                        icon="description",
-                                        tooltip="Visualizar log",
-                                        on_click=view_log_handler if not log_button_disabled else None,
-                                        disabled=log_button_disabled,
-                                    )
+                                    ft.Row(spacing=0, controls=[
+                                        ft.IconButton(
+                                            icon="description",
+                                            tooltip=t("analysis_view_log", page.session.get("lang") or "pt"),
+                                            on_click=view_log_handler,
+                                            disabled=log_button_disabled,
+                                        ),
+                                        ft.IconButton(
+                                            icon="analytics",
+                                            tooltip=t("alignment_metrics_open", page.session.get("lang") or "pt"),
+                                            on_click=view_metrics_handler,
+                                            disabled=metrics_button_disabled,
+                                        ),
+                                    ])
                                 ),
                                 ft.DataCell(ft.Checkbox()),
                             ]
@@ -285,7 +297,9 @@ async def show_alignment_modal(page, token, user_id, atualizar_tabela, container
                     _trimmed_base(s["name"])
                     for s in response_alinhadas.json()
                     if str(s.get("status") or "").upper()
-                    in {"PENDING", "RUNNING", "COMPLETED"}
+                    in {"RUNNING", "COMPLETED"}
+                    or (str(s.get("status") or "").upper() == "PENDING" and
+                        s.get("has_active_job", True))
                 } if response_alinhadas.status_code == 200 else set()
 
                 available_samples = [
@@ -637,7 +651,7 @@ async def download_genome(page, token, accession, organism_name, sjdb_overhang, 
     """Download a genome and trigger indexing."""
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with httpx.AsyncClient(timeout=3600) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             await log_message(page, f"Iniciando download do genoma {accession}...")
             response = await client.post(f"http://bioinfo-container:8890/genomes/download", params={"accession": accession}, headers=headers)
             if response.status_code == 200:
@@ -652,7 +666,7 @@ async def index_genome(page, token, accession, organism_name, sjdb_overhang, thr
     """Index a genome."""
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with httpx.AsyncClient(timeout=3600) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             await log_message(page, f"Iniciando indexação do genoma {organism_name} ({accession})...")
             response = await client.post(
                 f"http://bioinfo-container:8890/genomes/index",

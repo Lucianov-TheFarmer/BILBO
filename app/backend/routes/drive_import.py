@@ -235,7 +235,7 @@ def queue_import(session_id: str, user: User = Depends(get_current_user), db: Se
         if base in existing or base in importing:
             continue
         job = create_job(db, "drive_import", user.id, {"base": base, "files": [group[1], group[2]]})
-        import_drive_pair.apply_async(args=[job.id, session_id], queue="drive")
+        import_drive_pair.apply_async(args=[job.id, session_id], task_id=job.id, queue="drive")
         jobs.append(job.id)
     if jobs:
         redis_client().hset(session_key(session_id), "status", "queued")

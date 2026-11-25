@@ -26,8 +26,12 @@ celery_app.conf.update(
     task_annotations={"pipeline.execute": {"max_retries": 2}},
     broker_connection_retry_on_startup=True,
     timezone="UTC",
-    beat_schedule={"pipeline-reconcile": {"task": "pipeline.reconcile_all", "schedule": 10.0,
-                                          "options": {"queue": "pipeline"}}},
+    beat_schedule={
+        "pipeline-reconcile": {"task": "pipeline.reconcile_all", "schedule": 10.0,
+                               "options": {"queue": "pipeline"}},
+        "worker-failure-reconcile": {"task": "jobs.reconcile_worker_failures", "schedule": 60.0,
+                                     "options": {"queue": "pipeline"}},
+    },
 )
 
 # Ensure task modules are imported when worker boots.

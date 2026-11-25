@@ -35,6 +35,7 @@ class PipelinePlan(BaseModel):
     samples: list[SamplePlan] = Field(min_length=1, max_length=100)
     stages: dict[str, bool]
     genome: Optional[str] = None
+    quality: dict = Field(default_factory=dict)
     trimming: dict = Field(default_factory=dict)
     alignment: dict = Field(default_factory=dict)
     quantification: dict = Field(default_factory=dict)
@@ -80,6 +81,17 @@ def _validated_plan(db: Session, user_id: int, plan: PipelinePlan) -> dict:
         raise ValueError("Thread count must be between 1 and 256")
     config["alignment"]["threads"] = alignment_threads
     config["trimming"]["threads"] = trimming_threads
+    if set(config["quality"]) - {"raw_memory_mb", "post_memory_mb"}:
+        raise ValueError("Unknown quality analysis parameter")
+    for key in ("raw_memory_mb", "post_memory_mb"):
+        quality_memory = int(config["quality"].get(key, 512))
+        if not 256 <= quality_memory <= 16384:
+            raise ValueError("FastQC memory must be between 256 and 16384 MiB")
+        config["quality"][key] = quality_memory
+    trimming_memory = int(config["trimming"].get("memory_mb", 1024))
+    if not 512 <= trimming_memory <= 32768:
+        raise ValueError("Trimmomatic memory must be between 512 and 32768 MiB")
+    config["trimming"]["memory_mb"] = trimming_memory
     if set(config["deg"]) - {"diamond_threads"}:
         raise ValueError("Unknown differential analysis parameter")
     diamond_threads = int(config["deg"].get("diamond_threads", 8))
@@ -303,11 +315,19 @@ def cancel_run(run_id: str, db: Session = Depends(get_db), user: User = Depends(
         raise HTTPException(404, "Pipeline run not found")
     if run.status not in ("DRAFT", "RUNNING"):
         raise HTTPException(409, "Pipeline is already finished")
+    from ..services.job_cancellation import cancel_active_job
+    for step in run.steps:
+        if step.job_id and step.status in ("PENDING", "RUNNING"):
+            job = db.query(PipelineJob).filter(PipelineJob.id == step.job_id,
+                PipelineJob.user_id == user.id).first()
+            if job:
+                cancel_active_job(db, job)
     run.status = "CANCELED"
     run.finished_at = datetime.now(timezone.utc)
     for step in run.steps:
-        if step.status == "WAITING":
+        if step.status in ("WAITING", "PENDING", "RUNNING"):
             step.status = "CANCELED"
+            step.finished_at = datetime.now(timezone.utc)
     db.commit()
     return _detail(run)
 

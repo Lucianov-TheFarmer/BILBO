@@ -287,7 +287,7 @@ async def show_barplots_modal(page, token, user_id, container_amostras):
         result = await create_barplot_file(token, user_id, title, contrasts)
         job_id = result.get("job_id")
         if job_id:
-            await wait_for_job(token, job_id)
+            await wait_for_job(token, job_id, page=page)
         dlg_modal.open = False
         page.update()
         await show_barplots_table(page, token, user_id, container_amostras)
@@ -315,7 +315,7 @@ async def show_venn_modal(page, token, user_id, container_amostras):
         result = await create_venn_file(token, user_id, title, contrasts)
         job_id = result.get("job_id")
         if job_id:
-            await wait_for_job(token, job_id)
+            await wait_for_job(token, job_id, page=page)
         dlg_modal.open = False
         page.update()
         await show_venn_table(page, token, user_id, container_amostras)
@@ -355,7 +355,7 @@ async def show_heatmap_modal(page, token, user_id, container_amostras):
                 result = response.json()
                 job_id = result.get("job_id")
                 if job_id:
-                    await wait_for_job(token, job_id)
+                    await wait_for_job(token, job_id, page=page)
                 await show_heatmaps_table(page, token, user_id, container_amostras)
             else:
                 try:

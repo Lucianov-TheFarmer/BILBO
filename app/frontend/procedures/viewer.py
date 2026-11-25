@@ -4,10 +4,12 @@ import httpx
 import logging
 import zipfile
 import os
+from pathlib import Path
 from io import BytesIO
 import base64  # New import
 import re  # Importar regex
 from .translations import t
+from .alignment_metrics import parse_star_final_log
 
 
 def close_figure_button(page, preview):
@@ -113,6 +115,15 @@ async def display_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls = [ft.Container(expand=True, content=ft.Column([
+                ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+                ft.ListView(controls=[log_control], expand=True),
+            ], expand=True))]
+            page.update()
+            return
+
         # Prefer the explicit preview container if present
         for control in page.controls:
             if isinstance(control, ft.Row):
@@ -167,6 +178,15 @@ async def display_quantification_log(page, log_content):
             text_align=ft.TextAlign.LEFT,
         )
 
+        preview = getattr(page, "container_preview", None)
+        if isinstance(preview, ft.Container):
+            preview.content.controls = [ft.Container(expand=True, content=ft.Column([
+                ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
+                ft.ListView(controls=[log_control], expand=True),
+            ], expand=True))]
+            page.update()
+            return
+
 
         # Prefer explicit preview container
         for control in page.controls:
@@ -214,7 +234,10 @@ async def display_quantification_log(page, log_content):
 
 async def view_alignment_log(page, token, sample_name, user_id):
     """Displays the alignment log in the viewer."""
-    log_path = f"../users/{user_id}/alignment/{sample_name.replace('.bam', '')}/{sample_name.replace('.bam', 'Log.final.out')}"
+    base_name = sample_name.removesuffix(".bam")
+    log_dir = f"../users/{user_id}/alignment/{base_name}"
+    custom_log = f"{log_dir}/{base_name}_custom.log"
+    log_path = custom_log if os.path.isfile(custom_log) else f"{log_dir}/{base_name}Log.final.out"
     try:
         if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8") as log_file:
@@ -228,41 +251,189 @@ async def view_alignment_log(page, token, sample_name, user_id):
         logger.error(f"Erro ao exibir o log de alinhamento: {e}", exc_info=True)
         await display_log(page, f"Erro ao exibir o log de alinhamento: {e}")
 
+
+async def view_alignment_metrics(page, sample_name, user_id):
+    """Show STAR mapping counts for a completed alignment in the shared preview."""
+    lang = page.session.get("lang") or "pt"
+    preview = getattr(page, "container_preview", None)
+    if not isinstance(preview, ft.Container):
+        return
+
+    def count(value):
+        separator = "." if lang in ("pt", "es") else ","
+        return f"{int(value):,}".replace(",", separator)
+
+    def percent(value, total):
+        number = f"{100 * value / total:.2f}" if total else "0.00"
+        return number.replace(".", "," if lang in ("pt", "es") else ".") + "%"
+
+    def metric_row(label, value, total, color):
+        return ft.Container(padding=ft.padding.symmetric(vertical=5), content=ft.Column([
+            ft.Row([ft.Text(label, expand=True),
+                    ft.Text(f"{count(value)} · {percent(value, total)}", weight="bold")]),
+            ft.ProgressBar(value=min(1, value / total) if total else 0, color=color),
+        ], spacing=3))
+
+    content = []
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}\.bam", sample_name):
+        content.append(ft.Text(t("alignment_metrics_missing", lang)))
+    else:
+        base_name = sample_name.removesuffix(".bam")
+        path = Path("..") / "users" / str(user_id) / "alignment" / base_name / f"{base_name}Log.final.out"
+        try:
+            metrics = parse_star_final_log(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            content.append(ft.Text(t("alignment_metrics_missing", lang)))
+        else:
+            total = metrics["input_reads"]
+            content.extend([
+                ft.Text(t("alignment_metrics_note", lang), size=12, italic=True),
+                ft.Text(f"{t('alignment_metrics_input', lang)}: {count(total)}", weight="bold"),
+                ft.Text(f"{t('alignment_metrics_mapped', lang)}: "
+                        f"{count(metrics['mapped_reads'])} · {percent(metrics['mapped_reads'], total)}",
+                        weight="bold"),
+                metric_row(t("alignment_metrics_unique", lang), metrics["unique_reads"], total, "green"),
+                metric_row(t("alignment_metrics_multiple", lang), metrics["multiple_loci"], total, "blue"),
+                metric_row(t("alignment_metrics_too_many", lang), metrics["too_many_loci"], total, "orange"),
+                ft.Text(f"{t('alignment_metrics_unmapped', lang)}: "
+                        f"{count(metrics['unmapped_reads'])} · {percent(metrics['unmapped_reads'], total)}",
+                        weight="bold"),
+                metric_row(t("alignment_metrics_mismatch", lang), metrics["unmapped_mismatches"], total, "red"),
+                metric_row(t("alignment_metrics_short", lang), metrics["unmapped_short"], total, "red"),
+                metric_row(t("alignment_metrics_other", lang), metrics["unmapped_other"], total, "red"),
+            ])
+            if "splices" in metrics:
+                content.append(ft.Text(f"{t('alignment_metrics_splices', lang)}: {count(metrics['splices'])}"))
+            if "mismatch_rate" in metrics:
+                rate = f"{metrics['mismatch_rate']:.2f}".replace(".", "," if lang in ("pt", "es") else ".")
+                content.append(ft.Text(f"{t('alignment_metrics_mismatch_rate', lang)}: {rate}%"))
+
+    preview.content.controls = [ft.Container(expand=True, padding=12, content=ft.Column([
+        ft.Row([ft.Text(f"{t('alignment_metrics_title', lang)} — {sample_name}",
+                        weight="bold", expand=True), close_figure_button(page, preview)]),
+        ft.ListView(controls=content, expand=True, spacing=8),
+    ], expand=True))]
+    page.update()
+
+
+async def view_quality_log(page, sample_name, user_id, *, post_trim=False):
+    stem = sample_name.removesuffix(".html")
+    if post_trim:
+        source_stem = stem.removesuffix("_post_trim") + "_trimmed"
+        base = re.sub(r"_R?[12]$", "", stem.removesuffix("_post_trim"))
+        directory = Path("..") / "users" / str(user_id) / "QC_PostTrim" / base
+        candidates = [directory / f"{source_stem}_quality_analysis_post_trim.log"]
+    else:
+        base = re.sub(r"_R?[12]$", "", stem)
+        directory = Path("..") / "users" / str(user_id) / "QC" / base
+        candidates = ([path for path in directory.iterdir() if path.is_file() and
+                       path.name.startswith(stem + ".") and path.name.endswith("_quality_analysis.log")]
+                      if directory.is_dir() else [])
+    log_path = next((path for path in candidates if path.is_file()), None)
+    if log_path is None:
+        await display_log(page, t("quality_log_missing", page.session.get("lang") or "pt"))
+        return
+    with log_path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - 65536))
+        content = stream.read().decode("utf-8", errors="replace")
+    await display_log(page, content)
+
 async def view_quantification_log(page, token, sample_name, user_id):
-    log_path = f"../users/{user_id}/quantification/{sample_name}"
+    base_name = sample_name.removesuffix(".txt")
+    log_path = f"../users/{user_id}/logs/quantification/{base_name}.bam.log"
     try:
         if os.path.exists(log_path):
-            with open(log_path, "r", encoding="utf-8") as log_file:
-                log_content = log_file.read()
+            with open(log_path, "rb") as log_file:
+                log_file.seek(0, os.SEEK_END)
+                log_file.seek(max(0, log_file.tell() - 65536))
+                log_content = log_file.read().decode("utf-8", errors="replace")
         else:
-            log_content = f"Erro: Arquivo de log não encontrado em {log_path}"
+            log_content = t("quant_log_historical_missing", page.session.get("lang") or "pt")
 
         await display_quantification_log(page, log_content)
     except Exception as e:
         logger.error(f"Erro ao exibir o log de quantificação: {e}", exc_info=True)
-        await display_quantification_log(page, f"Erro ao exibir o log de quantificação: {e}")
+        await display_quantification_log(page, t("quant_log_unavailable", page.session.get("lang") or "pt"))
 
-def create_dropdown_menu(page, token, sample_name, user_id, analysis_type):
+
+async def view_quantification_counts(page, token, sample_name):
+    """Load HTSeq counts a small byte range at a time as the user scrolls."""
+    preview = getattr(page, "container_preview", None)
+    if not isinstance(preview, ft.Container):
+        return
+    lang = page.session.get("lang") or "pt"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}\.txt", sample_name):
+        await display_quantification_log(page, t("quant_counts_unavailable", lang))
+        return
+
+    progress = ft.Text(size=12)
+    more_button = ft.TextButton(t("viewer_load_more", lang))
+    rows = ft.ListView(expand=True, spacing=8, build_controls_on_demand=True,
+                       cache_extent=400, on_scroll_interval=250)
+    rows.controls.append(more_button)
+    offset = 0
+    loading = False
+
+    async def load_more():
+        nonlocal offset, loading
+        if loading or not more_button.visible and offset > 0:
+            return
+        loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    f"http://bioinfo-container:8890/quantification/counts/{sample_name}/chunk",
+                    params={"offset": offset, "lines": 100},
+                    headers={"Authorization": f"Bearer {token}"})
+            if response.status_code != 200:
+                raise ValueError(response.text[:300])
+            payload = response.json()
+            lines = payload.get("lines") or []
+            if lines:
+                rows.controls.insert(len(rows.controls) - 1,
+                                     ft.Text("\n".join(lines), selectable=True,
+                                             style=ft.TextStyle(size=12, font_family="Consolas")))
+            offset = int(payload["next_offset"])
+            size = int(payload["size"])
+            value = f"{100 * offset / size:.1f}" if size else "100.0"
+            progress.value = f"{value}%"
+            more_button.visible = bool(payload.get("has_more"))
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            logger.warning("Could not load HTSeq counts for %s: %s", sample_name, exc)
+            rows.controls.insert(len(rows.controls) - 1,
+                                 ft.Text(t("quant_counts_unavailable", lang), color="red"))
+            more_button.visible = False
+        finally:
+            loading = False
+            page.update()
+
+    async def on_scroll(event):
+        if more_button.visible and event.pixels >= event.max_scroll_extent - 500:
+            await load_more()
+
+    async def on_click(_event):
+        await load_more()
+
+    rows.on_scroll = on_scroll
+    more_button.on_click = on_click
+    preview.content.controls = [ft.Container(expand=True, padding=12, content=ft.Column([
+        ft.Row([ft.Text(f"{t('quant_counts_title', lang)} — {sample_name}", expand=True,
+                        weight="bold"), progress, close_figure_button(page, preview)]),
+        rows,
+    ], expand=True))]
+    page.update()
+    await load_more()
+
+def create_dropdown_menu(page, token, sample_name, user_id, analysis_type, image_placeholder):
     async def on_change(e):
         selected_graph = e.control.value
         graph_control = await display_graph(page, token, selected_graph, sample_name, user_id, analysis_type)
-
-        preview = getattr(page, "container_preview", None)
-        if isinstance(preview, ft.Container):
-            preview.content.controls[0].content.controls[1] = graph_control
-            page.update()
+        if e.control.value != selected_graph:
             return
 
-        # Find the container_pre_visualizacao and update its content
-        for control in page.controls:
-            if isinstance(control, ft.Row):
-                for column in control.controls:
-                    if isinstance(column, ft.Column):
-                        for container in column.controls:
-                            if isinstance(container, ft.Container) and container.key == "container_preview":
-                                container.content.controls[0].content.controls[1] = graph_control
-                                page.update()
-                                return
+        image_placeholder.content = graph_control
+        page.update()
 
     async def on_change_handler(e):
         await on_change(e)

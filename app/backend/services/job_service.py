@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -30,6 +31,20 @@ STATUS_NORMALIZATION = {
     "cancelled": PipelineStatus.CANCELED.value,
 }
 
+logger = logging.getLogger(__name__)
+
+
+def append_job_event(user_id: int, job_id: str, message: str) -> None:
+    """Persist a user-owned timeline shared by manual and pipeline jobs."""
+    try:
+        path = Path(settings.users_root) / str(user_id) / "logs" / "jobs" / f"{job_id}.progress.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(f"[{stamp}] PROGRESS: {message.strip()[:2000]}\n")
+    except OSError:
+        logger.warning("Could not write progress for job %s", job_id, exc_info=True)
+
 
 def normalize_status(raw: Optional[str]) -> str:
     if raw is None:
@@ -49,6 +64,7 @@ def create_job(db: Session, stage: str, user_id: int, payload: Optional[dict[str
     db.add(job)
     db.commit()
     db.refresh(job)
+    append_job_event(user_id, job.id, f"{stage}: na fila.")
     return job
 
 
@@ -75,6 +91,7 @@ def set_job_running(db: Session, job_id: str) -> PipelineJob:
 
     db.commit()
     db.refresh(job)
+    append_job_event(job.user_id, job.id, f"{job.stage}: iniciado.")
     return job
 
 
@@ -90,12 +107,23 @@ def set_job_finished(
     if job is None:
         raise ValueError(f"Job {job_id} not found")
 
+    # A worker may return after cancellation was requested. Its late result
+    # must never turn a canceled job back into COMPLETED or FAILED.
+    if job.status == PipelineStatus.CANCELED.value:
+        return job
+
     job.status = status.value
     job.result = result or {}
     job.error_message = error_message
     job.finished_at = datetime.now(timezone.utc)
+    started = (job.started_at.replace(tzinfo=timezone.utc) if job.started_at and not job.started_at.tzinfo
+               else job.started_at)
+    duration = (job.finished_at - started).total_seconds() if started else None
     db.commit()
     db.refresh(job)
+    detail = f" Motivo: {error_message[:1500]}" if error_message else ""
+    elapsed = f" após {duration:.0f} s" if duration is not None else ""
+    append_job_event(job.user_id, job.id, f"{job.stage}: {status.value}{elapsed}.{detail}")
     return job
 
 

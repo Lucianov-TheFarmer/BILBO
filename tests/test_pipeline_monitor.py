@@ -89,11 +89,67 @@ class _DegClient(_Client):
         return await super().get(url)
 
 
+class _FinishedQualityClient(_Client):
+    def __init__(self, status):
+        self.status = status
+
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "run-qc", "status": self.status,
+                               "config": {"name": "Quality test"},
+                               "steps": [{"id": "step-qc", "stage": "qc_raw", "sample": "S1",
+                                          "status": self.status, "job_id": "job-qc",
+                                          "error_message": "FastQC exited after running out of memory" if self.status == "FAILED" else None}]}])
+        if url.endswith("/jobs/job-qc"):
+            event = ("FastQC ran out of memory (exit code 137)." if self.status == "FAILED"
+                     else "FastQC completed successfully.")
+            return _Response({"job_id": "job-qc", "status": self.status,
+                              "result": {"progress_log": f"[now] PROGRESS: {event}"}})
+        return await super().get(url)
+
+
+class _StaleQualityClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/jobs/job-1"):
+            return _Response({"job_id": "job-1", "result": {
+                "progress_percent": 85,
+                "monitor_warning": {"code": "no_recent_events", "silent_seconds": 660},
+            }})
+        return await super().get(url)
+
+
+class _TrimmingGrowthClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "run-trim", "status": "RUNNING", "config": {"name": "Trim"},
+                              "steps": [{"id": "step-trim", "stage": "trimming", "sample": "A1",
+                                         "status": "RUNNING", "job_id": "job-trim"}]}])
+        if url.endswith("/jobs/job-trim"):
+            return _Response({"job_id": "job-trim", "status": "RUNNING",
+                              "result": {"output_bytes": 2 * 1024**3,
+                                         "progress_message": "Executando Trimmomatic."}})
+        return await super().get(url)
+
+
+class _CanceledClient(_Client):
+    async def get(self, url, **_kwargs):
+        if url.endswith("/pipeline/runs"):
+            return _Response([{"id": "cancel-run", "status": "CANCELED",
+                               "config": {"name": "Canceled"},
+                               "steps": [{"id": "cancel-step", "stage": "trimming",
+                                          "sample": "A", "status": "CANCELED",
+                                          "job_id": "cancel-job"}]}])
+        if url.endswith("/jobs/cancel-job"):
+            return _Response({"job_id": "cancel-job", "status": "CANCELED",
+                              "result": {"progress_log": "[now] PROGRESS: Trimmomatic cancelado pelo usuário."}})
+        return await super().get(url)
+
+
 class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
-    async def _one_poll(self, client, tracked_run_id=None):
+    async def _one_poll(self, client, tracked_run_id=None, lang="pt"):
         terminal = ft.Container(content=ft.ListView(controls=[]), visible=True)
         page = SimpleNamespace(container_terminal=terminal,
-                               session={"lang": "pt"}, update=lambda: None,
+                               session={"lang": lang}, update=lambda: None,
                                pipeline_monitor_run_id=tracked_run_id)
         refreshes = []
 
@@ -143,6 +199,56 @@ class PipelineMonitorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("DEG — anotação UniProt iniciada.", terminal.content.controls[0].value)
         self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
         self.assertEqual(2, len(terminal.content.controls))
+
+    async def test_failed_quality_explains_failure_in_terminal(self):
+        terminal, _ = await self._one_poll(_FinishedQualityClient("FAILED"), tracked_run_id="run-qc")
+        self.assertIn("exit code 137", terminal.content.controls[0].value)
+        self.assertEqual("terminal_progress_pipeline", terminal.content.controls[1].data)
+
+    async def test_completed_quality_reports_success_in_terminal(self):
+        terminal, _ = await self._one_poll(_FinishedQualityClient("COMPLETED"), tracked_run_id="run-qc")
+        self.assertIn("completed successfully", terminal.content.controls[0].value)
+
+    async def test_stalled_job_warning_is_translated(self):
+        for lang, expected in (("pt", "Sem atualização"), ("en", "No update"),
+                               ("es", "Sin actualizaciones")):
+            with self.subTest(lang=lang):
+                terminal, _ = await self._one_poll(_StaleQualityClient(), lang=lang)
+                card = terminal.content.controls[0]
+                detail = card.content.controls[3].controls[0].value
+                self.assertIn(expected, detail)
+
+    async def test_trimming_output_growth_is_visible(self):
+        terminal, _ = await self._one_poll(_TrimmingGrowthClient())
+        detail = terminal.content.controls[0].content.controls[3].controls[0].value
+        self.assertIn("2.00 GiB", detail)
+        self.assertIn("Saída em crescimento", detail)
+
+    async def test_failed_direct_job_hides_progress_bar(self):
+        from frontend.procedures import jobs as job_ui
+        terminal = ft.Container(content=ft.ListView(controls=[]))
+        page = SimpleNamespace(container_terminal=terminal,
+                               session={"lang": "pt"}, update=lambda: None)
+
+        async def failed_job(_token, _job_id, on_update=None, page=None):
+            payload = {"status": "FAILED", "result": {},
+                       "error_message": "FastQC: arquivo inválido"}
+            await on_update(payload)
+            return payload
+
+        with patch.object(job_ui, "wait_for_job", failed_job):
+            await job_ui.wait_with_progress(page, "token", "job", "Qualidade")
+        card = next(control for control in terminal.content.controls
+                    if isinstance(control, ft.Container))
+        self.assertFalse(card.content.controls[1].visible)
+        self.assertIn("arquivo inválido", card.content.controls[2].value)
+
+    async def test_canceled_pipeline_hides_bar_and_logs_cancellation(self):
+        terminal, _ = await self._one_poll(_CanceledClient(), tracked_run_id="cancel-run")
+        self.assertIn("cancelado pelo usuário", terminal.content.controls[0].value)
+        card = terminal.content.controls[1]
+        self.assertFalse(card.content.controls[2].visible)
+        self.assertIn("Cancelado", card.content.controls[3].controls[0].value)
 
     async def test_running_job_appears_in_terminal(self):
         terminal = ft.Container(content=ft.ListView(controls=[]))

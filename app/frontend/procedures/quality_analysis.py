@@ -6,7 +6,7 @@ import logging
 from .jobs import wait_with_progress
 from .translations import t
 from .utils import log_message
-from .viewer import create_dropdown_menu, display_graph, close_figure_button
+from .viewer import create_dropdown_menu, display_graph, close_figure_button, view_quality_log
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +50,9 @@ async def update_quality_analysis_table(page, token, user_id):
                         launch_public_url(page, download_url)
                         await log_message(page, f"Download iniciado para {s}")
 
+                    async def view_log_handler(e, s=sample["name"]):
+                        await view_quality_log(page, s, user_id)
+
 
                     # Build actions: include 'view' and 'download' only when QC is completed
                     actions = []
@@ -61,6 +64,9 @@ async def update_quality_analysis_table(page, token, user_id):
                     if status == "completed":
                         actions.append(ft.IconButton(icon="visibility", on_click=view_sample_details_handler))
                         actions.append(ft.IconButton(icon="download", on_click=download_handler))
+                    if status in ("running", "completed", "failed"):
+                        actions.append(ft.IconButton(icon="description", on_click=view_log_handler,
+                                                     tooltip=t("analysis_view_log", page.session.get("lang") or "pt")))
 
                     tabela_amostras_qc.rows.append(
                         ft.DataRow(
@@ -80,13 +86,14 @@ async def update_quality_analysis_table(page, token, user_id):
         logger.error(f"An error occurred while updating the quality analysis table: {e}", exc_info=True)
 
 async def view_sample_details(page, token, sample_name, user_id, analysis_type):
-    dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type)
     initial_graph = await display_graph(page, token, "Per base sequence quality", sample_name, user_id, analysis_type)
+    image_placeholder = ft.Container(content=initial_graph, expand=True)
+    dropdown_menu = create_dropdown_menu(page, token, sample_name, user_id, analysis_type, image_placeholder)
     preview = getattr(page, "container_preview", None)
     if isinstance(preview, ft.Container):
         preview.content.controls = [ft.Container(expand=True, content=ft.Column(controls=[
             ft.Row([close_figure_button(page, preview)], alignment=ft.MainAxisAlignment.END),
-            dropdown_menu, initial_graph]))]
+            dropdown_menu, image_placeholder]))]
         page.update()
         return
     # Compatibility with older page layouts.
@@ -102,7 +109,7 @@ async def view_sample_details(page, token, sample_name, user_id, analysis_type):
                                     content=ft.Column(
                                         controls=[ft.Row([close_figure_button(page, container)],
                                                          alignment=ft.MainAxisAlignment.END),
-                                                  dropdown_menu, initial_graph]
+                                                  dropdown_menu, image_placeholder]
                                     )
                                 )
                             ]
@@ -189,7 +196,8 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 logger.error(f"Erro ao obter amostras analisadas: {response_stage_2.status_code} - {response_stage_2.text}")
                 analyzed_samples = set()
 
-            samples = [sample for sample in downloaded_samples if sample["name"] not in analyzed_samples]
+            samples = [sample for sample in downloaded_samples
+                       if sample["status"] == "COMPLETED" and sample["name"] not in analyzed_samples]
             logger.info(f"Amostras disponíveis para análise de qualidade: {samples}")
 
     except Exception as e:
@@ -205,17 +213,28 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
             row.cells[3].content.value = e.control.value
         page.update()
 
+    memory_field = ft.TextField(label=t("quality_memory_mb", page.session.get("lang") or "pt"),
+                                value="512", width=240, keyboard_type=ft.KeyboardType.NUMBER)
+
     async def start_quality_analysis(e):
         selected_samples = [row.cells[0].content.value for row in tabela_analise_qualidade.rows if row.cells[3].content.value]
         if not selected_samples:
             logger.error("Nenhuma amostra selecionada.")
+            return
+        try:
+            memory_mb = int(memory_field.value)
+            if not 256 <= memory_mb <= 16384:
+                raise ValueError()
+        except (TypeError, ValueError):
+            await log_message(page, t("quality_memory_invalid", page.session.get("lang") or "pt"))
             return
         await log_message(page, f"Iniciando análise de qualidade para {selected_samples}")
         dlg_modal_analise_qualidade.open = False
         page.update()
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post("http://bioinfo-container:8890/quality_analysis/", json={"samples": selected_samples}, headers=headers)
+                response = await client.post("http://bioinfo-container:8890/quality_analysis/",
+                                             json={"samples": selected_samples, "memory_mb": memory_mb}, headers=headers)
                 if response.status_code in (200, 202):
                     body = response.json()
                     async def monitor_qc(name, job_id):
@@ -278,6 +297,8 @@ async def show_quality_analysis_modal(page, token, container_menu_direita, tabel
                 spacing=10,
                 controls=[
                     empty_message if empty_message else tabela_analise_qualidade,
+                    memory_field,
+                    ft.Text(t("quality_memory_hint", page.session.get("lang") or "pt"), size=11),
                 ]
             ),
             width=520,

@@ -22,6 +22,7 @@ from ..schemas.jobs import (
     JobStatusResponse,
 )
 from ..services.job_service import audit, create_job
+from ..services.job_cancellation import cancel_active_job
 from ..tasks.celery_app import celery_app
 from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user
@@ -154,6 +155,7 @@ def _samples_download_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     return {
         "progress_percent": percent,
         "progress_phase": phase,
+        "progress_message": progress_message,
         "progress_source": "samples_download_log",
     }
 
@@ -195,7 +197,71 @@ def _fastqc_progress(job: PipelineJob) -> Optional[dict[str, object]]:
     percent = min(99.9, round(100 * (completed + current / 100) / len(samples), 1))
     return {"progress_percent": percent, "progress_message": f"{sample}: {current:.0f}%",
             "completed_samples": completed, "total_samples": len(samples),
-            "progress_source": "fastqc_log"}
+            "progress_source": "fastqc_log", "tool_log_path": str(path)}
+
+
+def _active_tool_log(job: PipelineJob) -> Optional[Path]:
+    """Find the current tool log; elapsed time alone never fails a job."""
+    if not job.started_at:
+        return None
+    payload = job.payload or {}
+    sample = str(payload.get("sample") or "")
+    root = Path('/users') / str(job.user_id)
+    paths = {
+        'trimming': root / 'logs' / 'trimming' / f'{sample}.log',
+        'alignment': root / 'alignment' / sample / f'{sample}_custom.log',
+        'samples_download': Path('/app/backend/logs') / f"{payload.get('sra_code', '')}_download.log",
+    }
+    if job.stage == 'quantification':
+        names = payload.get('samples') or []
+        if len(names) == 1:
+            sample = str(names[0])
+            paths['quantification'] = root / 'logs' / 'quantification' / f'{sample}.log'
+    path = paths.get(job.stage)
+    if not path or not re.fullmatch(r'[A-Za-z0-9_.-]+', sample if job.stage != 'samples_download' else str(payload.get('sra_code') or '')):
+        return None
+    try:
+        started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+        started = started_at.timestamp()
+        return path if path.is_file() and path.stat().st_mtime >= started - 2 else None
+    except OSError:
+        return None
+
+
+def _active_output_progress(job: PipelineJob) -> Optional[dict[str, object]]:
+    """Measure growing outputs without treating their size as a completion percentage."""
+    if job.status != PipelineStatus.RUNNING.value or not job.started_at:
+        return None
+    payload = job.payload or {}
+    root = Path('/users') / str(job.user_id)
+    sample = str(payload.get('sample') or payload.get('sra_code') or '')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,180}', sample) or '..' in sample:
+        return None
+    if job.stage == 'trimming':
+        stem = re.sub(r'\.(?:fastq|fq)(?:\.gz)?$', '', sample)
+        paths = [root / 'trimmed' / f'{sample}_{mate}_trimmed.fastq.gz' for mate in (1, 2)]
+        paths.append(root / 'trimmed' / f'{stem}_trimmed.fastq.gz')
+    elif job.stage == 'samples_download':
+        paths = list((root / 'samples' / sample).glob(f'{sample}*.fastq*'))
+    elif job.stage == 'alignment':
+        paths = list((root / 'alignment' / sample).glob(f'{sample}*.bam'))
+    else:
+        return None
+    started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=timezone.utc)
+    started = started_at.timestamp()
+    current = []
+    for path in paths:
+        try:
+            info = path.stat()
+            if path.is_file() and info.st_mtime >= started - 2 and info.st_size > 0:
+                current.append(info)
+        except OSError:
+            continue
+    if not current:
+        return None
+    return {'output_bytes': sum(item.st_size for item in current),
+            'output_file_count': len(current),
+            'output_last_modified': max(item.st_mtime for item in current)}
 
 
 def _alignment_progress(job: PipelineJob) -> Optional[dict[str, object]]:
@@ -281,6 +347,18 @@ def get_job_status(
         if progress_data:
             result_payload.update(progress_data)
 
+    output_progress = _active_output_progress(job)
+    if output_progress:
+        result_payload.update(output_progress)
+
+    if job.status == PipelineStatus.RUNNING.value and not result_payload.get('progress_message'):
+        tool_log = _active_tool_log(job)
+        if tool_log:
+            lines = _tail_text_file(str(tool_log), 4096).splitlines()
+            if lines:
+                result_payload['progress_message'] = lines[-1].strip()[:300]
+                result_payload['progress_source'] = 'tool_log'
+
     # BILBO_GENERIC_JOB_PROGRESS
     try:
         progress_path = (
@@ -294,6 +372,20 @@ def get_job_status(
             progress_log = _tail_text_file(str(progress_path))
             if progress_log:
                 result_payload['progress_log'] = progress_log
+            if job.status == PipelineStatus.RUNNING.value:
+                tool_path = result_payload.get('tool_log_path')
+                activity_path = Path(tool_path) if tool_path else _active_tool_log(job) or progress_path
+                activity_time = activity_path.stat().st_mtime
+                if output_progress:
+                    activity_time = max(activity_time, float(output_progress['output_last_modified']))
+                silent_seconds = int(datetime.now(timezone.utc).timestamp() - activity_time)
+                if silent_seconds > 300:
+                    result_payload['monitor_warning'] = {
+                        'code': 'no_recent_tool_output' if activity_path != progress_path else 'no_recent_events',
+                        'silent_seconds': silent_seconds,
+                    }
+        result_payload.pop('tool_log_path', None)
+        result_payload.pop('output_last_modified', None)
     except OSError:
         pass
 
@@ -350,14 +442,7 @@ def cancel_job(
     if job.status in {PipelineStatus.COMPLETED.value, PipelineStatus.FAILED.value, PipelineStatus.CANCELED.value}:
         return {"job_id": job.id, "status": job.status, "message": "Job already finished"}
 
-    try:
-        celery_app.control.revoke(job.id, terminate=True, signal="SIGTERM")
-    except Exception:
-        pass
-
-    job.status = PipelineStatus.CANCELED.value
-    job.finished_at = datetime.now(timezone.utc)
-    db.commit()
+    cancel_active_job(db, job)
     audit(db, action="job_canceled", user_id=current_user.id, stage=job.stage, job_id=job.id)
 
     return {"job_id": job.id, "status": job.status, "message": "Cancellation requested"}

@@ -5,7 +5,9 @@ import logging
 import asyncio
 import json
 import re
+import time
 from .utils import log_message
+from .jobs import wait_with_progress
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -278,6 +280,10 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         on_change=numeric_input_validator,
         width=280,
     )
+    memory_field = ft.TextField(
+        label=t("trimming_memory_mb", page.session.get("lang") or "pt"),
+        value="1024", keyboard_type=ft.KeyboardType.NUMBER, width=280,
+    )
     phred_dropdown = ft.Dropdown(
         label=t("trim_phred", page.session.get("lang") or "pt"),
         options=[
@@ -446,6 +452,13 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         if not selected_samples:
             logger.info("Nenhuma amostra selecionada.")
             return
+        try:
+            memory_mb = int(memory_field.value)
+            if not 512 <= memory_mb <= 32768:
+                raise ValueError()
+        except (TypeError, ValueError):
+            await log_message(page, t("trimming_memory_invalid", page.session.get("lang") or "pt"))
+            return
 
         # Validate custom adapter content if "Personalizado" is selected
         if illumina_clip_fields[0].value == "Personalizado" and not is_valid_fasta(custom_adapter_content):
@@ -464,6 +477,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 
             params = {
                 "threads": threads_field.value,
+                "memory_mb": memory_mb,
                 "phred": phred_dropdown.value,
                 "illumina_clip": json.dumps({
                     "Arquivo adaptadores": illumina_clip_value,
@@ -497,12 +511,13 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
         max_retries = 1
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=86400.0) as client:  # Increased timeout to 120 seconds
+                async with httpx.AsyncClient(timeout=60) as client:
                     response = await client.post(
-                        "http://bioinfo-container:8890/trimmagem/",
+                        "http://bioinfo-container:8890/trimmagem/jobs",
                         data={
                             "selected_samples": json.dumps(selected_samples),
                             "threads": params["threads"],
+                            "memory_mb": params["memory_mb"],
                             "phred": params["phred"],
                             "illumina_clip": params["illumina_clip"],
                             "sliding_window": params["sliding_window"],
@@ -517,8 +532,18 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
                         headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"},
                     )
 
-                    if response.status_code == 200:
-                        logger.info("Trimmagem concluída com sucesso!")
+                    if response.status_code == 202:
+                        job_ids = response.json().get("job_ids") or []
+                        await log_message(page, f"Trimmagem: {len(job_ids)} job(s) na fila.")
+                        last_refresh = [0.0]
+                        async def refresh_during_trimming(_payload):
+                            if time.monotonic() - last_refresh[0] >= 5:
+                                last_refresh[0] = time.monotonic()
+                                await update_trimmagem_table(page, token)
+                        await asyncio.gather(*(wait_with_progress(
+                            page, token, job_id, t("trim_start", page.session.get("lang") or "pt"),
+                            on_update=refresh_during_trimming)
+                            for job_id in job_ids))
                         await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                         await update_trimmagem_table(page, token)
                         page.update()
@@ -544,6 +569,7 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
             ft.Row(
                 controls=[
                     threads_field,
+                    memory_field,
                     phred_dropdown,
                 ],
                 spacing=27
@@ -640,16 +666,24 @@ async def show_trimmagem_modal(page, token, container_menu_direita, tabela_amost
 async def processar_trimmagem(page, token, selected_samples, container_menu_direita, tabela_amostras_local, atualizar_tabela):
     headers = {"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "true"}
     try:
-        async with httpx.AsyncClient(timeout=86400.0) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             logger.info("Preparando os dados para a requisição de trimmagem.")
             form_data = {"selected_samples": json.dumps(selected_samples)}
             response = await client.post(
-                "http://bioinfo-container:8890/trimmagem/",
+                "http://bioinfo-container:8890/trimmagem/jobs",
                 data=form_data,
                 headers=headers,
             )
-            if response.status_code == 200:
-                logger.info("Trimmagem concluída com sucesso!")
+            if response.status_code == 202:
+                last_refresh = [0.0]
+                async def refresh_during_trimming(_payload):
+                    if time.monotonic() - last_refresh[0] >= 5:
+                        last_refresh[0] = time.monotonic()
+                        await update_trimmagem_table(page, token)
+                await asyncio.gather(*(wait_with_progress(
+                    page, token, job_id, t("trim_start", page.session.get("lang") or "pt"),
+                    on_update=refresh_during_trimming)
+                    for job_id in response.json().get("job_ids") or []))
                 await update_trimmagem_table(page, token)
                 await atualizar_tabela(page, token, container_menu_direita, tabela_amostras_local)
                 page.update()

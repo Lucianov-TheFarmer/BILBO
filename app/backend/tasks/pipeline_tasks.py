@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
+import signal
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -23,13 +25,17 @@ from ..db.models import Artifact, AuditLog, PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
 from ..scripts import clustering as clustering_script
 from ..scripts import llm as llm_script
-from ..services.job_service import add_artifact, set_job_finished, set_job_running
+from ..services.job_service import add_artifact, append_job_event, set_job_finished, set_job_running
 from ..services.rag_bootstrap import ensure_rag_database
 from ..utils_paths import ensure_safe_component
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 RETRYABLE_EXCEPTIONS = (TimeoutError, OSError, ConnectionError)
+
+
+class JobCanceled(Exception):
+    """The user canceled an active subprocess job."""
 
 
 
@@ -42,14 +48,7 @@ _PROGRESS_CONTEXT = {
 
 
 def _job_progress_path(job_id: str, user_id: int) -> Path:
-    progress_dir = (
-        Path(settings.users_root)
-        / str(user_id)
-        / "logs"
-        / "jobs"
-    )
-    progress_dir.mkdir(parents=True, exist_ok=True)
-    return progress_dir / f"{job_id}.progress.log"
+    return Path(settings.users_root) / str(user_id) / "logs" / "jobs" / f"{job_id}.progress.log"
 
 
 def _append_job_progress(
@@ -58,23 +57,7 @@ def _append_job_progress(
     message: str,
 ) -> None:
     """Adiciona uma mensagem curta ao log individual do job."""
-    try:
-        path = _job_progress_path(job_id, user_id)
-        timestamp = datetime.now(timezone.utc).isoformat(
-            timespec="seconds"
-        )
-
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(
-                f"[{timestamp}] PROGRESS: {message.strip()}\n"
-            )
-            stream.flush()
-    except Exception:
-        logger.warning(
-            "Não foi possível escrever progresso do job %s",
-            job_id,
-            exc_info=True,
-        )
+    append_job_event(user_id, job_id, message)
 
 
 def _set_progress_context(
@@ -86,21 +69,6 @@ def _set_progress_context(
     _PROGRESS_CONTEXT["user_id"] = user_id
     _PROGRESS_CONTEXT["stage"] = stage
 
-    if stage not in ("deg", "clustering", "llm"):
-        return
-
-    path = _job_progress_path(job_id, user_id)
-
-    try:
-        path.write_text("", encoding="utf-8")
-    except OSError:
-        logger.warning(
-            "Não foi possível inicializar o log do job %s",
-            job_id,
-            exc_info=True,
-        )
-
-    # BILBO_LLM_PROGRESS_PERSISTENCE
     initial_message = {
         "deg": "DEG — job recebido pelo worker.",
         "clustering": (
@@ -110,7 +78,7 @@ def _set_progress_context(
             "Interpretação LLM/RAG — "
             "job recebido pelo worker."
         ),
-    }[stage]
+    }.get(stage, f"{stage}: execução iniciada.")
 
     _append_job_progress(
         job_id,
@@ -120,9 +88,6 @@ def _set_progress_context(
 
 
 def _progress_event(message: str) -> None:
-    if _PROGRESS_CONTEXT.get("stage") not in ("deg", "clustering", "llm"):
-        return
-
     job_id = _PROGRESS_CONTEXT.get("job_id")
     user_id = _PROGRESS_CONTEXT.get("user_id")
 
@@ -221,15 +186,40 @@ def _deg_command_phase(cmd: list[str]) -> tuple[str, str]:
     return "", ""
 
 
+def _log_excerpt(path: Path, max_bytes: int = 4096) -> str:
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - max_bytes))
+            return stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _exit_reason(rc: int, stderr: str = "", stdout: str = "", log: str = "") -> str:
+    if rc in (137, -9):
+        reason = "processo encerrado com SIGKILL (código 137); verificar memória e logs do worker"
+    elif rc in (143, -15):
+        reason = "processo encerrado com SIGTERM (código 143)"
+    else:
+        reason = f"código de saída {rc}"
+    lines = [line.strip() for line in (log or stderr or stdout).splitlines() if line.strip()]
+    detail = [line for line in lines if not line.startswith("Approx ")][-3:]
+    if not detail and lines:
+        detail = lines[-1:]
+    return f"{reason}: {' | '.join(detail)[-1200:]}" if detail else reason
+
+
 def _run(
     cmd: list[str],
     cwd: Optional[str] = None,
-    timeout: Optional[int] = None,
 ) -> Tuple[int, str, str]:
     """
-    Executa um subprocesso e emite heartbeat para etapas DEG longas.
+    Executa um subprocesso e registra eventos para todas as etapas.
     """
     phase_name, start_message = _deg_command_phase(cmd)
+    process_name = Path(cmd[1] if cmd[0] in ("bash", "python", "python3", "Rscript") and len(cmd) > 1 else cmd[0]).name
+    _progress_event(f"Iniciando {process_name}.")
 
     if start_message:
         _progress_event(start_message)
@@ -240,59 +230,72 @@ def _run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=(os.name == "posix"),
     )
+    job_id = _PROGRESS_CONTEXT.get("job_id")
+    user_id = _PROGRESS_CONTEXT.get("user_id")
+    pid_path = (_job_progress_path(str(job_id), int(user_id)).with_suffix(".pid")
+                if os.name == "posix" and job_id and user_id is not None else None)
+    if pid_path is not None:
+        try:
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            proc_stat = Path(f"/proc/{process.pid}/stat")
+            start_ticks = proc_stat.read_text(encoding="ascii").rsplit(")", 1)[1].split()[19]
+            pid_path.write_text(f"{process.pid} {start_ticks}", encoding="ascii")
+        except (OSError, IndexError):
+            logger.warning("Could not register process group for job %s", job_id, exc_info=True)
+            pid_path = None
 
     started = time.monotonic()
-    heartbeat_interval = 15
-    deadline = (
-        started + timeout
-        if timeout is not None
-        else None
-    )
-
+    heartbeat_interval = 2
+    last_heartbeat = started
     stdout = ""
     stderr = ""
 
-    while True:
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-
-            if remaining <= 0:
-                process.kill()
-                stdout, stderr = process.communicate()
-
+    try:
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=heartbeat_interval)
+                if job_id:
+                    with SessionLocal() as check_db:
+                        current = check_db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                        if current is not None and current.status == PipelineStatus.CANCELED.value:
+                            raise JobCanceled()
+                break
+            except subprocess.TimeoutExpired:
+                if job_id:
+                    with SessionLocal() as check_db:
+                        current = check_db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                        if current is not None and current.status == PipelineStatus.CANCELED.value:
+                            if os.name == "posix":
+                                os.killpg(process.pid, signal.SIGTERM)
+                            else:
+                                process.terminate()
+                            try:
+                                process.communicate(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                if os.name == "posix":
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                else:
+                                    process.kill()
+                                process.communicate()
+                            raise JobCanceled()
+                if time.monotonic() - last_heartbeat >= 60:
+                    _progress_event(f"{process_name} em execução há {int(time.monotonic() - started)} s.")
+                    last_heartbeat = time.monotonic()
                 if phase_name:
-                    _progress_event(
-                        f"DEG — {phase_name} excedeu o tempo limite."
-                    )
-
-                raise TimeoutError(
-                    f"Timed out after {timeout}s running: "
-                    f"{' '.join(cmd)}"
-                )
-
-            wait_time = min(
-                heartbeat_interval,
-                max(0.1, remaining),
-            )
-        else:
-            wait_time = heartbeat_interval
-
-        try:
-            stdout, stderr = process.communicate(
-                timeout=wait_time
-            )
-            break
-
-        except subprocess.TimeoutExpired:
-            if phase_name:
-                elapsed = int(time.monotonic() - started)
-                _progress_event(
-                    f"DEG — {phase_name} em andamento "
-                    f"({elapsed} s decorridos)."
-                )
+                    elapsed = int(time.monotonic() - started)
+                    _progress_event(f"DEG — {phase_name} em andamento ({elapsed} s decorridos).")
+    finally:
+        if pid_path is not None:
+            pid_path.unlink(missing_ok=True)
 
     elapsed = int(time.monotonic() - started)
+    if process.returncode == 0:
+        _progress_event(f"{process_name} concluído em {elapsed} s.")
+    else:
+        detail = _exit_reason(process.returncode, stderr, stdout)
+        _progress_event(f"{process_name} falhou após {elapsed} s: {detail}")
 
     if phase_name:
         if process.returncode == 0:
@@ -335,6 +338,10 @@ def _abs_users(*parts: str) -> Path:
 def _duration_ms(started_at: Optional[datetime], finished_at: Optional[datetime]) -> Optional[int]:
     if not started_at or not finished_at:
         return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
     return int((finished_at - started_at).total_seconds() * 1000)
 
 
@@ -395,6 +402,9 @@ def _finalize_job(
     error_message: Optional[str] = None,
     exit_code: Optional[int] = None,
 ) -> None:
+    result = dict(result or {})
+    if exit_code is not None:
+        result["exit_code"] = exit_code
     finished = set_job_finished(db, job_id, status, result=result, error_message=error_message)
     logger.info(
         json.dumps(
@@ -455,11 +465,11 @@ def _execute_pipeline_job_locked(self, job_id: str):
             )
             return
 
-        set_job_running(db, job_id)
         stage = job.stage
         user_id = int(job.user_id)
-        logger.info(json.dumps({"event": "job_started", "job_id": job_id, "user_id": user_id, "stage": stage}))
         _set_progress_context(job_id, user_id, stage)
+        set_job_running(db, job_id)
+        logger.info(json.dumps({"event": "job_started", "job_id": job_id, "user_id": user_id, "stage": stage}))
 
         if stage == "samples_download":
             _handle_samples_download(db, job_id, user_id, payload)
@@ -490,6 +500,16 @@ def _execute_pipeline_job_locked(self, job_id: str):
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
+    except JobCanceled:
+        db.rollback()
+        job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+        if job is not None:
+            from ..services.job_cancellation import remove_partial_outputs
+            remove_partial_outputs(db, job)
+            _progress_event(f"{stage}: cancelamento concluído; saídas incompletas removidas.")
+            _job_progress_path(job_id, job.user_id).with_suffix(".canceled").write_text(
+                "done", encoding="ascii")
+        return
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, RETRYABLE_EXCEPTIONS) and self.request.retries < 2:
             retry_delay = min(300, (2**self.request.retries) * 30)
@@ -511,10 +531,15 @@ def _execute_pipeline_job_locked(self, job_id: str):
                     }
                 )
             )
+            _progress_event(f"{stage}: tentativa {self.request.retries + 1} falhou: {exc}. Nova tentativa em {retry_delay} s.")
             raise self.retry(exc=exc, countdown=retry_delay, max_retries=2) from exc
 
         try:
             if user_id >= 0:
+                from .orchestrator import _mark_worker_failed_rows
+                failed_job = db.query(PipelineJob).filter(PipelineJob.id == job_id).first()
+                if failed_job is not None:
+                    _mark_worker_failed_rows(db, failed_job)
                 _finalize_job(
                     db,
                     job_id=job_id,
@@ -588,7 +613,7 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
 
     try:
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)], timeout=36000
+            ["bash", "/app/backend/scripts/download_script.sh", sra_code, str(user_id)]
         )
     except Exception as exc:
         db.rollback()
@@ -652,7 +677,7 @@ def _handle_samples_download(db: Session, job_id: str, user_id: int, payload: di
         user_id=user_id,
         status=status,
         result=result,
-        error_message=None if rc == 0 else (log_tail or stderr[-4000:] or f"download_script failed with rc={rc}"),
+        error_message=None if rc == 0 else _exit_reason(rc, stderr, stdout, log_tail),
         exit_code=rc,
     )
 
@@ -670,9 +695,13 @@ def _record_sample_progress(db: Session, job_id: str, completed: int, total: int
 
 def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
+    memory_mb = int(payload.get("memory_mb", 512))
+    if not 256 <= memory_mb <= 16384:
+        raise ValueError("FastQC memory must be between 256 and 16384 MiB")
     outputs: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
+        _progress_event(f"Qualidade inicial: iniciando {safe_sample} ({index + 1}/{len(samples)}).")
         _record_sample_progress(db, job_id, index, len(samples), safe_sample)
         sample_stem = safe_sample
         for extension in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
@@ -686,9 +715,15 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
             row.status = "RUNNING"
             db.commit()
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id)], timeout=10800
+            ["bash", "/app/backend/scripts/quality_analysis.sh", safe_sample, str(user_id), str(memory_mb)],
         )
-        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
+        sample_base = re.sub(r"_R?[12]$", "", sample_stem)
+        log_path = _abs_users(str(user_id), "QC", sample_base, f"{safe_sample}_quality_analysis.log")
+        log_tail = _log_excerpt(log_path)
+        reason = _exit_reason(rc, stderr, stdout, log_tail) if rc else None
+        outputs.append({"sample": safe_sample, "rc": rc, "reason": reason,
+                        "log_tail": log_tail[-2000:]})
+        _progress_event(f"Qualidade inicial: {safe_sample} " + ("concluída." if rc == 0 else f"falhou: {reason}"))
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -702,16 +737,20 @@ def _handle_quality_analysis(db: Session, job_id: str, user_id: int, payload: di
         user_id=user_id,
         status=PipelineStatus.COMPLETED if not failed else PipelineStatus.FAILED,
         result={"runs": outputs},
-        error_message="Some samples failed" if failed else None,
+        error_message="; ".join(f"{item['sample']}: {item['reason']}" for item in failed)[:4000] if failed else None,
         exit_code=0 if not failed else 1,
     )
 
 
 def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     samples = payload.get("samples") or []
+    memory_mb = int(payload.get("memory_mb", 512))
+    if not 256 <= memory_mb <= 16384:
+        raise ValueError("FastQC memory must be between 256 and 16384 MiB")
     outputs: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
         safe_sample = ensure_safe_component(str(sample), "sample")
+        _progress_event(f"Qualidade pós-trimmagem: iniciando {safe_sample} ({index + 1}/{len(samples)}).")
         _record_sample_progress(db, job_id, index, len(samples), safe_sample)
         row_name = safe_sample
         for suffix in ("_trimmed.fastq.gz", "_trimmed.fq.gz", "_trimmed.fastq", "_trimmed.fq"):
@@ -725,9 +764,17 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
             row.status = "RUNNING"
             db.commit()
         rc, stdout, stderr = _run(
-            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id)], timeout=10800
+            ["bash", "/app/backend/scripts/quality_analysis_post_trim.sh", safe_sample, str(user_id), str(memory_mb)],
         )
-        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
+        sample_stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", safe_sample)
+        sample_base = re.sub(r"_R?[12]_trimmed$", "", sample_stem)
+        log_path = _abs_users(str(user_id), "QC_PostTrim", sample_base,
+                              f"{sample_stem}_quality_analysis_post_trim.log")
+        log_tail = _log_excerpt(log_path)
+        reason = _exit_reason(rc, stderr, stdout, log_tail) if rc else None
+        outputs.append({"sample": safe_sample, "rc": rc, "reason": reason,
+                        "log_tail": log_tail[-2000:]})
+        _progress_event(f"Qualidade pós-trimmagem: {safe_sample} " + ("concluída." if rc == 0 else f"falhou: {reason}"))
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
             db.commit()
@@ -741,14 +788,20 @@ def _handle_quality_analysis_post_trim(db: Session, job_id: str, user_id: int, p
         user_id=user_id,
         status=PipelineStatus.COMPLETED if not failed else PipelineStatus.FAILED,
         result={"runs": outputs},
-        error_message="Some samples failed" if failed else None,
+        error_message="; ".join(f"{item['sample']}: {item['reason']}" for item in failed)[:4000] if failed else None,
         exit_code=0 if not failed else 1,
     )
 
 
 def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, Any]) -> None:
     sample = ensure_safe_component(str(payload["sample"]), "sample")
+    for row in db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, sra_code=sample, status="PENDING").all():
+        row.status = "RUNNING"
+    db.commit()
     params = payload.get("params") or {}
+    memory_mb = int(params.get("memory_mb", 1024))
+    if not 512 <= memory_mb <= 32768:
+        raise ValueError("Trimmomatic Java memory must be between 512 and 32768 MiB")
     adapter = dict(params.get("illumina_clip") or {})
     adapter_path = None
     if adapter.get("Arquivo adaptadores") == "Personalizado":
@@ -777,14 +830,16 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
             str(params.get("minlen", 36)), str(params.get("avgqual") or ""),
             str(_abs_users(str(user_id), "samples")),
             str(_abs_users(str(user_id), "trimmed")),
-        ], timeout=172800)
+            str(memory_mb),
+        ])
     finally:
         if adapter_path:
             adapter_path.unlink(missing_ok=True)
+    output_stem = re.sub(r"\.(?:fastq|fq)(?:\.gz)?$", "", sample)
     outputs = [p for p in (
         _abs_users(str(user_id), "trimmed", f"{sample}_1_trimmed.fastq.gz"),
         _abs_users(str(user_id), "trimmed", f"{sample}_2_trimmed.fastq.gz"),
-        _abs_users(str(user_id), "trimmed", f"{sample}_trimmed.fastq.gz"),
+        _abs_users(str(user_id), "trimmed", f"{output_stem}_trimmed.fastq.gz"),
     ) if p.is_file() and p.stat().st_size > 0]
     if rc == 0 and not outputs:
         rc = 4
@@ -796,11 +851,15 @@ def _handle_trimming(db: Session, job_id: str, user_id: int, payload: dict[str, 
             db.add(row)
         row.status = "COMPLETED" if rc == 0 else "FAILED"
         row.size = f"{path.stat().st_size / 1024**2:.2f} MB"
+    if rc != 0:
+        for row in db.query(SampleStage).filter_by(user_id=user_id, stage_id=3, sra_code=sample, status="RUNNING").all():
+            row.status = "FAILED"
     db.commit()
     _finalize_job(db, job_id=job_id, stage="trimming", user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
         result={"files": [p.name for p in outputs], "stdout": stdout[-2000:]},
-        error_message=None if rc == 0 else (stderr[-2000:] or f"Trimming failed (rc={rc})"),
+        error_message=None if rc == 0 else _exit_reason(
+            rc, stderr, stdout, _log_excerpt(_abs_users(str(user_id), "logs", "trimming", f"{sample}.log"))),
         exit_code=rc)
 
 
@@ -839,11 +898,13 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
             str(threads),
             *[str(x) for x in additional],
         ],
-        timeout=172800,
     )
 
     bam_file = alignment_path / sample / f"{sample}.bam"
-    if bam_file.exists():
+    missing_bam = rc == 0 and (not bam_file.is_file() or bam_file.stat().st_size == 0)
+    if missing_bam:
+        rc = 4
+    if bam_file.is_file() and bam_file.stat().st_size > 0:
         add_artifact(db, job_id=job_id, user_id=user_id, kind="bam", path=str(bam_file))
     if row:
         row.status = "COMPLETED" if rc == 0 else "FAILED"
@@ -859,7 +920,10 @@ def _handle_alignment(db: Session, job_id: str, user_id: int, payload: dict[str,
         user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
         result={"sample": sample, "stdout": stdout[-5000:]},
-        error_message=None if rc == 0 else stderr[-4000:],
+        error_message=(None if rc == 0 else
+                       f"{sample}: alinhamento terminou sem BAM válido." if missing_bam else
+                       _exit_reason(rc, stderr, stdout,
+                                    _log_excerpt(alignment_path / sample / f"{sample}_custom.log"))),
         exit_code=rc,
     )
 
@@ -894,14 +958,24 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
         if selected_genome:
             cmd.append(str(selected_genome))
 
+        stdout = ""
         try:
-            rc, stdout, stderr = _run(cmd, timeout=10800)
+            rc, stdout, stderr = _run(cmd)
         except Exception as exc:
             rc = 1
             stderr = str(exc)
             logger.exception("Quantification failed for %s", safe_sample)
 
-        outputs.append({"sample": safe_sample, "rc": rc, "stderr": stderr[-2000:]})
+        txt_path = _abs_users(str(user_id), "quantification", txt_name)
+        missing_counts = rc == 0 and (not txt_path.is_file() or txt_path.stat().st_size == 0)
+        if missing_counts:
+            rc = 4
+
+        log_tail = _log_excerpt(_abs_users(str(user_id), "logs", "quantification", f"{safe_sample}.log"))
+        reason = ("quantificação terminou sem tabela de contagens válida" if missing_counts else
+                  _exit_reason(rc, stderr, stdout, log_tail) if rc else None)
+        outputs.append({"sample": safe_sample, "rc": rc, "reason": reason})
+        _progress_event(f"Quantificação: {safe_sample} " + ("concluída." if rc == 0 else f"falhou: {reason}"))
 
         if row is None:
             row = (
@@ -916,21 +990,12 @@ def _handle_quantification(db: Session, job_id: str, user_id: int, payload: dict
 
         if row:
             row.status = "COMPLETED" if rc == 0 else "FAILED"
-            txt_path = _abs_users(str(user_id), "quantification", txt_name)
             if txt_path.exists():
                 row.size = f"{txt_path.stat().st_size / 1024:.2f} KB"
             db.commit()
 
     failed = [x for x in outputs if x["rc"] != 0]
-    job_error: str | None = None
-    if failed:
-        for item in failed:
-            stderr_text = str(item.get("stderr") or "").strip()
-            if stderr_text:
-                job_error = f"Sample {item['sample']} failed: {stderr_text[-1200:]}"
-                break
-        if not job_error:
-            job_error = "Some samples failed"
+    job_error = "; ".join(f"{item['sample']}: {item['reason']}" for item in failed)[:4000] if failed else None
 
     _finalize_job(
         db,
@@ -1014,7 +1079,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     # --------------------------------------------------------
     rc, stdout, stderr = _run(
         ["Rscript", deg_script, str(preprocess_dir), str(deg_dir)],
-        timeout=172800,
     )
 
     deg_xlsx = deg_dir / "DEG.xlsx"
@@ -1070,7 +1134,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                             str(deg_xlsx),
                             str(gff_path),
                         ],
-                        timeout=7200,
                     )
 
                     annotation_result["gff"] = "COMPLETED" if gff_rc == 0 else "FAILED"
@@ -1087,7 +1150,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                         # --------------------------------------------
                         # uni_rc, uni_stdout, uni_stderr = _run(
                         #     ["python", uniprot_annotation_script, str(deg_xlsx)],
-                        #     timeout=86400,
                         # )
 
                         total_genes, annotated_genes = _go_coverage(deg_xlsx)
@@ -1115,7 +1177,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     extract_rc, _, extract_stderr = _run([
                                         gffread, "-S", "-y", str(generated_proteins), "-g",
                                         str(genomic_fasta), str(gff_path),
-                                    ], timeout=14400)
+                                    ])
                                     if (extract_rc == 0 and generated_proteins.is_file()
                                             and generated_proteins.stat().st_size):
                                         protein_path = generated_proteins
@@ -1131,7 +1193,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                 prepare_rc, prepare_stdout, prepare_stderr = _run([
                                     "python", "/app/backend/scripts/prepare_go_database.py",
                                     str(reference_data), str(diamond_binary),
-                                ], timeout=7200)
+                                ])
                                 if prepare_rc:
                                     annotation_error = "Falha ao preparar a base UniProt: " + (
                                         prepare_stderr[-1500:] or f"rc={prepare_rc}")
@@ -1148,7 +1210,7 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                                     str(deg_dir / "homology"), "--diamond", str(diamond_binary),
                                     "--gff", str(gff_path),
                                     "--threads", str(payload.get("diamond_threads", 8)),
-                                ], timeout=7200)
+                                ])
                                 annotation_result["homology_stdout"] = homology_stdout[-3000:]
                                 annotation_result["homology_stderr"] = homology_stderr[-3000:]
                                 if homology_rc == 0 and homology_output.is_file():
@@ -1187,7 +1249,6 @@ def _handle_deg(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
                 str(deg_xlsx),
                 str(deg_dir),
             ],
-            timeout=7200,
         )
 
         annotation_result["graphs"] = "COMPLETED" if graph_rc == 0 else "FAILED"
@@ -1272,6 +1333,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
                 if run_id else _abs_users(str(user_id), "DEG", "DEG.xlsx"))
     results: dict[str, Any] = {}
     failed_sheets: list[str] = []
+    failure_reasons: list[str] = []
 
     _progress_event(
         f"Clusterização — preparando {len(sheets)} contraste(s)."
@@ -1350,6 +1412,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
             )
             logger.exception("Clustering failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
+            failure_reasons.append(f"{safe_sheet}: {str(exc)[:600]}")
             row = (
                 db.query(SampleStage)
                 .filter(
@@ -1378,7 +1441,7 @@ def _handle_clustering(db: Session, job_id: str, user_id: int, payload: dict[str
         user_id=user_id,
         status=PipelineStatus.COMPLETED if not failed_sheets else PipelineStatus.FAILED,
         result={"results": results, "failed_sheets": failed_sheets},
-        error_message=None if not failed_sheets else f"Failed sheets: {', '.join(failed_sheets)}",
+        error_message="; ".join(failure_reasons)[:4000] if failure_reasons else None,
         exit_code=0 if not failed_sheets else 1,
     )
 
@@ -1536,6 +1599,7 @@ def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
     sheets = payload.get("sheets") or []
     results: dict[str, Any] = {}
     failed_sheets: list[str] = []
+    failure_reasons: list[str] = []
     for sheet in sheets:
         safe_sheet = ensure_safe_component(str(sheet), "sheet")
         out_dir = _abs_users(str(user_id), "llm", safe_sheet)
@@ -1571,6 +1635,7 @@ def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
         except Exception as exc:
             logger.exception("Prototype LLM/RAG failed for user_id=%s sheet=%s: %s", user_id, safe_sheet, exc)
             failed_sheets.append(safe_sheet)
+            failure_reasons.append(f"{safe_sheet}: {str(exc)[:600]}")
             row = (
                 db.query(SampleStage)
                 .filter(
@@ -1591,7 +1656,7 @@ def _handle_llm(db: Session, job_id: str, user_id: int, payload: dict[str, Any])
         user_id=user_id,
         status=PipelineStatus.COMPLETED if not failed_sheets else PipelineStatus.FAILED,
         result={"results": results, "failed_sheets": failed_sheets},
-        error_message=None if not failed_sheets else f"Failed sheets: {', '.join(failed_sheets)}",
+        error_message="; ".join(failure_reasons)[:4000] if failure_reasons else None,
         exit_code=0 if not failed_sheets else 1,
     )
 
@@ -1602,10 +1667,13 @@ def _handle_results_barplot(db: Session, job_id: str, user_id: int, payload: dic
     deg_dir = _abs_users(str(user_id), "DEG")
     deg_xlsx = deg_dir / "DEG.xlsx"
     script = "/app/backend/scripts/barplot_multiplo.R"
-    rc, stdout, stderr = _run(["Rscript", script, str(deg_xlsx), str(deg_dir), title, *contrasts], timeout=3600)
+    rc, stdout, stderr = _run(["Rscript", script, str(deg_xlsx), str(deg_dir), title, *contrasts])
 
     output_file = deg_dir / f"BARPLOT.MULTIPLO - {title}.png"
-    if output_file.exists():
+    missing_output = rc == 0 and (not output_file.is_file() or output_file.stat().st_size == 0)
+    if missing_output:
+        rc = 4
+    if output_file.is_file() and output_file.stat().st_size > 0:
         add_artifact(db, job_id=job_id, user_id=user_id, kind="png", path=str(output_file))
 
     _finalize_job(
@@ -1615,7 +1683,8 @@ def _handle_results_barplot(db: Session, job_id: str, user_id: int, payload: dic
         user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
         result={"title": title},
-        error_message=None if rc == 0 else stderr[-4000:],
+        error_message=None if rc == 0 else ("Gráfico de barras não foi criado." if missing_output else
+                                         _exit_reason(rc, stderr, stdout)),
         exit_code=rc,
     )
 
@@ -1636,14 +1705,17 @@ def _handle_results_venn(db: Session, job_id: str, user_id: int, payload: dict[s
         temp_path = temp.name
 
     try:
-        rc, stdout, stderr = _run(["python", script, temp_path, str(deg_xlsx), str(png_path), title], timeout=3600)
+        rc, stdout, stderr = _run(["python", script, temp_path, str(deg_xlsx), str(png_path), title])
     finally:
         try:
             os.unlink(temp_path)
         except OSError:
             pass
 
-    if png_path.exists():
+    missing_output = rc == 0 and (not png_path.is_file() or png_path.stat().st_size == 0)
+    if missing_output:
+        rc = 4
+    if png_path.is_file() and png_path.stat().st_size > 0:
         add_artifact(db, job_id=job_id, user_id=user_id, kind="png", path=str(png_path))
 
     _finalize_job(
@@ -1653,7 +1725,8 @@ def _handle_results_venn(db: Session, job_id: str, user_id: int, payload: dict[s
         user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
         result={"title": title},
-        error_message=None if rc == 0 else stderr[-4000:],
+        error_message=None if rc == 0 else ("Diagrama de Venn não foi criado." if missing_output else
+                                         _exit_reason(rc, stderr, stdout)),
         exit_code=rc,
     )
 
@@ -1674,14 +1747,17 @@ def _handle_results_heatmap(db: Session, job_id: str, user_id: int, payload: dic
         temp_path = temp.name
 
     try:
-        rc, stdout, stderr = _run(["Rscript", script, temp_path, str(deg_xlsx), str(png_path), title], timeout=10800)
+        rc, stdout, stderr = _run(["Rscript", script, temp_path, str(deg_xlsx), str(png_path), title])
     finally:
         try:
             os.unlink(temp_path)
         except OSError:
             pass
 
-    if png_path.exists():
+    missing_output = rc == 0 and (not png_path.is_file() or png_path.stat().st_size == 0)
+    if missing_output:
+        rc = 4
+    if png_path.is_file() and png_path.stat().st_size > 0:
         add_artifact(db, job_id=job_id, user_id=user_id, kind="png", path=str(png_path))
 
     _finalize_job(
@@ -1691,6 +1767,7 @@ def _handle_results_heatmap(db: Session, job_id: str, user_id: int, payload: dic
         user_id=user_id,
         status=PipelineStatus.COMPLETED if rc == 0 else PipelineStatus.FAILED,
         result={"title": title},
-        error_message=None if rc == 0 else stderr[-4000:],
+        error_message=None if rc == 0 else ("Heatmap não foi criado." if missing_output else
+                                         _exit_reason(rc, stderr, stdout)),
         exit_code=rc,
     )

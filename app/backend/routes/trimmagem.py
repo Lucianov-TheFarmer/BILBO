@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..core.settings import settings
 from ..db.models import SampleStage, User  # Substitua 'Sample' por 'SampleStage'
-from ..services.job_service import normalize_status
+from ..services.job_service import normalize_status, create_job
+from ..tasks.pipeline_tasks import enqueue_pipeline_job
 from ..utils import get_current_user, manager
 import subprocess
 import os
@@ -30,6 +32,87 @@ _FASTQ_PAIR_RE = re.compile(
 )
 
 
+@router.post("/trimmagem/jobs", status_code=202)
+def enqueue_trimmagem_jobs(
+    selected_samples: str = Form(...),
+    threads: int = Form(1),
+    memory_mb: int = Form(1024),
+    phred: str = Form("autodetect"),
+    illumina_clip: str = Form(...),
+    sliding_window: str = Form(...),
+    max_info: str = Form(...),
+    leading: int = Form(3),
+    trailing: int = Form(3),
+    crop: str = Form(None),
+    headcrop: str = Form(None),
+    minlen: int = Form(36),
+    avgqual: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run manual trimming through the same monitored worker as pipeline trimming."""
+    try:
+        names = json.loads(selected_samples)
+        adapter = json.loads(illumina_clip)
+        window = json.loads(sliding_window)
+        max_info_params = json.loads(max_info)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid trimming parameters") from exc
+    if not isinstance(names, list) or not names or threads < 1 or threads > 256:
+        raise HTTPException(status_code=400, detail="Select FASTQ files and a valid thread count")
+    if not 512 <= memory_mb <= 32768:
+        raise HTTPException(status_code=400, detail="Trimmomatic memory must be between 512 and 32768 MiB")
+    if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:fastq|fq)(?:\.gz)?", x, re.I) for x in names):
+        raise HTTPException(status_code=400, detail="Invalid FASTQ filename")
+    grouped = {}
+    singles = []
+    for name in dict.fromkeys(names):
+        base, mate, _ = _parse_fastq_name(name)
+        if mate in (1, 2):
+            grouped.setdefault(base, {})[mate] = name
+        else:
+            singles.append(name)
+    samples = []
+    for base, mates in grouped.items():
+        if len(mates) == 2:
+            samples.append(base)
+        else:
+            singles.extend(mates.values())
+    samples.extend(singles)
+    root = os.path.join(settings.users_root, str(current_user.id), "samples")
+    for name in names:
+        base, _, _ = _parse_fastq_name(name)
+        if not os.path.isfile(os.path.join(root, base, name)) and not os.path.isfile(os.path.join(root, name)):
+            raise HTTPException(status_code=400, detail=f"FASTQ not found: {name}")
+        source = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=1, name=name).first()
+        if source is None or source.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for sample download to finish: {name}")
+        qc_name = _strip_fastq_extension(name) + ".html"
+        qc = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=2, name=qc_name).first()
+        if qc is not None and qc.status != "COMPLETED":
+            raise HTTPException(status_code=409, detail=f"Wait for quality analysis to finish: {name}")
+    params = {"threads": threads, "memory_mb": memory_mb, "phred": phred, "illumina_clip": adapter,
+              "sliding_window": window, "max_info": max_info_params,
+              "leading": leading, "trailing": trailing, "crop": crop,
+              "headcrop": headcrop, "minlen": minlen, "avgqual": avgqual}
+    jobs = []
+    for sample in samples:
+        job = create_job(db, "trimming", current_user.id, {"sample": sample, "params": params})
+        jobs.append(job.id)
+        stem = _strip_fastq_extension(sample)
+        output_names = ([f"{stem}_trimmed.fastq.gz"] if sample in singles else
+                        [f"{sample}_{mate}_trimmed.fastq.gz" for mate in (1, 2)])
+        for output in output_names:
+            row = db.query(SampleStage).filter_by(user_id=current_user.id, stage_id=3, name=output).first()
+            if row is None:
+                row = SampleStage(user_id=current_user.id, stage_id=3, name=output, sra_code=sample)
+                db.add(row)
+            row.status = "PENDING"
+        db.commit()
+        enqueue_pipeline_job(job.id)
+    return {"job_ids": jobs}
+
+
 def _strip_fastq_extension(name: str) -> str:
     return _FASTQ_EXTENSION_RE.sub("", str(name))
 
@@ -50,6 +133,19 @@ def _parse_fastq_name(name: str):
 def _sample_sra_code(name: str) -> str:
     basename, _, _ = _parse_fastq_name(name)
     return basename
+
+
+def _trim_failure_detail(sample: str, stderr: str, exit_code: int, user_id: int) -> str:
+    path = f"/users/{user_id}/logs/trimming/{os.path.basename(sample)}.log"
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 2500))
+            log_tail = stream.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        log_tail = ""
+    detail = (log_tail or stderr.strip() or "Sem mensagem adicional no log.")[-1200:]
+    return f"Trimmomatic falhou para {sample} (código {exit_code}): {detail}"
 
 
 @router.post("/trimmagem/")
@@ -222,10 +318,7 @@ def start_trimmagem(
 
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        f"Error in trimmagem for {base_name}. "
-                        f"Consulte /tmp/{base_name}_trimmagem.log"
-                    ),
+                    detail=_trim_failure_detail(base_name, stderr, process.returncode, user_id),
                 )
 
             # Obter o sample_id original
@@ -325,10 +418,7 @@ def start_trimmagem(
 
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        f"Error in trimmagem for {sample}. "
-                        f"Consulte o log em /tmp."
-                    ),
+                    detail=_trim_failure_detail(sample, stderr, process.returncode, user_id),
                 )
 
             # Obter o sample_id original
@@ -433,6 +523,9 @@ async def delete_trimmed_sample(
     current_user: User = Depends(get_current_user),
 ):
     user_id = current_user.id
+    from ..services.job_cancellation import cancel_jobs_for_output
+    if cancel_jobs_for_output(db, user_id, "trimming", sample_name):
+        return {"message": f"Trimming {sample_name} canceled; partial files removed"}
 
     if os.path.basename(sample_name) != sample_name:
         raise HTTPException(

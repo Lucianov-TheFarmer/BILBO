@@ -114,6 +114,12 @@ async def show_pipeline_config_modal(page, token, user_id):
     ready_genomes = [g["id"] for g in options["genomes"] if g.get("id") and g.get("status") == "COMPLETED"]
     if len(ready_genomes) == 1:
         genome_field.value = ready_genomes[0]
+    qc_raw_memory = ft.TextField(label=t("quality_memory_mb", lang), value="512", width=215,
+                                 keyboard_type=ft.KeyboardType.NUMBER)
+    qc_trim_memory = ft.TextField(label=t("quality_memory_mb", lang), value="512", width=215,
+                                  keyboard_type=ft.KeyboardType.NUMBER)
+    trim_memory = ft.TextField(label=t("trimming_memory_mb", lang), value="1024", width=215,
+                               keyboard_type=ft.KeyboardType.NUMBER)
     trim_fields = {key: ft.TextField(label=t("pipeline_trim_" + key, lang), value=value, width=215)
                    for key, value in {"threads": "4", "phred": "autodetect", "adapter": "TruSeq3-PE.fa",
                                       "seed": "2", "palindrome": "30", "simple": "10", "adapter_min": "8",
@@ -148,6 +154,7 @@ async def show_pipeline_config_modal(page, token, user_id):
     def build_plan():
         samples = [sample_specs[name] for name, check in sample_checks.items() if check.value]
         trim = {"threads": trim_fields["threads"].value,
+                "memory_mb": trim_memory.value,
                 "phred": trim_fields["phred"].value,
                 "illumina_clip": {"Arquivo adaptadores": trim_fields["adapter"].value,
                                   "Conteudo personalizado": adapter_content.value,
@@ -167,6 +174,8 @@ async def show_pipeline_config_modal(page, token, user_id):
         return {"name": name_field.value.strip(), "samples": samples,
                 "stages": {key: check.value for key, check in stage_checks.items()},
                 "genome": genome_field.value,
+                "quality": {"raw_memory_mb": qc_raw_memory.value,
+                            "post_memory_mb": qc_trim_memory.value},
                 "trimming": trim, "alignment": alignment,
                 "deg": {"diamond_threads": diamond_threads.value},
                 "quantification": {"feature_type": feature_type.value.strip(),
@@ -185,7 +194,11 @@ async def show_pipeline_config_modal(page, token, user_id):
         for key, check in stage_checks.items():
             check.value = bool((config.get("stages") or {}).get(key))
         genome_field.value = config.get("genome")
+        quality = config.get("quality") or {}
+        qc_raw_memory.value = str(quality.get("raw_memory_mb", 512))
+        qc_trim_memory.value = str(quality.get("post_memory_mb", 512))
         trim = config.get("trimming") or {}
+        trim_memory.value = str(trim.get("memory_mb", 1024))
         adapter = trim.get("illumina_clip") or {}
         window = trim.get("sliding_window") or {}
         max_info = trim.get("max_info") or {}
@@ -272,7 +285,7 @@ async def show_pipeline_config_modal(page, token, user_id):
 
     async def action(run_id, endpoint):
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=120 if endpoint == "cancel" else 30) as client:
                 response = await client.post(f"{API}/pipeline/runs/{run_id}/{endpoint}", headers=headers)
             if response.status_code == 200:
                 page.pipeline_monitor_run_id = run_id
@@ -453,7 +466,7 @@ async def show_pipeline_config_modal(page, token, user_id):
             ft.Row([ft.Text(t("pipeline_samples", lang), weight=ft.FontWeight.BOLD),
                     sample_count], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             select_all,
-            sample_choices,
+            ft.Container(content=sample_choices, padding=ft.padding.only(right=28)),
             ft.Text(t("pipeline_import_hint", lang), size=12),
             ft.TextButton(t("pipeline_refresh", lang), icon="refresh",
                           on_click=lambda _: page.run_task(refresh_options)),
@@ -471,12 +484,14 @@ async def show_pipeline_config_modal(page, token, user_id):
             ),
             ft.Divider(),
             ft.Text(t("pipeline_stages", lang), weight=ft.FontWeight.BOLD),
-            section("qc_raw", []),
+            section("qc_raw", [qc_raw_memory,
+                ft.Text(t("quality_memory_hint", lang), size=11)]),
             section("trimming", [
                 ft.Text(t("pipeline_trim_params", lang), size=12),
-                ft.Row(list(trim_fields.values()), wrap=True, spacing=10), adapter_content,
+                ft.Row([trim_memory, *trim_fields.values()], wrap=True, spacing=10), adapter_content,
             ]),
-            section("qc_trim", []),
+            section("qc_trim", [qc_trim_memory,
+                ft.Text(t("quality_memory_hint", lang), size=11)]),
             section("alignment", [
                 ft.Text(t("pipeline_alignment_params", lang), size=12),
                 ft.Row([alignment_threads, *star_fields.values()], wrap=True, spacing=10),
@@ -495,7 +510,8 @@ async def show_pipeline_config_modal(page, token, user_id):
             section("clustering", [ft.Text(t("pipeline_clustering_hint", lang), size=11)]),
             section("llm", [ft.Text(t("pipeline_llm_hint", lang), size=11)]),
             ft.Divider(),
-            ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD), recent,
+            ft.Text(t("pipeline_recent", lang), weight=ft.FontWeight.BOLD),
+            ft.Container(content=recent, padding=ft.padding.only(right=28)),
         ], spacing=12)),
         actions=[ft.TextButton(t("menu_close", lang), on_click=close),
                  ft.TextButton(t("pipeline_save_draft", lang), on_click=lambda _: page.run_task(save)),

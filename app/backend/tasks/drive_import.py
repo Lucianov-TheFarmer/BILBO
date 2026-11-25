@@ -15,7 +15,7 @@ from ..db.database import SessionLocal
 from ..db.models import PipelineJob, SampleStage
 from ..schemas.common import PipelineStatus
 from ..services.drive_service import DRIVE_API, access_token, file_metadata, redis_client
-from ..services.job_service import set_job_finished, set_job_running
+from ..services.job_service import append_job_event, set_job_finished, set_job_running
 from ..utils_paths import safe_resolve_user_path
 from .celery_app import celery_app
 
@@ -28,7 +28,7 @@ def _md5(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _download(session_id: str, file: dict, target: Path, job_id: str) -> None:
+def _download(session_id: str, file: dict, target: Path, job_id: str, user_id: int) -> None:
     metadata = file_metadata(session_id, file["id"])
     if metadata["name"] != file["name"] or int(metadata["size"]) != file["size"]:
         raise ValueError("Drive file changed after selection")
@@ -41,6 +41,7 @@ def _download(session_id: str, file: dict, target: Path, job_id: str) -> None:
     partial = target.with_name(target.name + ".part")
     progress_key = f"bilbo:drive:job:{job_id}"
     progress_store = redis_client()
+    last_event = time.monotonic()
     for attempt in range(5):
         offset = partial.stat().st_size if partial.exists() else 0
         if offset > expected_size:
@@ -65,6 +66,10 @@ def _download(session_id: str, file: dict, target: Path, job_id: str) -> None:
                             downloaded += len(chunk)
                             progress_store.hset(progress_key, mapping={"file": target.name, "bytes": downloaded, "total": expected_size})
                             progress_store.expire(progress_key, 7 * 24 * 3600)
+                            if time.monotonic() - last_event >= 60:
+                                append_job_event(user_id, job_id,
+                                                 f"Drive: {target.name} {downloaded}/{expected_size} bytes baixados.")
+                                last_event = time.monotonic()
             if partial.stat().st_size != expected_size:
                 raise IOError("Incomplete Drive download")
             if _md5(partial) != expected_md5:
@@ -75,6 +80,8 @@ def _download(session_id: str, file: dict, target: Path, job_id: str) -> None:
         except (requests.RequestException, IOError):
             if attempt == 4:
                 raise
+            append_job_event(user_id, job_id,
+                             f"Drive: transferência de {target.name} interrompida; tentativa {attempt + 2}/5.")
             time.sleep(min(2**attempt, 16))
     raise IOError("Drive transfer failed")
 
@@ -96,7 +103,9 @@ def import_drive_pair(job_id: str, session_id: str):
         outputs = []
         for file in files:
             target = user_dir / f"{base}_{file['mate']}.fastq.gz"
-            _download(session_id, file, target, job_id)
+            append_job_event(job.user_id, job_id, f"Drive: iniciando {target.name} ({file['size']} bytes).")
+            _download(session_id, file, target, job_id, job.user_id)
+            append_job_event(job.user_id, job_id, f"Drive: {target.name} baixado e verificado.")
             outputs.append((file, target))
         for file, target in outputs:
             db.add(SampleStage(

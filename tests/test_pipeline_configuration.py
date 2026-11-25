@@ -18,9 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from backend.db.database import Base  # noqa: E402
 from backend.db.models import PipelineJob, PipelineRun, PipelineStep, SampleStage, Stage, User  # noqa: E402
 from backend.services.analysis_design import validate_design  # noqa: E402
-from backend.tasks.orchestrator import _advance_run  # noqa: E402
-from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run,
+from backend.tasks.orchestrator import _advance_run, _dispatch_manual_alignments  # noqa: E402
+from backend.routes.pipeline_runs import (PipelinePlan, SamplePlan, create_run, start_run, cancel_run,
                                           update_draft, delete_draft)  # noqa: E402
+from backend.services import job_cancellation  # noqa: E402
 from backend.routes.pipeline_runs import options as pipeline_options  # noqa: E402
 from backend.routes.contrast_design import (ContrastConfiguration, preview_configuration,
                                             save_configuration)  # noqa: E402
@@ -76,6 +77,8 @@ class PipelineConfigurationTest(unittest.TestCase):
                             stages={"trimming": True, "alignment": True,
                                     "quantification": True, "deg": True},
                             genome="reference-1", design=design,
+                            quality={"raw_memory_mb": 2048, "post_memory_mb": 1024},
+                            trimming={"threads": 2, "memory_mb": 4096},
                             deg={"diamond_threads": 12})
         draft = create_run(plan, self.db, self.db.get(User, 7))
         self.assertEqual("DRAFT", draft["status"])
@@ -84,6 +87,48 @@ class PipelineConfigurationTest(unittest.TestCase):
         self.assertEqual("RUNNING", started["status"])
         self.assertEqual("~0+group+bloco", started["config"]["design_snapshot"]["formula"])
         self.assertEqual(12, started["config"]["deg"]["diamond_threads"])
+        self.assertEqual(2048, started["config"]["quality"]["raw_memory_mb"])
+        self.assertEqual(1024, started["config"]["quality"]["post_memory_mb"])
+        self.assertEqual(4096, started["config"]["trimming"]["memory_mb"])
+
+    def test_manual_alignment_starts_after_both_post_trim_reports_finish(self):
+        names = [f"D2_{mate}_trimmed.fastq.gz" for mate in (1, 2)]
+        job = PipelineJob(id="manual-alignment", user_id=7, stage="alignment",
+                          status="PENDING", payload={"sample": "D2", "trimmed_names": names,
+                                                     "wait_for_post_trim": True},
+                          result={"waiting_for": "quality_analysis_post_trim"})
+        self.db.add(job)
+        for mate, status in ((1, "COMPLETED"), (2, "RUNNING")):
+            self.db.add(SampleStage(user_id=7, stage_id=4, name=f"D2_{mate}_post_trim.html",
+                                    status=status))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator.enqueue_pipeline_job") as enqueue:
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_not_called()
+            self.db.query(SampleStage).filter_by(user_id=7, stage_id=4,
+                                                 name="D2_2_post_trim.html").one().status = "COMPLETED"
+            self.db.commit()
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_called_once_with("manual-alignment", queue="alignment")
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_called_once()
+
+    def test_manual_alignment_fails_when_post_trim_quality_fails(self):
+        self.db.add(PipelineJob(id="manual-failed-qc", user_id=7, stage="alignment",
+                                status="PENDING", payload={"sample": "D2", "trimmed_names":
+                                    ["D2_1_trimmed.fastq.gz"], "wait_for_post_trim": True},
+                                result={"waiting_for": "quality_analysis_post_trim"}))
+        self.db.add(SampleStage(user_id=7, stage_id=4, name="D2_1_post_trim.html",
+                                status="FAILED"))
+        self.db.add(SampleStage(user_id=7, stage_id=5, name="D2.bam", sra_code="D2",
+                                status="PENDING"))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator.enqueue_pipeline_job") as enqueue:
+            _dispatch_manual_alignments(self.db)
+            enqueue.assert_not_called()
+        self.assertEqual("FAILED", self.db.get(PipelineJob, "manual-failed-qc").status)
+        self.assertEqual("FAILED", self.db.query(SampleStage).filter_by(
+            user_id=7, stage_id=5, name="D2.bam").one().status)
 
     def test_alignment_waits_for_trimmed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -135,6 +180,58 @@ class PipelineConfigurationTest(unittest.TestCase):
                 self.db.commit()
                 _advance_run(self.db, run)
                 self.assertEqual(["trimming", "alignment"], dispatched)
+
+    def test_next_stage_waits_for_every_sample_in_previous_stage(self):
+        run = PipelineRun(id="barrier-run", user_id=7, status="RUNNING", config={
+            "samples": [{"name": name, "source": "existing", "paired": True}
+                        for name in ("A", "B")],
+            "stages": {"qc_raw": True, "trimming": True},
+            "trimming": {"threads": 2},
+        })
+        self.db.add(run)
+        self.db.add(PipelineJob(id="qc-B-job", user_id=7, stage="quality_analysis",
+                                status="RUNNING", payload={"samples": ["B_1.fastq.gz"]}))
+        for sample in ("A", "B"):
+            self.db.add(PipelineStep(id=f"input-{sample}", run_id=run.id, sample=sample,
+                                     stage="input", status="COMPLETED"))
+            self.db.add(PipelineStep(id=f"qc-{sample}", run_id=run.id, sample=sample,
+                                     stage="qc_raw", status="COMPLETED" if sample == "A" else "RUNNING",
+                                     job_id="qc-B-job" if sample == "B" else None))
+            self.db.add(PipelineStep(id=f"trim-{sample}", run_id=run.id, sample=sample,
+                                     stage="trimming", status="WAITING"))
+        self.db.commit()
+        with patch("backend.tasks.orchestrator._ready", return_value=False), \
+             patch("backend.tasks.orchestrator._dispatch") as dispatch:
+            _advance_run(self.db, run)
+        dispatch.assert_not_called()
+        self.assertTrue(all(step.status == "WAITING" for step in run.steps if step.stage == "trimming"))
+
+    def test_cancel_pipeline_stops_active_step_and_removes_partial_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / "7" / "trimmed"
+            folder.mkdir(parents=True)
+            output = folder / "D2_1_trimmed.fastq.gz"
+            output.write_bytes(b"partial")
+            run = PipelineRun(id="cancel-run", user_id=7, status="RUNNING", config={
+                "name": "Cancel test", "samples": [{"name": "D2", "paired": True}],
+                "stages": {"trimming": True}})
+            self.db.add(run)
+            self.db.add(PipelineJob(id="cancel-job", user_id=7, stage="trimming",
+                                    status="PENDING", payload={"sample": "D2"}))
+            self.db.add(PipelineStep(id="cancel-step", run_id=run.id, sample="D2",
+                                     stage="trimming", status="PENDING", job_id="cancel-job"))
+            self.db.add(SampleStage(user_id=7, stage_id=3, sra_code="D2",
+                                    name=output.name, status="PENDING"))
+            self.db.commit()
+            with patch.object(job_cancellation, "settings", SimpleNamespace(users_root=str(root))), \
+                 patch("backend.services.job_service.settings", SimpleNamespace(users_root=str(root))), \
+                 patch.object(job_cancellation.celery_app.control, "revoke"):
+                result = cancel_run(run.id, self.db, self.db.get(User, 7))
+            self.assertEqual("CANCELED", result["status"])
+            self.assertEqual("CANCELED", self.db.get(PipelineJob, "cancel-job").status)
+            self.assertEqual("CANCELED", self.db.get(PipelineStep, "cancel-step").status)
+            self.assertFalse(output.exists())
 
     def test_pending_drive_sample_can_be_selected_for_inline_model(self):
         for name in ("D3", "C2", "C3"):
